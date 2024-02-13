@@ -8,6 +8,7 @@ import torch_geometric
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, SAGPooling, BatchNorm
 from scGraphLLM.MLP_modules import MLPAttention
+from scGraphLLM.config.model_config import GNNConfig
 
 # Edge convolution layer. Aggregate mean information along edges within a neighbourhood
 class edgeConv(MessagePassing):
@@ -91,7 +92,7 @@ class hierGNN(nn.Module):
  
 # Siamese GNN with contrastive learning
 class contrastiveGNN(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config=GNNConfig()):
       super(contrastiveGNN, self).__init__()
       self.config = config
       self.GNN = baseGCN(config.input_dim, config.hidden_dims, config.conv_dim, config.out_dim)
