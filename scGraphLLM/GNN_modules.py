@@ -7,6 +7,7 @@ from torch.nn.parameter import Parameter
 import torch_geometric
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, SAGPooling, BatchNorm
+from scGraphLLM.MLP_modules import MLPAttention
 
 # Edge convolution layer. Aggregate mean information along edges within a neighbourhood
 class edgeConv(MessagePassing):
@@ -26,7 +27,7 @@ class edgeConv(MessagePassing):
   
 # Vanilla graph conovolution network
 class baseGCN(nn.Module):
-  def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, activation = nn.ReLU()):
+  def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, activation = nn.LeakyReLU()):
     super().__init__()
     self.input_dim = input_dim
     self.hidden_dims = hidden_dims
@@ -88,7 +89,40 @@ class hierGNN(nn.Module):
     H = self.edge_conv_block(H, A_hat, W_hat)
     return H, attn
  
+# Siamese GNN with contrastive learning
+class contrastiveGNN(nn.Module):
+    def __init__(self, config):
+      super(contrastiveGNN, self).__init__()
+      self.config = config
+      self.GNN = baseGCN(config.input_dim, config.hidden_dims, config.conv_dim, config.out_dim)
+      self.siamese_net = nn.Sequential(
+        nn.Linear(config.num_graphs * config.out_dim, config.latent_dim),
+        nn.LeakyReLU(),
+        nn.Linear(config.latent_dim, config.out_dim)
+      )
+      self.attn_net = MLPAttention(config.out_dim, hidden_size=64)
+      
+    def forward(self, xs):
+      # Obtain embeddings from each graph
+      embeddings = []
+      for data in xs:
+        emb = self.GNN(data.x, data.edge_index, data.edge_atr)
+        embeddings.append(emb)
+      
+      # Get all embeddings
+      all_embeddings = torch.cat(embeddings, dim=1)
+      siamese_embeddings = self.siamese_net(all_embeddings)
+      outputs = torch.chunk(siamese_embeddings, self.config.num_graphs, dim=-1)
 
+      # Attention network
+      attn_weighted_embedding, attn_W = self.attn_net(torch.stack(outputs, dim=1))
+
+      return outputs, attn_weighted_embedding, attn_W
+
+
+
+
+    
 
 
       

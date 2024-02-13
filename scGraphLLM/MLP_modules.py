@@ -4,40 +4,59 @@ from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Network for learnable attention weight
+# Fully connect attention network
 class MLPAttention(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, in_size, hidden_size=16):
         super(MLPAttention, self).__init__()
-        self.proj_to_H = nn.Linear(input_dim, hidden_dim)
-        self.proj_to_out = nn.Linear(hidden_dim, output_dim)
-        self.attn_head = nn.Linear(hidden_dim, 1)
-        self.activation = nn.Tanh()
-    
+
+        self.attn_head = nn.Sequential(
+            nn.Linear(in_size, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1, bias=False)
+        )
+
     def forward(self, x):
-        attn_W = torch.softmax(self.attn_head(self.activation(self.proj_to_H(x))), dim=1)
-        weighted_input = torch.sum(x * attn_W, dim=1)
-        out = self.proj_to_out(weighted_input)
-        return out, attn_W
+        w = self.attn_head(x)
+        beta = torch.softmax(w, dim=1)
+        return (beta * x).sum(1), beta
 
 
-class MinMaxContrastive(nn.Module):
-    def __init__(self, alpha=0.5, beta=0.5):
-        super(MinMaxContrastive, self).__init__()
-        self.alpha = alpha  
-        self.beta = beta  
-        self.cos_sim = nn.CosineSimilarity(dim=2)
+# Siamese contrastive loss
+class ContrastiveLoss(nn.Module):
+    def __init__(self, margin=1.0, verbose=False):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+        self.verbose = verbose
 
-    def forward(self, outputs, labels, attention_weights):
-        loss_intra = 0
-        loss_inter = 0
-        for i in range(len(outputs)):
-            mask = (labels == labels[i]).unsqueeze(1)
-            cos_sim_matrix = self.cos_sim(attention_weights[i].unsqueeze(0), attention_weights[mask].view(-1, attention_weights.shape[1]))
-            loss_intra += torch.sum(cos_sim_matrix)
+    def forward(self, xs, ys):
+        if len(ys) == len(xs):
+            ValueError("Inconsistent number of labels and embeddings")
 
-            mask = (labels != labels[i]).unsqueeze(1)
-            cos_sim_matrix = self.cos_sim(attention_weights[i].unsqueeze(0), attention_weights[mask].view(-1, attention_weights.shape[1]))
-            loss_inter += torch.sum(cos_sim_matrix)
+        xs_normalized = [F.normalize(x, p=2) for x in xs]
+        x_in = torch.stack(xs_normalized, dim=0)
+        S = torch.matmul(x_in, x_in.permute(0, 2, 1))
 
-        loss = self.alpha * loss_intra - self.beta * loss_inter
+        pos, neg = [], []
+        for i in range(len(ys)):
+            for j in range(i + 1, len(ys)):
+                if ys[i] == ys[j]:
+                    pos.append(S[i, j])
+                else:
+                    neg.append(S[i, j])
+        
+        positive_pairs = torch.stack(pos)
+        negative_pairs = torch.stack(neg)
+
+        if self.verbose:
+            print("Number of matches:", positive_pairs.shape[0])
+            print("Number of mismatches:", negative_pairs.shape[0])
+
+        # Siamese contrastive loss
+        loss = torch.mean((F.relu(positive_pairs - self.margin) ** 2)) + \
+               torch.mean((F.relu(self.margin - negative_pairs) ** 2))
         return loss
+
+        
+
+
+

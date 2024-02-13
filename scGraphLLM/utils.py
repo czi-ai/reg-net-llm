@@ -33,7 +33,7 @@ def node_batching(adata, network, genes, batch_size=64,
     
     dataloader = NeighborLoader(data=graph_dataset, replace=False, num_neighbors=[neigborhood_size] * num_hops, 
                                 subgraph_type="bidirectional", disjoint=False,
-                                weight_attr="edge_attr", batch_size=batch_size
+                                weight_attr="edge_attr", batch_size=batch_size, shuffle=True
                                 )
     
     return dataloader
