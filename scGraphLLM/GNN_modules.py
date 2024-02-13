@@ -106,7 +106,7 @@ class contrastiveGNN(nn.Module):
       # Obtain embeddings from each graph
       embeddings = []
       for data in xs:
-        emb = self.GNN(data.x, data.edge_index, data.edge_atr)
+        emb = self.GNN(data.x, data.edge_index, data.edge_attr)
         embeddings.append(emb)
       
       # Get all embeddings
