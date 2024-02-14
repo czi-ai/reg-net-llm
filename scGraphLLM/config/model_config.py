@@ -22,6 +22,7 @@ base_model_config = Config({
 })
 
 class GNNConfig:
+    num_nodes: int = 5000
     input_dim: int = 2000
     hidden_dims: tuple = (128,)
     conv_dim: int = 50
