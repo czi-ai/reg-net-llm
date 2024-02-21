@@ -22,7 +22,7 @@ If updating the graph is too slow, we can try to update the graph every *epoch* 
 
 probably a good idea to use a common conda env for all the packages
 ```
-mamba create -n scllm pytorch torchvision torchaudio pytorch-cuda=12.1 pyg lightning -c pyg -c pytorch -c nvidia -c conda-forge
-pip install ninja scanpy plotnine pandas scikit-learn ipykernel wandb 
+mamba create -n scllm pytorch torchvision torchaudio pytorch-cuda=12.1 pyg lightning pyarrow -c pyg -c pytorch -c nvidia -c conda-forge
+pip install ninja scanpy plotnine pandas scikit-learn ipykernel wandb polars fast_matrix_market
 
 ```
