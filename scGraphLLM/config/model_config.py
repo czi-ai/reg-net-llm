@@ -20,4 +20,13 @@ base_model_config = Config({
     "dim_encoder": 512,
     "num_layers_encoder": 4
 })
+
+class GNNConfig:
+    num_nodes: int = 5000
+    input_dim: int = 2000
+    hidden_dims: tuple = (128,)
+    conv_dim: int = 50
+    out_dim: int = 20
+    latent_dim: int = 64
+    num_graphs: int = 6
         
