@@ -113,9 +113,11 @@ class contrastiveGNN(nn.Module):
     def forward(self, xs):
       # Obtain embeddings from each graph
       embeddings = []
+      graphs = []
       for data in xs:
-        emb = self.forward_one_branch(data.x, data.edge_index, data.edge_attr)
+        emb, graph = self.forward_one_branch(data.x, data.edge_index, data.edge_attr)
         embeddings.append(emb)
+        graphs.append(graph)
       
       # Get siamese embeddings
       all_embeddings = torch.cat(embeddings, dim=1)
@@ -125,7 +127,7 @@ class contrastiveGNN(nn.Module):
       # Attention network
       attn_weighted_embedding, attn_W = self.cross_graph_attention(torch.stack(outputs, dim=1))
 
-      return outputs, attn_weighted_embedding, attn_W
+      return outputs, attn_weighted_embedding, attn_W, graphs
 
 
 

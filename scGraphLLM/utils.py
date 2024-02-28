@@ -1,12 +1,6 @@
-# For functions like loss, hyperparam containers, pre/post processing
-
 import torch
-from torch_geometric.data import Data
-from torch_geometric.data import DataLoader
-import torch_geometric.nn as nn
-from torch_geometric.loader import NeighborLoader, NeighborSampler
-import pandas as pd
-import scanpy as sc
+from torch_geometric.data import Data, InMemoryDataset
+from torch_geometric.loader import NeighborLoader
 import numpy as np
 
 
@@ -37,6 +31,33 @@ def node_batching(adata, network, genes, batch_size=64,
                                 )
     
     return dataloader
+
+# Some functions for simulating data for GNN testing
+def simulate_data(num_classes=2, graphs_per_class=5, num_nodes_per_graph=10, 
+                 num_edges_per_graph=5, node_embedding_dim=5):
+      data_list = []
+      num_nodes = num_nodes_per_graph
+      for class_id in range(num_classes):
+           for _ in range(graphs_per_class):
+            edge_index = torch.randint(0, num_nodes, (2, num_edges_per_graph))
+            mask = edge_index[0] != edge_index[1]
+            edge_index = edge_index[:, mask]
+            edge_weights = torch.rand(num_edges_per_graph,)
+            node_features = torch.randn(num_nodes, node_embedding_dim) + class_id * 10
+            data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_weights, y=class_id)
+            data_list.append(data)
+      return data_list
+
+class CombinedDataset(InMemoryDataset):
+    def __init__(self, data_list):
+        super(CombinedDataset, self).__init__('.')
+        self.data, self.slices = self.collate(data_list)
+
+    def _download(self):
+        pass
+
+    def _process(self):
+        pass
     
     
     
