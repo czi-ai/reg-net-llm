@@ -1,31 +1,27 @@
 # Graph network modules
 import torch
-from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.parameter import Parameter
-import torch_geometric
 from torch_geometric.nn import MessagePassing
-from torch_geometric.nn import GCNConv, SAGPooling, BatchNorm
+from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
 from scGraphLLM.MLP_modules import MLPAttention
 from scGraphLLM.config.model_config import GNNConfig
-from torch_geometric.utils import to_dense_adj, to_edge_index
+from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian
 
-# Edge convolution layer. Aggregate mean information along edges within a neighbourhood
-class edgeConv(MessagePassing):
-  def __init__(self, in_channels, out_channels):
-    super().__init__(aggr='mean')
-    self.linear_net = nn.Sequential(
-      nn.Linear(2 * in_channels, out_channels),
-      nn.ReLU(),
-      nn.Linear(out_channels, out_channels)
-    )
-  
-  def forward(self, x, A):
-    return self.propagate(A, x=x)
-  
-  def message(self, x_i, x_j):
-    return self.linear_net(torch.cat([x_i, x_j - x_i], dim=1)) # Node feature and relative node features wrt edge
+class GAT(torch.nn.Module):
+    def __init__(self, node_feature_dim, out_dim):
+        super().__init__()
+        self.gat_conv = GATConv(node_feature_dim, out_dim, concat=False, heads=1, add_self_loops=False)
+
+    def forward(self, graph1, graph2):
+        num_nodes = graph1.num_nodes
+        combined_x = torch.cat([graph1.x, graph2.x], dim=0)
+        combined_edge_index = torch.cat([graph1.edge_index, graph2.edge_index + num_nodes], dim=1)
+
+        # Apply GAT
+        combined_x, attn_weights = self.gat_conv(combined_x, combined_edge_index, return_attention_weights=True)
+        adj = attn_weights.view(num_nodes, num_nodes)
+        return adj
   
 # Vanilla graph conovolution network
 class baseGCN(nn.Module):
@@ -65,34 +61,63 @@ class baseGCN(nn.Module):
     return h
 
 # structural learning GNN through metric learning and attention
-class GCN_attn(baseGCN):
-   def __init__(self, num_nodes):
+class GCN_attn(nn.Module):
+   def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, num_nodes, activation = nn.LeakyReLU()):
     super().__init__()
+    self.input_dim = input_dim
+    self.hidden_dims = hidden_dims
+    self.conv_dim = conv_dim
+    self.out_dim = out_dim
+    self.f = activation
     self.num_nodes = num_nodes
-    attention_networks = [MLPAttention(self.num_nodes, 64)]
-    
+
+    # Attention layers
+    attention_networks = [MLPAttention(self.num_nodes, 16)]
     for i in range(1, len(self.hidden_dims)):
-      attention_networks.append(MLPAttention(self.num_nodes, 64))
-    
-    attention_networks.append(MLPAttention(self.num_nodes, 64))
+      attention_networks.append(GAT(self.hidden_dims[0], self.input_dim))
+    attention_networks.append(MLPAttention(self.num_nodes, 16))
     self.attention_networks = nn.ModuleList(attention_networks)
 
-   def forward(self, X, A, W):
+     # GCN layers
+    layers = [GCNConv(self.input_dim, self.hidden_dims[0], add_self_loops=False)]
+    for i in range(1, len(self.hidden_dims)):
+      layers.append(GCNConv(self.hidden_dims[i - 1], self.hidden_dims[i], add_self_loops=False))
+    layers.append(GCNConv(self.hidden_dims[-1], self.conv_dim, add_self_loops=False))
+    layers.append(nn.Linear(self.conv_dim, self.out_dim))
+    self.layers = nn.ModuleList(layers)
+
+    # Batch Norm layers
+    bns = [BatchNorm(self.hidden_dims[0])]
+    for i in range(1, len(self.hidden_dims)):
+      bns.append(BatchNorm(self.hidden_dims[i]))
+    bns.append(BatchNorm(self.conv_dim))
+    self.bns = nn.ModuleList(bns)
+
+    print("Number of Attention layers: ", len(self.attention_networks))
+    print("Number of GNN layers: ", len(self.layers))
+    print("Number of Batch Normalization layers: ", len(self.bns))
+
+   def forward(self, X, A, W, batch):
      h = X
-     final_A = None
+     h_conv = X
+     A_orig = to_dense_adj(A, edge_attr=W, max_num_nodes=self.num_nodes).squeeze()
+     A_merged = A_orig
      for i, layer in enumerate(self.layers):
        if i < len(self.layers) - 1:
-         A_orig = to_dense_adj(A, edge_attr=W)
-         A_star = torch.sigmoid(h @ h.T)
-         A_merged, _ = self.attention_networks[i](torch.stack([A_orig, A_star], dim=1))
-         final_A = A_merged
-         A_merged = to_edge_index(A_merged)
-         h = layer(h, A_merged, W)
-         h = self.bns[i](h)
-         h = self.f(h)
+        inner = h @ h.T
+        A_star = F.normalize(inner, p=2) * (1-torch.eye(A_orig.shape[0])) * A_orig
+        A_merged, attn_weights = self.attention_networks[i](torch.stack([A_merged, A_star], dim=1))
+        A_in, W_merged = dense_to_sparse(A_merged)
+        h = layer(h, A_in, W_merged)
+        h = self.bns[i](h)
+        h = self.f(h)
+        h = F.dropout(h, p=0.5)
        else:
-         h = layer(h)
-     return h, final_A
+        h_conv = h
+        h = global_mean_pool(h, batch)
+        h = layer(h)
+        h = torch.softmax(h, dim=-1)
+     return h, h_conv, A_merged, attn_weights
 
 # Siamese GNN with contrastive learning
 class contrastiveGNN(nn.Module):
@@ -129,7 +154,17 @@ class contrastiveGNN(nn.Module):
 
       return outputs, attn_weighted_embedding, attn_W, graphs
 
+# Graph smoothness reg
+def graph_smoothness(x, adj):
+  edge_index, weight = dense_to_sparse(adj)
+  laplacian_id, laplacian_weight = get_laplacian(edge_index, edge_weight=weight, normalization='sym', num_nodes=x.shape[0])
+  L = to_dense_adj(laplacian_id, edge_attr=laplacian_weight)
+  prod = x.t() @ L @ x
+  smoothness_loss = torch.trace(prod.squeeze())
+  return smoothness_loss
 
+def attention_sparsity(attn):
+  return attn.norm(p = 1)
 
 
     
