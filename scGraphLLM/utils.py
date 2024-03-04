@@ -16,9 +16,12 @@ def _aracne_to_edge_list(network, genes):
 
 # Sampling n_batch equally sized neighbourhoods per layer of GNN without replacement, weighed by MI
 def node_batching(adata, network, genes, batch_size=64, 
-                 neigborhood_size=20, num_hops=2, with_label=False):
+                 neigborhood_size=20, num_hops=2, with_label=False, transpose=True):
     edge_list, edge_weights = _aracne_to_edge_list(network=network, genes=genes)
-    node_embedding = torch.tensor(adata.X.T.todense())
+    if transpose:
+        node_embedding = torch.tensor(adata.X.T)
+    else:
+        node_embedding = torch.tensor(adata.X)
     graph_dataset = Data(x = node_embedding, edge_index=edge_list, edge_attr=edge_weights)
     
     if with_label:
@@ -30,7 +33,7 @@ def node_batching(adata, network, genes, batch_size=64,
                                 weight_attr="edge_attr", batch_size=batch_size, shuffle=True
                                 )
     
-    return dataloader
+    return dataloader, graph_dataset
 
 # Some functions for simulating data for GNN testing
 def simulate_data(num_classes=2, graphs_per_class=5, num_nodes_per_graph=10, 
