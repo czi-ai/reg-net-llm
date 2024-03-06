@@ -72,10 +72,10 @@ class GCN_attn(nn.Module):
     self.num_nodes = num_nodes
 
     # Attention layers
-    attention_networks = [MLPAttention(self.num_nodes, 16)]
+    attention_networks = [MLPAttention(self.num_nodes, 16, 2)]
     for i in range(1, len(self.hidden_dims)):
-      attention_networks.append(GAT(self.hidden_dims[0], self.input_dim))
-    attention_networks.append(MLPAttention(self.num_nodes, 16))
+      attention_networks.append(MLPAttention(self.num_nodes, 16, 2))
+    attention_networks.append(MLPAttention(self.num_nodes, 16, 2))
     self.attention_networks = nn.ModuleList(attention_networks)
 
      # GCN layers
@@ -104,19 +104,23 @@ class GCN_attn(nn.Module):
      A_merged = A_orig
      for i, layer in enumerate(self.layers):
        if i < len(self.layers) - 1:
-        inner = h @ h.T
-        A_star = F.normalize(inner, p=2) * (1-torch.eye(A_orig.shape[0])) * A_orig
-        A_merged, attn_weights = self.attention_networks[i](torch.stack([A_merged, A_star], dim=1))
+        inner = torch.matmul(h, h.transpose(0, 1))
+        A_learned = F.normalize(inner, p=2)
+        A_learned = F.softmax(A_learned, dim=1) * (1-torch.eye(A_orig.shape[0])) 
+        A_merged, attn_weights = self.attention_networks[i](torch.stack([A_orig, A_learned], dim=1))
+        A_merged = A_merged * (1-torch.eye(A_orig.shape[0]))
+        sparsity_threshold = 0.2 # graph sparsification
+        A_merged = torch.where(A_merged > sparsity_threshold, A_merged, torch.zeros_like(A_learned))
         A_in, W_merged = dense_to_sparse(A_merged)
         h = layer(h, A_in, W_merged)
         h = self.bns[i](h)
         h = self.f(h)
-        h = F.dropout(h, p=0.5)
+        #h = F.dropout(h, p=0.2)
        else:
         h_conv = h
         h = global_mean_pool(h, batch)
         h = layer(h)
-        h = torch.softmax(h, dim=-1)
+        h = F.log_softmax(h, dim=1)
      return h, h_conv, A_merged, attn_weights
 
 # Siamese GNN with contrastive learning
@@ -157,7 +161,8 @@ class contrastiveGNN(nn.Module):
 # Graph smoothness reg
 def graph_smoothness(x, adj):
   edge_index, weight = dense_to_sparse(adj)
-  laplacian_id, laplacian_weight = get_laplacian(edge_index, edge_weight=weight, normalization='sym', num_nodes=x.shape[0])
+  laplacian_id, laplacian_weight = get_laplacian(edge_index, edge_weight=weight, 
+                                                 normalization='sym', num_nodes=x.shape[0])
   L = to_dense_adj(laplacian_id, edge_attr=laplacian_weight)
   prod = x.t() @ L @ x
   smoothness_loss = torch.trace(prod.squeeze())

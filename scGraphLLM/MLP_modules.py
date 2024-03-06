@@ -17,11 +17,18 @@ class MLPAttention(nn.Module):
             ) for _ in range(num_heads)
         ])
 
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                torch.nn.init.kaiming_uniform_(m.weight)
+
+        self.attn_heads.apply(init_weights)
+
     def forward(self, x):
         w = torch.stack([head(x) for head in self.attn_heads], dim=1)
-        beta = torch.softmax(w, dim=1) # batch, heads, 2, 
-        weighted_sum = (beta * x.unsqueeze(1)).sum(dim=1).mean(dim=1)
-        return weighted_sum, beta
+        beta = torch.softmax(w, dim=1) # (batch, heads, 2, in_dim)
+        attended = (beta * x.unsqueeze(1)).sum(dim=1) # (batch, 2, ind_dim)
+        output = attended.mean(dim=1)
+        return output, beta
 
 # Siamese contrastive loss
 class ContrastiveLoss(nn.Module):

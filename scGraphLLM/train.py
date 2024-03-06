@@ -40,12 +40,12 @@ class GNN_Trainer:
         h,h_conv, graphs, w = self.model(train_batch.x, train_batch.edge_index, train_batch.edge_attr, train_batch.batch)
         graph_labels = train_batch.y
         gs_reg = self.train_config.alpha * graph_smoothness(h_conv, graphs)
-        attn_l1 = self.train_config.beta * attention_sparsity(w)
-        loss = torch.nn.functional.cross_entropy(h, graph_labels)
+        loss = torch.nn.CrossEntropyLoss()(h, graph_labels)
         l1_reg = sum(torch.norm(param, p=1) for param in self.model.parameters())
         loss += self.train_config.lambda_l1 * l1_reg
         l2_reg = sum(torch.norm(param, p=2) ** 2 for param in self.model.parameters())
         loss += self.train_config.lambda_l2 * l2_reg
+        loss += gs_reg
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
@@ -59,12 +59,12 @@ class GNN_Trainer:
         h, h_conv, graphs, w = self.model(val_batch.x, val_batch.edge_index, val_batch.edge_attr, val_batch.batch)
         graph_labels = val_batch.y
         gs_reg = self.train_config.alpha * graph_smoothness(h_conv, graphs)
-        attn_l1 = self.train_config.beta * attention_sparsity(w)
-        loss = torch.nn.functional.cross_entropy(h, graph_labels)
+        loss = torch.nn.CrossEntropyLoss()(h, graph_labels)
         l1_reg = sum(torch.norm(param, p=1) for param in self.model.parameters())
         loss += self.train_config.lambda_l1 * l1_reg
         l2_reg = sum(torch.norm(param, p=2) ** 2 for param in self.model.parameters())
         loss += self.train_config.lambda_l2 * l2_reg
+        loss += gs_reg
         return loss, graphs, h_conv, w
     
     def train_loop(self):
@@ -74,11 +74,11 @@ class GNN_Trainer:
             batch_loss, batch_val = [], []
             for train_batch in self.train_data:
                 train_batch_loss = self.train_one_batch(train_batch)
-                batch_loss.append(train_batch_loss)
+                batch_loss.append(train_batch_loss / len(self.train_data))
 
             for val_batch in self.val_data:
                 val_batch_loss, graphs, hs, ws = self.val_one_batch(val_batch)
-                batch_val.append(val_batch_loss)
+                batch_val.append(val_batch_loss / len(self.val_data))
                 all_graphs.append(graphs)
                 all_h.append(hs)
                 all_attn.append(ws)
@@ -87,8 +87,8 @@ class GNN_Trainer:
             val_loss.append(torch.mean(torch.tensor(batch_val)).item())
 
             if self.train_config.verbose:
-                print("[Epoch %04d]  Cross Entropy Loss: %.5f" % (epoch + 1, torch.mean(torch.tensor(batch_loss)).item()))
-                print("[Epoch %04d]  Cross Entropy val: %.5f" % (epoch + 1, torch.mean(torch.tensor(batch_val)).item()))
+                print("[Epoch %04d]  Overall Loss: %.5f" % (epoch + 1, torch.mean(torch.tensor(batch_loss)).item()))
+                print("[Epoch %04d]  Overall val: %.5f" % (epoch + 1, torch.mean(torch.tensor(batch_val)).item()))
         return self.model, all_graphs, all_h, all_attn, train_loss, val_loss
 
 

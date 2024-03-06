@@ -1,7 +1,19 @@
 import torch
 from torch_geometric.data import Data, InMemoryDataset
 from torch_geometric.loader import NeighborLoader
+from torch_geometric.nn import MessagePassing
 import numpy as np
+
+# Ground truth message passing mechnism
+class WeightedAverageConv(MessagePassing):
+    def __init__(self):
+        super(WeightedAverageConv, self).__init__(aggr='add')
+
+    def forward(self, x, edge_index, edge_weight):
+        return self.propagate(edge_index, x=x, edge_weight=edge_weight)
+
+    def message(self, x_j, edge_weight):
+        return edge_weight.view(-1, 1) * x_j
 
 
 # ARACNe3 to torch geometric edge list
@@ -46,13 +58,12 @@ def simulate_data(num_classes=2, graphs_per_class=5, num_nodes_per_graph=10,
             edge_index = torch.randint(0, num_nodes, (2, num_edges_per_graph))
             mask = edge_index[0] != edge_index[1]
             edge_index = edge_index[:, mask]
+            edge_weight = torch.rand(edge_index.shape[-1])
             node_features = torch.randn(num_nodes, node_embedding_dim) + class_noise[class_id, :] * 2
-            edge_weight = []
-            for i, j in edge_index.t().tolist():
-                similarity = torch.cosine_similarity(node_features[i].unsqueeze(0), node_features[j].unsqueeze(0))
-                weight = torch.rand(1) * similarity
-                edge_weight.append(weight.item())
-
+            conv = WeightedAverageConv()
+            for _ in range(10):
+                 node_features = conv(node_features, edge_index, edge_weight)
+                 node_features = torch.nn.functional.normalize(node_features, p=2, dim=-1)
             edge_weight = torch.tensor(edge_weight)
             data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_weight, y=class_id)
             data_list.append(data)
