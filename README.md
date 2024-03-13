@@ -18,6 +18,10 @@ One of the challenges will be figuring out the exact training procedure. One opt
 
 If updating the graph is too slow, we can try to update the graph every *epoch* instead, where each epoch is split in two 2 phases, a graph learning phase, where we feed batches of the graph to the GNN, and then a second phase where we feed batches of the cells to the transformer block.
 
+Notations: $g$: number of genes, $n$: number of cells, $d$: node embedding dimension, $r$: rank dimension
+![LLM](https://github.com/mingkz/scGraphLLM/assets/73508804/5db6c298-6dde-4d56-84da-f04143afc81b)
+
+
 ## Install deps
 
 probably a good idea to use a common conda env for all the packages
