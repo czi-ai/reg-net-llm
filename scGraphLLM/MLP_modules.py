@@ -27,7 +27,7 @@ class MLPAttention(nn.Module):
         w = torch.stack([head(x) for head in self.attn_heads], dim=1)
         beta = torch.softmax(w, dim=1) # (batch, heads, 2, in_dim)
         attended = (beta * x.unsqueeze(1)).sum(dim=1) # (batch, 2, ind_dim)
-        output = attended.mean(dim=1)
+        output = attended.mean(dim=1) # try max
         return output, beta
 
 # Siamese contrastive loss

@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import Data, InMemoryDataset
+from torch_geometric.data import Data, InMemoryDataset, DataLoader, Batch
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.nn import MessagePassing
 import numpy as np
@@ -15,6 +15,20 @@ class WeightedAverageConv(MessagePassing):
     def message(self, x_j, edge_weight):
         return edge_weight.view(-1, 1) * x_j
 
+# Customized combination dataset that returns node embedding and rank embedding
+class CombinationDataset(Data):
+    def __init__(self, edge_index, edge_weight, node_embedding, rank_embedding):
+        super(CombinationDataset, self).__init__()
+        self.edge_index = edge_index
+        self.edge_weight = edge_weight
+        self.x = node_embedding
+        self.rank_embedding = rank_embedding
+
+# Custom collecter
+def collate_all(data_list):
+    batch = Batch.from_data_list([Data(x=data.x, edge_index=data.edge_index, edge_attr=data.edge_weight) for data in data_list])
+    rank_embedding = torch.cat([data.rank_embedding for data in data_list], dim=0)
+    return batch, rank_embedding
 
 # ARACNe3 to torch geometric edge list
 def _aracne_to_edge_list(network, genes):
@@ -27,25 +41,19 @@ def _aracne_to_edge_list(network, genes):
     return edge_list, edge_weights
 
 # Sampling n_batch equally sized neighbourhoods per layer of GNN without replacement, weighed by MI
-def node_batching(adata, network, genes, batch_size=64, 
-                 neigborhood_size=20, num_hops=2, with_label=False, transpose=True):
+# GENE BY CELL
+def node_batching(node_embedding, ranks, network, genes, batch_size=64, 
+                 neigborhood_size=-1, num_hops=1):
     edge_list, edge_weights = _aracne_to_edge_list(network=network, genes=genes)
-    if transpose:
-        node_embedding = torch.tensor(adata.X.T)
-    else:
-        node_embedding = torch.tensor(adata.X)
-    graph_dataset = Data(x = node_embedding, edge_index=edge_list, edge_attr=edge_weights)
+    combined_data = CombinationDataset(edge_index=edge_list, edge_weight=edge_weights, 
+                                       node_embedding=node_embedding, rank_embedding=ranks)
     
-    if with_label:
-        node_labels = torch.tensor(adata.var['labels'])
-        graph_dataset = Data(x = node_embedding, edge_index=edge_list, y=node_labels)
-    
-    dataloader = NeighborLoader(data=graph_dataset, replace=False, num_neighbors=[neigborhood_size] * num_hops, 
-                                subgraph_type="bidirectional", disjoint=False,
-                                weight_attr="edge_attr", batch_size=batch_size, shuffle=True
+    dataloader = NeighborLoader(data=combined_data, replace=False, num_neighbors=[neigborhood_size] * num_hops, 
+                                input_nodes=None, subgraph_type="bidirectional", disjoint=False,
+                                weight_attr="edge_weight", batch_size=batch_size, shuffle=True
                                 )
     
-    return dataloader, graph_dataset
+    return dataloader, combined_data
 
 # Some functions for simulating data for GNN testing
 def simulate_data(num_classes=2, graphs_per_class=5, num_nodes_per_graph=10, 
