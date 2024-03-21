@@ -1,0 +1,349 @@
+---
+title: "Merge cancer data"
+format: docx
+execute: 
+  echo: false
+fig-dpi: 200
+---
+
+
+
+```{python}
+import pandas as pd
+import polars as pl 
+import numpy as np 
+import scanpy as sc
+import fast_matrix_market as fmm
+pd.set_option('display.max_rows', 500)
+
+def apply_qc_filters(adata, mito_thres=20, umi_thres=1000, umi_upper=80000, n_cells_expr_gene_thres=50):
+    before = adata.shape
+    adata = adata[adata.obs['pct_counts_mt'] < mito_thres, :]
+    sc.pp.filter_cells(adata, min_counts=umi_thres)
+    sc.pp.filter_cells(adata, max_counts=umi_upper)
+    n_cell_expr_gene = (adata.X > 0).sum(axis=0)
+    adata = adata[:, n_cell_expr_gene > n_cells_expr_gene_thres]
+    after = adata.shape
+    return adata, before, after
+def qc_metrics(adata):
+    adata.var['mt'] = adata.var_names.str.startswith('MT-')
+    sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], percent_top=None, inplace=True)
+```
+
+```{python}
+
+```
+
+First, lets load in all the data
+
+### HCCA data 
+
+```{python}
+mtx = fmm.mmread("/pmglocal/vss2134/scGraphLLM/data/human-colon-cancer-atlas-c295.mtx")
+mtx = mtx.tocsr()
+##genes_x_bcs
+barcodes = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/human-colon-cancer-atlas-c295_barcodes", names = ["barcodes"]).barcodes.values
+genes = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/human-colon-cancer-atlas-c295_genes", names = ["gene_id", "gene_name"], sep = "\t").gene_name.values
+anno =  pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/human-colon-cancer-atlas-c295_cell_metadata.tsv", sep = "\t").iloc[1:,:].assign(
+    is_cancer = lambda x: x["ClusterFull"].str.contains("Tumor"),
+    is_healthy_epi = lambda x: x.ClusterMidway == "Epi",
+)
+anno_simple = anno[["NAME", "is_cancer", "is_healthy_epi"]].rename(columns = {"NAME": "Index"}).set_index("Index").loc[barcodes,:].assign(batch = "HCCA")
+adata = sc.AnnData(X = mtx, obs = pd.DataFrame(index = genes), var = pd.DataFrame(index = barcodes)).T
+adata.obs = adata.obs.join(anno_simple)
+qc_metrics(adata)
+adata_hcca, before, after = apply_qc_filters(adata)
+print(before, after)
+adata_hcca = adata_hcca[adata_hcca.obs.is_cancer |adata_hcca.obs.is_healthy_epi , :]
+## note: this one has some duped gene names, but they all look like junk genes, so lets just drop all of them 
+
+adata_hcca = adata_hcca[:,~adata_hcca.var.index.duplicated(keep=False)]
+```
+
+
+# GSE's
+
+Most of these use a transcritptome based way for identifying cancer cells, so only use ones that have a clear cancer cell annotation
+
+<!-- 
+```{bash}
+cd /pmglocal/vss2134/scGraphLLM/data
+gunzip GSE132257_raw_counts.txt.gz  
+gunzip GSE132465_raw_counts.txt.gz  
+gunzip GSE144735_raw_counts.txt.gz  
+gunzip GSE200997_raw_counts.txt.gz
+```
+-->
+
+## GSE132257
+
+
+```{python}
+raw_counts = pl.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE132257_raw_counts.txt", separator=  "\t").to_pandas()
+anno = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE132257_annotation.txt.gz", sep = "\t")
+```
+
+
+```{python}
+anno.groupby(["Class", "Cell_type"]).size()
+
+```
+
+So nothing clearly labeled as cancer, so just keep the healthy Epithelial Cells
+
+
+```{python}
+anno_simple = anno.assign(
+    is_cancer = False,
+    is_healthy_epi = lambda x: x.Cell_type.str.contains(r"^Epithelial") & x.Class.str.contains("Normal"),
+    Index = lambda x: x.Index.str.replace("-", ".")
+)[["Index", "is_cancer", "is_healthy_epi"]].set_index("Index").assign(batch = "GSE132257")
+adata = sc.AnnData(X = raw_counts.set_index("Index"),var = anno_simple).T
+qc_metrics(adata)
+adata_GSE132257, before, after = apply_qc_filters(adata)
+adata_GSE132257 = adata_GSE132257[adata_GSE132257.obs.is_cancer |adata_GSE132257.obs.is_healthy_epi , :]
+```
+
+## GSE132465
+
+```{python}
+del raw_counts, anno, anno_simple, adata
+```
+
+
+
+```{python}
+raw_counts = pl.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE132465_raw_counts.txt", separator=  "\t").to_pandas()
+anno = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE132465_annotation.txt.gz", sep = "\t")
+```
+
+Looks like this study uses the "colo rectal molecular subtype"(CMS) as the cancer cell annotation. 
+
+```{python}
+anno.Cell_subtype.value_counts()
+```
+
+
+```{python}
+anno_simple = anno.assign(
+    is_cancer = lambda x: x.Cell_subtype.str.contains(r"^CMS"),
+    is_healthy_epi = lambda x: (x.Class.str.contains("Normal")) & x.Cell_type.str.contains(r"^Epithelial")
+)[["Index", "is_cancer", "is_healthy_epi"]].set_index("Index").assign(batch = "GSE132465")
+adata = sc.AnnData(X = raw_counts.set_index("Index"),var = anno_simple).T
+qc_metrics(adata)
+adata_GSE132465, before, after = apply_qc_filters(adata)
+adata_GSE132465 = adata_GSE132465[adata_GSE132465.obs.is_cancer |adata_GSE132465.obs.is_healthy_epi , :]
+```
+
+
+
+## GSE144735
+
+```{python}
+del raw_counts, anno, anno_simple, adata
+```
+
+
+```{python}
+raw_counts = pl.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE144735_raw_counts.txt", separator=  "\t").to_pandas()
+anno = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE144735_annotation.txt.gz", sep = "\t")
+```
+
+```{python}
+anno.groupby(["Class", "Cell_subtype"]).size().sort_values()
+```
+
+
+
+```{python}
+anno_simple = anno.assign(
+    is_cancer = lambda x: x.Cell_subtype.str.contains(r"^CMS"),
+    is_healthy_epi = lambda x: (x.Class.str.contains("Normal")) & x.Cell_type.str.contains(r"^Epithelial")
+)[["Index", "is_cancer", "is_healthy_epi"]].set_index("Index").assign(batch = "GSE144735")
+adata = sc.AnnData(X = raw_counts.set_index("Index"),var = anno_simple).T
+qc_metrics(adata)
+adata_GSE144735, before, after = apply_qc_filters(adata)
+adata_GSE144735 = adata_GSE144735[adata_GSE144735.obs.is_cancer |adata_GSE144735.obs.is_healthy_epi , :]
+```
+
+
+## GSE200997
+
+```{python}
+del raw_counts, anno, anno_simple, adata
+```
+
+
+```{python}
+raw_counts = pl.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE200997_raw_counts.txt").to_pandas()
+anno = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE200997_annotation.txt.gz")
+```
+
+looks like no ID of healthy epi cells, and all tumor cells have a CRC classification, so going to use them all 
+
+```{python}
+anno_simple = anno.rename(columns = {"Unnamed: 0": "Index"}).assign(
+    is_cancer  = lambda x: x.Condition == 'Tumor',
+    is_healthy_epi = False
+)[["Index", "is_cancer", "is_healthy_epi"]].set_index("Index").assign(batch = "GSE200997")
+adata = sc.AnnData(X = raw_counts.rename(columns = {"":"Index"}).set_index("Index"),var = anno_simple).T
+qc_metrics(adata)
+adata_GSE200997, before, after = apply_qc_filters(adata)
+adata_GSE200997 = adata_GSE200997[adata_GSE200997.obs.is_cancer |adata_GSE200997.obs.is_healthy_epi , :]
+
+```
+
+```{python}
+gl_hcca = set(adata_hcca.var_names)
+gl_132257 = set(adata_GSE132257.var_names)
+gl_132465 = set(adata_GSE132465.var_names)
+gl_144735 = set(adata_GSE144735.var_names)
+gl_200997 = set(adata_GSE200997.var_names)
+
+all_common = list(gl_hcca.intersection(gl_132257, gl_132465, gl_144735, gl_200997))
+len(all_common)
+```
+
+```{python}
+
+adata_merged = sc.AnnData.concatenate(adata_hcca[:,all_common], adata_GSE132257[:,all_common], adata_GSE132465[:,all_common], adata_GSE144735[:,all_common], adata_GSE200997[:,all_common], batch_key = "batch", index_unique = None)
+adata_merged.layers["raw_counts"] = adata_merged.X.copy()
+adata_merged.write("/burg/pmg/collab/scGraphLLM/data/merged_data_cancer+normal_all.h5ad")
+## do HVG gene selection 
+
+
+sc.pp.normalize_total(adata_merged)
+sc.pp.log1p(adata_merged)
+sc.pp.highly_variable_genes(adata_merged, n_top_genes = 5000)
+adata_merged_hvg = adata_merged[:,adata_merged.var.highly_variable]
+```
+
+
+```{python}
+sc.pp.pca(adata_merged_hvg, svd_solver='arpack')
+sc.pp.neighbors(adata_merged_hvg)
+sc.tl.umap(adata_merged_hvg)
+```
+
+```{python}
+adata_merged_hvg.write("/burg/pmg/collab/scGraphLLM/data/merged_data_cancer+normal.h5ad")
+```
+
+### merged data set
+
+```{python}
+import pandas as pd
+import polars as pl 
+import numpy as np 
+import scanpy as sc
+import fast_matrix_market as fmm
+from pathlib import Path
+pd.set_option('display.max_rows', 500)
+adata_merged = sc.read("/burg/pmg/collab/scGraphLLM/data/merged_data_cancer+normal.h5ad")
+```
+
+
+```{python}
+adata_merged.obs = adata_merged.obs.assign(is_cancer = lambda x: x.is_cancer.astype(str))
+sc.pl.umap(adata_merged, color=[ "batch", "is_cancer"])
+```
+
+To sidestep the batch effects, we're going to split out each patient the tumor cells come from, generate a separate graph for each patient, and generally operate on the patient level 
+
+
+
+```{python}
+### the patient ids are in the barcodes 
+hcca_anno =  pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/human-colon-cancer-atlas-c295_cell_metadata.tsv", sep = "\t").iloc[1:,:].assign(
+    is_cancer = lambda x: x["ClusterFull"].str.contains("Tumor"),
+    is_healthy_epi = lambda x: x.ClusterMidway == "Epi",
+).assign(
+    patient_id = lambda x: x.NAME.str.split("_").str[0],
+    Index = lambda x: x.NAME
+)[["Index", "patient_id"]]
+
+
+anno_GSE132465 = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE132465_annotation.txt.gz", sep = "\t").assign(patient_id = lambda x: x.Patient)[["Index", "patient_id"]]
+
+anno_GSE144735 = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE144735_annotation.txt.gz", sep = "\t").assign(patient_id = lambda x: x.Patient)[["Index", "patient_id"]]
+
+anno_GSE200997 = pd.read_csv("/pmglocal/vss2134/scGraphLLM/data/GSE200997_annotation.txt.gz").iloc[:,:2]
+anno_GSE200997.columns = ["Index", "patient_id"]
+
+all_patient_ids = pd.concat([hcca_anno, anno_GSE132465, anno_GSE144735, anno_GSE200997]).drop_duplicates().set_index("Index")
+
+adata_merged.obs = adata_merged.obs.join(all_patient_ids, how = "left")
+```
+
+
+```{python}
+pdf = pd.concat([pd.DataFrame(adata_merged.obsm["X_umap"], columns = ["U1", "U2"] ), adata_merged.obs[["patient_id"]].reset_index(drop = False)] , axis = 1).dropna()
+import plotnine as pn 
+
+(
+    pn.ggplot(pdf, pn.aes(x = "U1", y = "U2", color = "patient_id")) +
+    pn.geom_point(size = .01, alpha = 0.1) +
+    pn.theme_minimal()+
+    pn.theme(legend_position = "none")
+
+)
+```
+
+
+Keep only cells with at least 1500 umis
+
+
+```{python}
+adata_merged_umico = adata_merged[adata_merged.layers["raw_counts"].sum(axis = 1) > 1500, :]
+
+enough_samples = adata_merged_umico.obs.patient_id.value_counts().pipe(lambda x: x[x>100]).index
+adata_merged_umico = adata_merged_umico[adata_merged_umico.obs.patient_id.isin(enough_samples), :]
+
+```
+
+
+note: don't use log1p - it will change the library size - cells with more expressed genes will get a boosted size vs those that do not. 
+
+```{python}
+adata_merged_umico.X = adata_merged_umico.layers["raw_counts"].copy()
+sc.pp.normalize_total(adata_merged_umico)
+adata_merged_umico.X.sum(axis = 1)
+```
+
+
+```{python}
+pd.DataFrame({"gene_name": ["<PAD>", "<MASK>"]  + adata_merged.var_names.to_list()}).assign(idx = lambda x: list(range(x.shape[0])) ).to_csv("/burg/pmg/collab/scGraphLLM/data/gene2index.csv", index = False)
+    
+```
+
+```{python}
+patient = adata_merged_umico.obs.patient_id.unique()[0]
+for patient in adata_merged_umico.obs.patient_id.unique():
+    adata_patient = adata_merged_umico[adata_merged_umico.obs.patient_id == patient, :] 
+## genes x samples 
+    counts_df = pd.DataFrame(adata_patient.X.todense(),columns = adata_patient.var_names, index = adata_patient.obs_names )
+    outdir = Path(f"/burg/pmg/collab/scGraphLLM/data/samples/geneset_hvg/{patient}")
+    outdir.mkdir(exist_ok = True, parents = True)
+    counts_df.to_csv(outdir / "counts.tsv", sep = "\t")
+    rank_df_raw = counts_df.rank(axis = 1, method = "dense") +1
+    rank_df_raw.to_csv(outdir / "rank_raw.csv")
+
+
+```
+
+
+```{python}
+
+```
+
+
+```{python}
+regullators = pd.read_csv("/burg/pmg/collab/scGraphLLM/data/regulators_lucas.tsv", sep = "\t")
+
+avail_regulators = regullators[regullators.HGNC.isin(adata_merged_umico.var_names)][["HGNC"]]
+avail_regulators.to_csv("/burg/pmg/collab/scGraphLLM/data/avail_regulators.txt", index = False, header = False)
+
+unique_patients = adata_merged_umico.obs[["patient_id"]].drop_duplicates()
+unique_patients.to_csv("/burg/pmg/collab/scGraphLLM/data/unique_patients.txt", index = False, header = False)
+
+```

@@ -12,13 +12,31 @@ class Config(dict):
         except KeyError:
             raise AttributeError(f"Attribute {item} not found")
 
+
+
+mlm_config = Config({
+    "d_model": 128, 
+    "nhead" :4, 
+    "dim_feedforward" : 512, 
+    "dropout":0.1 ,
+    "activation":"gelu",
+    "batch_first":True
+})
+
+basegcn_config = Config({ 
+    "input_dim": 64,
+    "hidden_dims": (64,),
+    "conv_dim": 64,
+    "out_dim": 64,
+})
+
 base_model_config = Config({
-    "num_attention_heads": 4,
-    "attention_probs_dropout_prob": 0.1,
-    "hidden_act": "gelu_fast",
-    "mlp_intermediate_size": 2048,
-    "dim_encoder": 512,
-    "num_layers_encoder": 4
+    "gnn_config" : basegcn_config,
+    "mlm_config" : mlm_config,
+    "rank_embedding_size":500, ## arbitary rn 
+    "rank_embedding_dim": 64,
+    "node_embedding_size": 5000, ## arbitary rn
+    "node_embedding_dim": 64
 })
 
 class GNNConfig:

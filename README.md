@@ -27,6 +27,8 @@ Notations: $g$: number of genes, $n$: number of cells, $d$: node embedding dimen
 probably a good idea to use a common conda env for all the packages
 ```
 mamba create -n scllm pytorch torchvision torchaudio pytorch-cuda=12.1 pyg lightning pyarrow -c pyg -c pytorch -c nvidia -c conda-forge
-pip install ninja scanpy plotnine pandas scikit-learn ipykernel wandb polars fast_matrix_market
+pip install ninja scanpy plotnine pandas scikit-learn ipykernel wandb polars fast_matrix_market jupyter loralib
+pip install pyg-lib -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
+pip install flash-attn --no-build-isolation
 
 ```

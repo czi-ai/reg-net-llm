@@ -2,3 +2,13 @@
 *.pyo
 .DS_Store
 .npy
+ .condarc
+.vscode/
+ARACNe3.zip
+ARACNe3/
+__MACOSX/
+copy.sh
+data/
+download_data_cancer.sh
+notebooks/preprocess_cancer_samples.ipynb
+**scratch.py

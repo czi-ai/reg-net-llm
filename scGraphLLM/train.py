@@ -1,7 +1,7 @@
 # Main location of training
 import torch
-from scGraphLLM.config.model_config import GNNConfig
-from scGraphLLM.GNN_modules import GCN_attn, attention_sparsity, graph_smoothness
+from config.model_config import GNNConfig
+from GNN_modules import GCN_attn, attention_sparsity, graph_smoothness
 
 
 """
@@ -28,7 +28,7 @@ class GNN_Trainer:
         self.train_config = train_config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = GCN_attn(self.model_config.input_dim, self.model_config.hidden_dims, 
-                              self.model_config.conv_dim, self.model_config.out_dim, self.model_config.num_nodes)
+                              self.model_config.conv_dim, self.model_config.out_dim, self.model_config.num_nodes).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.train_config.lr, 
                                           weight_decay=self.train_config.weight_decay)
         self.train_data = train_loader

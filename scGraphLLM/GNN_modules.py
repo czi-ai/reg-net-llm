@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
-from scGraphLLM.MLP_modules import MLPAttention
-from scGraphLLM.config.model_config import GNNConfig
+from MLP_modules import MLPAttention
+from config.model_config import GNNConfig
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian
 
 class GAT(torch.nn.Module):
@@ -59,6 +59,8 @@ class baseGCN(nn.Module):
       else:
         h = layer(h)
     return h
+
+
 
 # structural learning GNN through metric learning and attention
 class GCN_attn(nn.Module):
