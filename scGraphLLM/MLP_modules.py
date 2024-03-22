@@ -4,6 +4,23 @@ from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 
+class RobertaLMHead(nn.Module):
+    """Head for masked language modeling."""
+
+    def __init__(self, embed_dim, output_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim),
+            nn.GELU(),
+            nn.layer_norm(embed_dim),
+            nn.Linear(embed_dim, output_dim)
+        )
+
+    def forward(self, features):
+        return self.net(features)
+        return x
+
+
 # Fully connect attention network
 class MLPAttention(nn.Module):
     def __init__(self, in_size, hidden_size=16, num_heads=1):

@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd 
 from _globals import ZERO_IDX
 
-def aracne_to_edge_list(aracne_out, gene_to_node_file):
+def aracne_to_edge_list(aracne_out, gene_to_node):
     network = pd.read_csv(aracne_out +"/aracne/consolidated-net_defaultid.tsv", sep = "\t")
     network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-    global_gene_to_node_index = {row.gene_name:row.idx for _,row in pd.read_csv(gene_to_node_file).iterrows()}
+    global_gene_to_node_index = {row.gene_name:row.idx for _,row in gene_to_node.iterrows()}
     ranks = pd.read_csv(aracne_out + "/rank_raw.csv", index_col=0)[network_genes]
     is_nonempty = ~((ranks == ZERO_IDX).sum(axis = 1) == ranks.shape[1]-2) ## must have atleast 3 genes
     ranks = ranks[is_nonempty]
@@ -22,7 +22,7 @@ def aracne_to_edge_list(aracne_out, gene_to_node_file):
     edge_weights = torch.tensor(np.array(edges['mi.values']))
     node_indices = torch.tensor(np.array([global_gene_to_node_index[gene] for gene in network_genes]))
 
-    return node_indices, edge_list, edge_weights, ranks.values
+    return node_indices, edge_list, edge_weights, ranks
 
 def node_batching(node_embedding, ranks, network, genes, batch_size=64, 
                  neigborhood_size=-1, num_hops=1):
@@ -51,22 +51,25 @@ class CombinationDataset(Data):
 
 
 
-def repack_ranks(ranks):
+def repack_ranks(ranks, global_gene_to_node):
     ### right now the ranks are ordered by gene, but we want to order them by rank
-    enough_genes = ~((ranks == ZERO_IDX).sum(axis = 1) == ranks.shape[1]-2)
+    enough_genes = ~((ranks.values == ZERO_IDX).sum(axis = 1) == ranks.shape[1]-2)
     ranks = ranks[enough_genes, :]
     repacked_ranks = []
-    repacked_indices = []
+    repacked_global_indices = []
+    repacked_local_indices = []
     for i in range(ranks.shape[0]):
-        row  = [(ranks[i,j],j) for j in range(ranks.shape[1])]
+        row  = [(ranks[i,j],global_gene_to_node[ranks.columns[j]] ,j) for j in range(ranks.shape[1])]
         row  = sorted(row, key=lambda x: x[0])
-        rank_values, rank_indices = zip(*row)
+        rank_values,rank_global_indices, rank_local_indices = zip(*row)
         rank_values = np.array(rank_values)
-        rank_indices = np.array(rank_indices)
+        rank_global_indices= np.array(rank_global_indices)
+        rank_local_indices = np.array(rank_local_indices)
         nonzero = rank_values != ZERO_IDX
         repacked_ranks.append(torch.tensor(rank_values[nonzero], dtype = torch.long) )
-        repacked_indices.append(torch.tensor(rank_indices[nonzero], dtype = torch.long) )
-    return torch.nested.nested_tensor(repacked_ranks), torch.nested.nested_tensor(repacked_indices)
+        repacked_global_indices.append(torch.tensor(rank_global_indices[nonzero], dtype = torch.long) )
+        repacked_local_indices.append(torch.tensor(rank_local_indices[nonzero], dtype = torch.long) )
+    return torch.nested.nested_tensor(repacked_ranks), torch.nested.nested_tensor(repacked_global_indices), torch.nested.nested_tensor(repacked_local_indices)
 
 def pad_make_masks(tns_list):
     lens = [t.shape[0] for t in tns_list]
@@ -85,15 +88,16 @@ class MultiGraphWrapperDataset:
     def __init__(self, aracne_outdirs, gene_to_node_file, batch_size=64, 
                  neigborhood_size=-1, num_hops=1, shuffle_nl=True):
         self.batched_data = []
+        global_gene_to_node = pd.read_csv(gene_to_node_file)
         for outdir in aracne_outdirs:
-            node_indices, edge_list, edge_weights, ranks = aracne_to_edge_list(outdir, gene_to_node_file)
+            node_indices, edge_list, edge_weights, ranks = aracne_to_edge_list(outdir, global_gene_to_node)
 
             dataset = CombinationDataset(edge_index=edge_list, edge_weight=edge_weights, 
                                         node_index=node_indices, rank_embedding=ranks)
             nl= NeighborLoader(data=dataset, replace=False, num_neighbors=[neigborhood_size] * num_hops, 
                                     input_nodes=None, subgraph_type="bidirectional", disjoint=False,
                                     weight_attr="edge_weight", batch_size=batch_size, shuffle=shuffle_nl)
-            self.batched_data+= [(batch.x, batch.edge_index, batch.edge_weight, repack_ranks(dataset.rank_embedding[:,batch.n_id]) ) for batch in nl]
+            self.batched_data+= [(batch.x, batch.edge_index, batch.edge_weight, repack_ranks(dataset.rank_embedding.iloc[:,batch.n_id], global_gene_to_node ) ) for batch in nl]
     def __len__(self):
         return len(self.batched_data)
     def __getitem__(self, idx):
