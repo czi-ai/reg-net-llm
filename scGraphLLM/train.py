@@ -1,7 +1,8 @@
 # Main location of training
 import torch
-from config.model_config import GNNConfig
-from GNN_modules import GCN_attn, attention_sparsity, graph_smoothness
+from scGraphLLM.config.model_config import GNNConfig
+from scGraphLLM.GNN_modules import GCN_attn, attention_sparsity, graph_smoothness
+import tqdm
 
 
 """
@@ -28,7 +29,7 @@ class GNN_Trainer:
         self.train_config = train_config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = GCN_attn(self.model_config.input_dim, self.model_config.hidden_dims, 
-                              self.model_config.conv_dim, self.model_config.out_dim, self.model_config.num_nodes).to(self.device)
+                              self.model_config.conv_dim, self.model_config.out_dim).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.train_config.lr, 
                                           weight_decay=self.train_config.weight_decay)
         self.train_data = train_loader
@@ -37,10 +38,10 @@ class GNN_Trainer:
     def train_one_batch(self, train_batch):
         self.model.train()
         train_batch = train_batch.to(self.device)
-        h,h_conv, graphs, w = self.model(train_batch.x, train_batch.edge_index, train_batch.edge_attr, train_batch.batch)
+        h,h_conv, graphs, w = self.model(train_batch.x, train_batch.edge_index, train_batch.edge_attr)
         graph_labels = train_batch.y
         gs_reg = self.train_config.alpha * graph_smoothness(h_conv, graphs)
-        loss = torch.nn.CrossEntropyLoss()(h, graph_labels)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(h, graph_labels)
         l1_reg = sum(torch.norm(param, p=1) for param in self.model.parameters())
         loss += self.train_config.lambda_l1 * l1_reg
         l2_reg = sum(torch.norm(param, p=2) ** 2 for param in self.model.parameters())
@@ -56,10 +57,10 @@ class GNN_Trainer:
     def val_one_batch(self, val_batch):
         self.model.eval()
         val_batch = val_batch.to(self.device)
-        h, h_conv, graphs, w = self.model(val_batch.x, val_batch.edge_index, val_batch.edge_attr, val_batch.batch)
+        h, h_conv, graphs, w = self.model(val_batch.x, val_batch.edge_index, val_batch.edge_attr)
         graph_labels = val_batch.y
         gs_reg = self.train_config.alpha * graph_smoothness(h_conv, graphs)
-        loss = torch.nn.CrossEntropyLoss()(h, graph_labels)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(h, graph_labels)
         l1_reg = sum(torch.norm(param, p=1) for param in self.model.parameters())
         loss += self.train_config.lambda_l1 * l1_reg
         l2_reg = sum(torch.norm(param, p=2) ** 2 for param in self.model.parameters())
@@ -72,11 +73,11 @@ class GNN_Trainer:
         train_loss, val_loss = [], []
         for epoch in range(self.train_config.num_epochs):
             batch_loss, batch_val = [], []
-            for train_batch in self.train_data:
+            for train_batch in tqdm.tqdm(self.train_data):
                 train_batch_loss = self.train_one_batch(train_batch)
                 batch_loss.append(train_batch_loss / len(self.train_data))
 
-            for val_batch in self.val_data:
+            for val_batch in tqdm.tqdm(self.val_data):
                 val_batch_loss, graphs, hs, ws = self.val_one_batch(val_batch)
                 batch_val.append(val_batch_loss / len(self.val_data))
                 all_graphs.append(graphs)

@@ -21,7 +21,7 @@ class RobertaLMHead(nn.Module):
         return x
 
 
-# Fully connect attention network
+# Fully connect self attention network
 class MLPAttention(nn.Module):
     def __init__(self, in_size, hidden_size=16, num_heads=1):
         super().__init__()
@@ -36,7 +36,8 @@ class MLPAttention(nn.Module):
 
         def init_weights(m):
             if isinstance(m, nn.Linear):
-                torch.nn.init.kaiming_uniform_(m.weight)
+                torch.nn.init.xavier_uniform_(m.weight, 
+                                              gain=nn.init.calculate_gain("leaky_relu"))
 
         self.attn_heads.apply(init_weights)
 
@@ -44,8 +45,37 @@ class MLPAttention(nn.Module):
         w = torch.stack([head(x) for head in self.attn_heads], dim=1)
         beta = torch.softmax(w, dim=1) # (batch, heads, 2, in_dim)
         attended = (beta * x.unsqueeze(1)).sum(dim=1) # (batch, 2, ind_dim)
-        output = attended.mean(dim=1) # try max
+        output = attended.mean(dim=1)
         return output, beta
+
+# Fully connected cross attention network on edges
+class MLPCrossAttention(nn.Module):
+    def __init__(self, hidden_size=16, num_heads=1):
+        super().__init__()
+        self.num_heads = num_heads
+        self.attn_heads = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(2, hidden_size),
+                nn.LeakyReLU(),
+                nn.Linear(hidden_size, 1, bias=False)
+            ) for _ in range(num_heads)
+        ])
+
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                torch.nn.init.xavier_uniform_(m.weight, 
+                                              gain=nn.init.calculate_gain("leaky_relu"))
+
+        self.attn_heads.apply(init_weights)
+    def forward(self, A1, A2):
+        num_nodes = A1.shape[0]
+        A_pairwise = torch.stack([A1, A2], dim=-1).reshape(-1, 2)  
+        attention_weights = torch.cat([
+            torch.softmax(head(A_pairwise), dim=0) for head in self.attn_heads
+        ], dim=-1)
+        attended = attention_weights * A1.reshape(-1, 1)
+        output = attended.sum(dim=-1).reshape(num_nodes, num_nodes)
+        return output, attention_weights
 
 # Siamese contrastive loss
 class ContrastiveLoss(nn.Module):
