@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
-from MLP_modules import MLPAttention
+from MLP_modules import MLPAttention, MLPCrossAttention
 #from config import GNNConfig
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian
 class GNNConfig:
@@ -69,23 +69,21 @@ class baseGCN(nn.Module):
     return h
 
 
-
 # structural learning GNN through metric learning and attention
 class GCN_attn(nn.Module):
-   def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, num_nodes, activation = nn.LeakyReLU()):
+   def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, activation = nn.LeakyReLU()):
     super().__init__()
     self.input_dim = input_dim
     self.hidden_dims = hidden_dims
     self.conv_dim = conv_dim
     self.out_dim = out_dim
     self.f = activation
-    self.num_nodes = num_nodes
 
     # Attention layers
-    attention_networks = [MLPAttention(self.num_nodes, 16, 2)]
+    attention_networks = [MLPCrossAttention(16, 2)]
     for i in range(1, len(self.hidden_dims)):
-      attention_networks.append(MLPAttention(self.num_nodes, 16, 2))
-    attention_networks.append(MLPAttention(self.num_nodes, 16, 2))
+      attention_networks.append(MLPCrossAttention(16, 2))
+    attention_networks.append(MLPCrossAttention(16, 2))
     self.attention_networks = nn.ModuleList(attention_networks)
 
      # GCN layers
@@ -107,18 +105,18 @@ class GCN_attn(nn.Module):
     print("Number of GNN layers: ", len(self.layers))
     print("Number of Batch Normalization layers: ", len(self.bns))
 
-   def forward(self, X, A, W, batch):
+   def forward(self, X, A, W):
      h = X
      h_conv = X
-     A_orig = to_dense_adj(A, edge_attr=W, max_num_nodes=self.num_nodes).squeeze()
+     num_nodes = X.shape[0]
+     A_orig = to_dense_adj(A, edge_attr=W, max_num_nodes=num_nodes).squeeze()
      A_merged = A_orig
      for i, layer in enumerate(self.layers):
        if i < len(self.layers) - 1:
         inner = torch.matmul(h, h.transpose(0, 1))
-        A_learned = F.normalize(inner, p=2)
-        A_learned = F.softmax(A_learned, dim=1) * (1-torch.eye(A_orig.shape[0])) 
-        A_merged, attn_weights = self.attention_networks[i](torch.stack([A_orig, A_learned], dim=1))
-        A_merged = A_merged * (1-torch.eye(A_orig.shape[0]))
+        A_learned = F.sigmoid(inner)* (1-torch.eye(A_orig.shape[0])) 
+        A_merged, attn_weights = self.attention_networks[i](A_orig, A_learned)
+        A_merged = A_merged * (1 - torch.eye(h.shape[0]))
         sparsity_threshold = 0.2 # graph sparsification
         A_merged = torch.where(A_merged > sparsity_threshold, A_merged, torch.zeros_like(A_learned))
         A_in, W_merged = dense_to_sparse(A_merged)
@@ -128,9 +126,9 @@ class GCN_attn(nn.Module):
         #h = F.dropout(h, p=0.2)
        else:
         h_conv = h
-        h = global_mean_pool(h, batch)
+        #h = global_mean_pool(h, batch)
         h = layer(h)
-        h = F.log_softmax(h, dim=1)
+        #h = F.log_softmax(h, dim=1)
      return h, h_conv, A_merged, attn_weights
 
 # Siamese GNN with contrastive learning
