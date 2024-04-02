@@ -12,7 +12,7 @@ class RobertaLMHead(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.GELU(),
-            nn.layer_norm(embed_dim),
+            nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, output_dim)
         )
 

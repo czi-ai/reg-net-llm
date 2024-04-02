@@ -5,9 +5,17 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
 from MLP_modules import MLPAttention
-from config.model_config import GNNConfig
+#from config import GNNConfig
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian
-
+class GNNConfig:
+    num_nodes: int = 5000
+    input_dim: int = 2000
+    hidden_dims: tuple = (128,)
+    conv_dim: int = 50
+    out_dim: int = 20
+    latent_dim: int = 64
+    num_graphs: int = 6
+        
 class GAT(torch.nn.Module):
     def __init__(self, node_feature_dim, out_dim):
         super().__init__()

@@ -5,19 +5,34 @@ from torch_geometric.nn import MessagePassing
 import numpy as np
 import pandas as pd 
 from _globals import ZERO_IDX
+import os
+import pickle
+import tqdm
+import warnings
+from typing import List, Dict
+from pathlib import Path
 
-def aracne_to_edge_list(aracne_out, gene_to_node):
+def aracne_to_edge_list(aracne_out: List, global_gene_to_node_index:str):
+    """_summary_
+
+    Args:
+        aracne_out (List): list of aracne output directories. Must contain both network and rank files 
+        global_gene_to_node_index (str): a mapping between gene id and global node indices
+    Returns:
+        _type_: _description_
+    """    
+    assert aracne_out[-1] != "/", "aracne_out should not end with a /"
     network = pd.read_csv(aracne_out +"/aracne/consolidated-net_defaultid.tsv", sep = "\t")
     network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-    global_gene_to_node_index = {row.gene_name:row.idx for _,row in gene_to_node.iterrows()}
     ranks = pd.read_csv(aracne_out + "/rank_raw.csv", index_col=0)[network_genes]
     is_nonempty = ~((ranks == ZERO_IDX).sum(axis = 1) == ranks.shape[1]-2) ## must have atleast 3 genes
     ranks = ranks[is_nonempty]
 
     local_gene_to_node_index = {gene:i for i, gene in enumerate(network_genes)}
-    edges = network[['regulator.values', 'target.values', 'mi.values']]
-    edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
-    edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
+    with warnings.catch_warnings(action="ignore") : ## annoying pandas warnings
+        edges = network[['regulator.values', 'target.values', 'mi.values']]
+        edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
+        edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
     edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
     edge_weights = torch.tensor(np.array(edges['mi.values']))
     node_indices = torch.tensor(np.array([global_gene_to_node_index[gene] for gene in network_genes]))
@@ -51,15 +66,24 @@ class CombinationDataset(Data):
 
 
 
-def repack_ranks(ranks, global_gene_to_node):
+def repack_ranks(ranks: pd.core.frame.DataFrame, global_gene_to_node: Dict[str, int] ):
+    """_summary_
+
+    Args:
+        ranks (pd.core.DataFrame): cell by gene rank dataframe
+        global_gene_to_node (Dict[str, int]): mapping between gene name and global node index
+
+    Returns:
+        _type_: _description_
+    """    
     ### right now the ranks are ordered by gene, but we want to order them by rank
     enough_genes = ~((ranks.values == ZERO_IDX).sum(axis = 1) == ranks.shape[1]-2)
-    ranks = ranks[enough_genes, :]
+    ranks = ranks[enough_genes]
     repacked_ranks = []
     repacked_global_indices = []
     repacked_local_indices = []
     for i in range(ranks.shape[0]):
-        row  = [(ranks[i,j],global_gene_to_node[ranks.columns[j]] ,j) for j in range(ranks.shape[1])]
+        row  = [(ranks.iloc[i,j],global_gene_to_node[ranks.columns[j]] ,j) for j in range(ranks.shape[1])]
         row  = sorted(row, key=lambda x: x[0])
         rank_values,rank_global_indices, rank_local_indices = zip(*row)
         rank_values = np.array(rank_values)
@@ -71,14 +95,27 @@ def repack_ranks(ranks, global_gene_to_node):
         repacked_local_indices.append(torch.tensor(rank_local_indices[nonzero], dtype = torch.long) )
     return torch.nested.nested_tensor(repacked_ranks), torch.nested.nested_tensor(repacked_global_indices), torch.nested.nested_tensor(repacked_local_indices)
 
-def pad_make_masks(tns_list):
+def pad_make_masks(tns_list:List[torch.Tensor], return_mask:bool=True) -> torch.Tensor:
+    """_summary_
+    take a list of un-even length tensors and pad them to the same length,
+    Args:
+        tns_list (List[torch.Tensor]): _description_
+        return_mask (bool, optional): _description_. Defaults to True.
+
+    Returns:
+        torch.Tensor: padded tensor, and potentially a mask tensor 
+    """      
     lens = [t.shape[0] for t in tns_list]
     max_len = max(lens)
-    mask = torch.zeros(len(tns_list), max_len)
-    for i, l in enumerate(lens):
-        mask[i, :l] = 1
-    padded = torch.nn.utils.rnn.pad_sequence(tns_list, batch_first=True)
-    return padded, mask.to(padded.device)
+    if return_mask:
+        mask = torch.zeros(len(tns_list), max_len)
+        for i, l in enumerate(lens):
+            mask[i, :l] = 1
+        padded = torch.nn.utils.rnn.pad_sequence(tns_list, batch_first=True)
+        return padded, mask.to(padded.device)
+    else:
+        padded = torch.nn.utils.rnn.pad_sequence(tns_list, batch_first=True)
+        return padded
 
 ## this wraps the whole data batching process for multiple graphs into a single dataset, so that data elements 
 ## dont need to stored outsdie of data loading code - main to deal with accessing ranks from the
@@ -86,19 +123,46 @@ def pad_make_masks(tns_list):
 ## only issue is that the node batching itself is fixed - meaning that the same nodes are used for each batch
 class MultiGraphWrapperDataset:
     def __init__(self, aracne_outdirs, gene_to_node_file, batch_size=64, 
-                 neigborhood_size=-1, num_hops=1, shuffle_nl=True):
+                 neigborhood_size=-1, num_hops=1, shuffle_nl=True, subsample=False, use_cache = False, cache_dir = "/pmglocal/vss2134/scGraphLLM/data_cache"):
         self.batched_data = []
+        self.subsample = subsample
         global_gene_to_node = pd.read_csv(gene_to_node_file)
-        for outdir in aracne_outdirs:
+        global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
+        self.unique_genes = []
+        ## right now we use just the outdir to check for timestamps 
+        ## it would be better to use the timestamps of the actual network and rank files.
+        for outdir in tqdm.tqdm(aracne_outdirs):
+            network_name = outdir.split("/")[-1]
+            orig_timestamp = os.path.getmtime(outdir)
+            cache_file = f"{cache_dir}/{network_name}.pickle"
+            if use_cache:
+                if os.path.exists(cache_file):
+                    with open(cache_file, "rb") as f:
+                        batched_data, unique_genes, saved_timestamp, saved_gene_to_node_file = pickle.load(f)
+                    #if orig_timestamp == saved_timestamp and gene_to_node_file == saved_gene_to_node_file:
+                        print(f"using cache for {network_name}")
+                        self.batched_data+= batched_data
+                        self.unique_genes+= unique_genes
+                        continue
             node_indices, edge_list, edge_weights, ranks = aracne_to_edge_list(outdir, global_gene_to_node)
-
+            unique_genes =ranks.columns.to_list()
+            self.unique_genes+= unique_genes
             dataset = CombinationDataset(edge_index=edge_list, edge_weight=edge_weights, 
                                         node_index=node_indices, rank_embedding=ranks)
             nl= NeighborLoader(data=dataset, replace=False, num_neighbors=[neigborhood_size] * num_hops, 
                                     input_nodes=None, subgraph_type="bidirectional", disjoint=False,
                                     weight_attr="edge_weight", batch_size=batch_size, shuffle=shuffle_nl)
-            self.batched_data+= [(batch.x, batch.edge_index, batch.edge_weight, repack_ranks(dataset.rank_embedding.iloc[:,batch.n_id], global_gene_to_node ) ) for batch in nl]
+            batched_data = [(batch.x, batch.edge_index, batch.edge_weight, repack_ranks(dataset.rank_embedding.iloc[:,batch.n_id.numpy()], global_gene_to_node ) ) for batch in nl]
+            if use_cache:
+                print(f"writing cache for {network_name}")
+                Path(cache_dir).mkdir(parents=True, exist_ok=True)
+                with open(cache_file, "wb+") as f:
+                    pickle.dump((batched_data, unique_genes, orig_timestamp, gene_to_node_file), f)
+            self.batched_data+= batched_data
+        self.unique_genes = list(set(self.unique_genes))
     def __len__(self):
+        if self.subsample:
+            return 3
         return len(self.batched_data)
     def __getitem__(self, idx):
         return self.batched_data[idx]

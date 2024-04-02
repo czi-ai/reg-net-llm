@@ -42,6 +42,18 @@ def simulate_data(num_classes=2, graphs_per_class=5, num_nodes_per_graph=10,
             data_list.append(data)
       return data_list
 
+def update_mconfig_from_dict(mconfig, sweep_dict, ignore_keys={}):
+    sweep_keys = [k for k in sweep_dict.keys() if k not in ignore_keys ]
+    for skey in sweep_keys:
+        key_path = skey.split("-")
+        c_dict = mconfig
+        for _key in key_path[:-1]:
+            c_dict = c_dict[_key]
+        ## preserve original datatype of parameter
+        orig_dtype = type(c_dict[key_path[-1]])
+        c_dict[key_path[-1]]=orig_dtype(sweep_dict[skey])
+    return mconfig
+
 class CombinedDataset(InMemoryDataset):
     def __init__(self, data_list):
         super(CombinedDataset, self).__init__('.')

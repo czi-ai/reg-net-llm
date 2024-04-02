@@ -1,3 +1,4 @@
-PAD_IDX=0
-MASK_IDX=1
-ZERO_IDX=2
+## these correspond to indices in the gene and rank embedding layers 
+PAD_IDX=0 ## the padding token
+MASK_IDX=1 ## the mask token
+ZERO_IDX=2 ## the lowest rank, aka gene with expression 0
