@@ -4,7 +4,7 @@ from torch_geometric.loader import NeighborLoader
 from torch_geometric.nn import MessagePassing
 import numpy as np
 import pandas as pd 
-from scGraphLLM._globals import ZERO_IDX
+from _globals import ZERO_IDX
 # Ground truth message passing mechnism
 class WeightedAverageConv(MessagePassing):
     def __init__(self):
