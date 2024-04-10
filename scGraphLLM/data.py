@@ -139,6 +139,7 @@ class MultiGraphWrapperDataset:
                 if os.path.exists(cache_file):
                     with open(cache_file, "rb") as f:
                         batched_data, unique_genes, saved_timestamp, saved_gene_to_node_file = pickle.load(f)
+                    ## TODO: fix the timestamp check
                     #if orig_timestamp == saved_timestamp and gene_to_node_file == saved_gene_to_node_file:
                         print(f"using cache for {network_name}")
                         self.batched_data+= batched_data
