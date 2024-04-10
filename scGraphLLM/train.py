@@ -1,9 +1,8 @@
 # Main location of training
 import torch
-from scGraphLLM.config.model_config import GNNConfig
 from scGraphLLM.GNN_modules import GCN_attn, attention_sparsity, graph_smoothness
 import tqdm
-
+from torch_geometric.loader import DataLoader
 
 """
 Multi-GPU training will be tricky for this model, since we'll need to maintain the output of the graph encoder. So for now, lets just get something 
@@ -24,29 +23,34 @@ class TrainerConfig:
 
 
 class GNN_Trainer:
-    def __init__(self, train_loader, val_loader, model_config=GNNConfig(), train_config=TrainerConfig()):
+    def __init__(self, train_dataset, val_dataset, model_config, train_config=TrainerConfig()):
         self.model_config = model_config
         self.train_config = train_config
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'mps')
         self.model = GCN_attn(self.model_config.input_dim, self.model_config.hidden_dims, 
                               self.model_config.conv_dim, self.model_config.out_dim).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.train_config.lr, 
                                           weight_decay=self.train_config.weight_decay)
-        self.train_data = train_loader
-        self.val_data = val_loader
+        self.train_data = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=0)
+        self.val_data = DataLoader(val_dataset, batch_size=2, shuffle=False, num_workers=0)
+        if torch.backends.mps.is_available():
+            generator = torch.Generator(device='mps')
+        else:
+            generator = torch.Generator(device='cpu')
+        
+        self.train_data.sampler.generator = generator
+        self.val_data.sampler.generator = generator
     
     def train_one_batch(self, train_batch):
         self.model.train()
         train_batch = train_batch.to(self.device)
         h,h_conv, graphs, w = self.model(train_batch.x, train_batch.edge_index, train_batch.edge_attr)
         graph_labels = train_batch.y
-        gs_reg = self.train_config.alpha * graph_smoothness(h_conv, graphs)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(h, graph_labels)
         l1_reg = sum(torch.norm(param, p=1) for param in self.model.parameters())
         loss += self.train_config.lambda_l1 * l1_reg
         l2_reg = sum(torch.norm(param, p=2) ** 2 for param in self.model.parameters())
         loss += self.train_config.lambda_l2 * l2_reg
-        loss += gs_reg
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
@@ -59,16 +63,15 @@ class GNN_Trainer:
         val_batch = val_batch.to(self.device)
         h, h_conv, graphs, w = self.model(val_batch.x, val_batch.edge_index, val_batch.edge_attr)
         graph_labels = val_batch.y
-        gs_reg = self.train_config.alpha * graph_smoothness(h_conv, graphs)
         loss = torch.nn.functional.binary_cross_entropy_with_logits(h, graph_labels)
         l1_reg = sum(torch.norm(param, p=1) for param in self.model.parameters())
         loss += self.train_config.lambda_l1 * l1_reg
         l2_reg = sum(torch.norm(param, p=2) ** 2 for param in self.model.parameters())
         loss += self.train_config.lambda_l2 * l2_reg
-        loss += gs_reg
         return loss, graphs, h_conv, w
     
     def train_loop(self):
+        self.model.to(device=self.device)
         all_graphs, all_h, all_attn = [], [], []
         train_loss, val_loss = [], []
         for epoch in range(self.train_config.num_epochs):

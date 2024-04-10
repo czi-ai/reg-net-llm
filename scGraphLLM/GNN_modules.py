@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
-from MLP_modules import MLPAttention, MLPCrossAttention
+from scGraphLLM.MLP_modules import MLPAttention, MLPCrossAttention
 #from config import GNNConfig
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian
 class GNNConfig:
@@ -15,6 +15,7 @@ class GNNConfig:
     out_dim: int = 20
     latent_dim: int = 64
     num_graphs: int = 6
+
         
 class GAT(torch.nn.Module):
     def __init__(self, node_feature_dim, out_dim):
@@ -79,12 +80,7 @@ class GCN_attn(nn.Module):
     self.out_dim = out_dim
     self.f = activation
 
-    # Attention layers
-    attention_networks = [MLPCrossAttention(16, 2)]
-    for i in range(1, len(self.hidden_dims)):
-      attention_networks.append(MLPCrossAttention(16, 2))
-    attention_networks.append(MLPCrossAttention(16, 2))
-    self.attention_networks = nn.ModuleList(attention_networks)
+    self.attention_network = MLPCrossAttention(16, 2)
 
      # GCN layers
     layers = [GCNConv(self.input_dim, self.hidden_dims[0], add_self_loops=False)]
@@ -101,7 +97,6 @@ class GCN_attn(nn.Module):
     bns.append(BatchNorm(self.conv_dim))
     self.bns = nn.ModuleList(bns)
 
-    print("Number of Attention layers: ", len(self.attention_networks))
     print("Number of GNN layers: ", len(self.layers))
     print("Number of Batch Normalization layers: ", len(self.bns))
 
@@ -115,10 +110,10 @@ class GCN_attn(nn.Module):
        if i < len(self.layers) - 1:
         inner = torch.matmul(h, h.transpose(0, 1))
         A_learned = F.sigmoid(inner)* (1-torch.eye(A_orig.shape[0])) 
-        A_merged, attn_weights = self.attention_networks[i](A_orig, A_learned)
-        A_merged = A_merged * (1 - torch.eye(h.shape[0]))
         sparsity_threshold = 0.2 # graph sparsification
-        A_merged = torch.where(A_merged > sparsity_threshold, A_merged, torch.zeros_like(A_learned))
+        A_learned = torch.where(A_learned > sparsity_threshold, A_learned, torch.zeros_like(A_learned))
+        A_merged, attn_weights = self.attention_network(A_learned, A_orig) # A_orig = K, V, A_learned = Q
+        A_merged = A_merged * (1 - torch.eye(h.shape[0]))
         A_in, W_merged = dense_to_sparse(A_merged)
         h = layer(h, A_in, W_merged)
         h = self.bns[i](h)

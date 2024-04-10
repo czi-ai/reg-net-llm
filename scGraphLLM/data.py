@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import Data, InMemoryDataset, DataLoader, Batch
+from torch_geometric.data import Data, InMemoryDataset, DataLoader, Batch, Dataset
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.nn import MessagePassing
 import numpy as np
@@ -11,6 +11,7 @@ import tqdm
 import warnings
 from typing import List, Dict
 from pathlib import Path
+from torch_geometric.utils import k_hop_subgraph
 
 def aracne_to_edge_list(aracne_out: List, global_gene_to_node_index:str):
     """_summary_
@@ -63,6 +64,41 @@ class CombinationDataset(Data):
         self.edge_weight = edge_weight
         self.x = node_index
         self.rank_embedding = rank_embedding
+
+
+# This is a dataset that splits graph based on k hop instead of neighbourhood sampling
+class SubgraphDataset(Dataset):
+    def __init__(self, base_dataset, num_hops, num_subgraphs_per_graph):
+        super(SubgraphDataset, self).__init__()
+        self.base_dataset = base_dataset
+        self.num_hops = num_hops
+        self.num_subgraphs_per_graph = num_subgraphs_per_graph
+        self.subgraphs = self.create_subgraphs()
+
+    def create_subgraphs(self):
+        subgraphs = []
+        for data in self.base_dataset:
+            num_nodes = data.num_nodes
+            for _ in range(self.num_subgraphs_per_graph):
+                # Randomly select a central node
+                central_node = torch.randint(0, num_nodes, (1,)).item()
+                # Extract the k-hop subgraph
+                subgraph_nodes, subgraph_edge_index, _, _ = k_hop_subgraph(
+                    central_node, self.num_hops, data.edge_index, relabel_nodes=True
+                )
+                subgraph = Data(
+                    x=data.x[subgraph_nodes],
+                    edge_index=subgraph_edge_index,
+                    y=data.y if data.y.dim() == 0 else data.y[subgraph_nodes]
+                )
+                subgraphs.append(subgraph)
+        return subgraphs
+
+    def len(self):
+        return len(self.subgraphs)
+
+    def get(self, idx):
+        return self.subgraphs[idx]
 
 
 
