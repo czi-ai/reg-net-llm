@@ -4,6 +4,7 @@ set -e
 
 mkdir -p /pmglocal/$USER/mambaforge/envs/scllm
 module load cuda12.1
+module load mamba
 source activate /pmglocal/$USER/mambaforge/envs/scllm pytorch torchvision torchaudio pytorch-cuda=12.1 pyg lightning pyarrow -c pyg -c pytorch -c nvidia -c conda-forge
 mamba activate /pmglocal/$USER/mambaforge/envs/scllm
 pip install ninja scanpy plotnine pandas scikit-learn ipykernel wandb polars fast_matrix_market jupyter loralib
