@@ -1,4 +1,4 @@
-import scGraphLLM.models as models
+import models as models
 import torch 
 class Config(dict):
     def __getattr__(self, item):
