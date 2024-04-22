@@ -12,7 +12,7 @@ from _globals import * ## these define the indices for the special tokens
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
-        self.gnn_encoder = baseGCN(**config.model_config.gnn_config)
+        self.gnn_encoder = GNN(**config.model_config.gnn_config)
         self.node_embedding = torch.nn.Embedding(config.model_config.node_embedding_size, config.model_config.node_embedding_dim)
         self.rank_embedding = torch.nn.Embedding(config.model_config.rank_embedding_size, config.model_config.rank_embedding_dim)
         self.mlm_encoder = FlashTransformerEncoderLayer(**config.model_config.mlm_config)
@@ -32,7 +32,7 @@ class LitScGraphLLM(pl.LightningModule):
         
         ## wasn't getting the gnn to work so jus commented it out for now
         ## but needs to basically take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
-        #node_embeddings, edge_index, edge_weight, attn_weight = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
+        node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
 
         ranks, rank_global_gene_indices, rank_local_gene_indices = rank_data # 
         # these are all NestedTensors(https://pytorch.org/docs/stable/nested.html) with integer valued rows;  Its analgous to a list of different length lists.
@@ -52,6 +52,8 @@ class LitScGraphLLM(pl.LightningModule):
         masked_full_cell_embedding, mask_locs = self.mask_tensor(torch.cat([gene_embeddings, rank_embeddings], dim=2)) ## the rank embedding and gene embedding layers are concatenated together and masked. in the masking operation, 15% of the token embedding vectors are replaced with <MASK> values, which is a concatenation of the <MASK> token from the node_embedding layer and the <MASK> token from the rank_embedding layer. This is a n x r x L_dim tensor
         learned_cell_embedding = self.mlm_encoder(masked_full_cell_embedding, attn_mask) ## this outputs an n x r x L_dim tensor
         return learned_cell_embedding, global_gene_indices, mask_locs
+
+        
     def training_step(self, batch, batch_idx):
         learned_cell_embedding, rank_global_gene_indices, mask_locs = self(batch)
         predicted_gene_id= self.prediction_head(learned_cell_embedding) ## this maps the n x r x L_dim tensor to an n x r x G tensor
@@ -75,6 +77,7 @@ class LitScGraphLLM(pl.LightningModule):
         for i in range(num_to_mask):
             masked_tensor[batch_indices[i], seq_indices[i], :] = mask_value.clone()
         return masked_tensor, (batch_indices, seq_indices)
+
     def mlm_loss(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
         batch_indices, seq_indices=mask_locs
 
@@ -82,6 +85,7 @@ class LitScGraphLLM(pl.LightningModule):
         labels = rank_global_gene_indices[batch_indices, seq_indices]
         loss = F.cross_entropy(masked_predictions,labels)
         return loss
+
     def configure_optimizers(self):
         optim_fn = self.optim_config["optimizer"]
         optimizer = optim_fn(self.parameters(), **self.optim_config.args)

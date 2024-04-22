@@ -1,5 +1,6 @@
 import models as models
 import torch 
+
 class Config(dict):
     def __getattr__(self, item):
         try:
@@ -25,15 +26,16 @@ mlm_config = Config({
     "batch_first":True
 })
 
-basegcn_config = Config({ 
+gnn_config = Config({ 
     "input_dim": 64,
-    "hidden_dims": (64,),
-    "conv_dim": 64,
-    "out_dim": 64,
+    "hidden_dims": [128, 64, 32],
+    "conv_dim": 64, # this needs to be 2 * last layer dim
+    "num_heads": [2, 2, 2, 1], #number of head per graph attention layer. Length = num_hidden_layers + 1
+    "out_dim": 64
 })
 
 base_model_config = Config({
-    "gnn_config" : basegcn_config,
+    "gnn_config" : gnn_config,
     "mlm_config" : mlm_config,
     "rank_embedding_size":5010, ## arbitary rn, but theoretically should be the cell with most genes 
     "rank_embedding_dim": 64,
@@ -72,7 +74,7 @@ full_run_config = Config({
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
             "batch_size":64, 
             "neigborhood_size":-1, 
-            "num_hops":1, 
+            "num_hops":3,  # this needs to be length of GNN hidden layers
             "shuffle_nl":True,
             "use_cache":True,
             "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cache"
