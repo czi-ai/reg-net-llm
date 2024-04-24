@@ -13,6 +13,7 @@ class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.gnn_encoder = GNN(**config.model_config.gnn_config)
+        self.link_pred_decoder = LinkPredictor(config.model_config.node_embedding_size)
         self.node_embedding = torch.nn.Embedding(config.model_config.node_embedding_size, config.model_config.node_embedding_dim)
         self.rank_embedding = torch.nn.Embedding(config.model_config.rank_embedding_size, config.model_config.rank_embedding_dim)
         self.mlm_encoder = FlashTransformerEncoderLayer(**config.model_config.mlm_config)
@@ -60,6 +61,7 @@ class LitScGraphLLM(pl.LightningModule):
         loss = self.mlm_loss(predicted_gene_id, rank_global_gene_indices, mask_locs)
         self.log('train_loss', loss)
         return loss
+
     def mask_tensor(self, tensor,mask_ratio=0.15):
         """
         Given a tensor, mask a ratio of the vectors in the tensor
@@ -85,6 +87,32 @@ class LitScGraphLLM(pl.LightningModule):
         labels = rank_global_gene_indices[batch_indices, seq_indices]
         loss = F.cross_entropy(masked_predictions,labels)
         return loss
+    
+    def link_pred_loss(self, predicted_gene_id, mask_locs, edge_index):
+        pos_out = []
+        neg_out = []
+        batch_indices, seq_indices=mask_locs
+        node_embeddings = predicted_gene_id[batch_indices, seq_indices, :]
+        predictor = self.link_pred_decoder
+    
+        for masked in masked_indices:
+            # Positive examples
+            pos_neighbors = edge_index[1, edge_index[0] == masked]
+            pos_scores = predictor(node_embeddings[masked].repeat(len(pos_neighbors), 1), node_embeddings[pos_neighbors])
+            pos_out.append(pos_scores)
+
+            # Negative examples - sampled randomly
+            neg_neighbors = negative_sampling(edge_index, num_nodes=node_embeddings.size(0), num_neg_samples=pos_neighbors.size(0))
+            neg_scores = predictor(node_embeddings[masked].repeat(len(neg_neighbors), 1), node_embeddings[neg_neighbors])
+            neg_out.append(neg_scores)
+
+        pos_out = torch.cat(pos_out, dim=0)
+        neg_out = torch.cat(neg_out, dim=0)
+    
+        # Loss calculation
+        pos_loss = -torch.log(pos_out + 1e-10).mean()
+        neg_loss = -torch.log(1 - neg_out + 1e-10).mean()
+        return pos_loss + neg_loss
 
     def configure_optimizers(self):
         optim_fn = self.optim_config["optimizer"]

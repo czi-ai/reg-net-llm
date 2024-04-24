@@ -172,6 +172,16 @@ class ContrastiveLoss(nn.Module):
         return loss
 
         
+class LinkPredictor(nn.Module):
+    def __init__(self, hidden_dim):
+        super(LinkPredictor, self).__init__()
+        self.fc1 = nn.Linear(2 * hidden_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, 1)
 
+    def forward(self, x_i, x_j):
+        x = torch.cat([x_i, x_j], dim=-1)
+        x = F.relu(self.fc1(x))
+        x = torch.sigmoid(self.fc2(x))
+        return x
 
 
