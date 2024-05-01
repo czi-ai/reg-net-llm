@@ -7,6 +7,7 @@ import scanpy as sc
 import anndata as ad
 
 import os
+import re
 from os.path import join, normpath, basename
 from functools import partial
 from argparse import ArgumentParser
@@ -28,6 +29,12 @@ N_MEASURED_OBS = "n_measured_obs"
 # obs names
 CELL_TYPE = "cell_type"
 TISSUE = "tissue"
+
+STATIC_VARS = [
+    SOMA_JOINID, 
+    FEATURE_ID, 
+    FEATURE_LENGTH
+]
 
 TISSUES = [
     "heart",
@@ -73,19 +80,16 @@ def read_cxg_h5ad_file(fpath):
     return adata
 
 
-def concatenate_partitions(partitions, keep_num_vars=False):
+def concatenate_partitions(partitions):
     """Concatenate the partitions of cellxgene datasets"""
     # concatenate observations
     adata = ad.concat(partitions, axis=0)
-
-    # concatenate vars
-    # if keep_num_vars:
-    var = pd.concat([p.var for p in partitions], axis=0)\
-        .groupby([SOMA_JOINID, FEATURE_ID, FEATURE_NAME, FEATURE_LENGTH]).agg("sum")\
-        .reset_index()\
-        .set_index(FEATURE_NAME)
-
-    adata.var = var
+    # check consistency in var metadata
+    var = partitions[0].var[STATIC_VARS]
+    for p in partitions:
+        assert p.var[STATIC_VARS].equals(var),\
+            "Static vars are not consistent across partitions, cannot be concatenated"
+    adata.var
     return adata
 
 
@@ -96,15 +100,25 @@ def get_tissue(tissue, data_dir=DATA_DIR, limit=None):
     return adata
 
 
+def clean_cell_type_name(cell_type_name):
+    # Replace spaces and backslashes with underscores
+    cell_type_name = cell_type_name.replace(" ", "_").replace("/", "_")
+    # Remove non-alphanumeric characters, hyphens, and underscores, lower
+    cell_type_name = re.sub(r"[^a-zA-Z0-9-_]", "", cell_type_name).lower()
+    return cell_type_name
+
+
 def write_cell_types(tissue, data_dir, type_dir, limit=None):
     print(f"Getting data for tissue {tissue}")
     adata = get_tissue(tissue, data_dir=data_dir, limit=limit)
 
-    # limit to most frequent cell types
-    cell_types = adata\
-      .obs[CELL_TYPE].value_counts(normalize=True, ascending=False)\
-      .index[:limit]
+    # clean cell typenames
+    adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
+    cell_types = adata.obs[CELL_TYPE].unique().sort_values() \
+        if limit is None else \
+        adata.obs[CELL_TYPE].value_counts(normalize=True, ascending=False).index[:limit]
     
+    # write cell type to separate partitions
     for cell_type in cell_types:
         cell_type_str = cell_type.replace(" ", "_")
         cell_type_dir = join(type_dir, cell_type_str)
