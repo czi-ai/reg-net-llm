@@ -58,8 +58,19 @@ class LitScGraphLLM(pl.LightningModule):
         learned_cell_embedding, rank_global_gene_indices, mask_locs = self(batch)
         predicted_gene_id= self.prediction_head(learned_cell_embedding) ## this maps the n x r x L_dim tensor to an n x r x G tensor
         loss = self.mlm_loss(predicted_gene_id, rank_global_gene_indices, mask_locs)
+        pp = self.pseudo_perp(predicted_gene_id, rank_global_gene_indices, mask_locs)
         self.log('train_loss', loss)
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        learned_cell_embedding, rank_global_gene_indices, mask_locs = self(batch)
+        predicted_gene_id= self.prediction_head(learned_cell_embedding) ## this maps the n x r x L_dim tensor to an n x r x G tensor
+        loss = self.mlm_loss(predicted_gene_id, rank_global_gene_indices, mask_locs)
+        pp = self.pseudo_perp(predicted_gene_id, rank_global_gene_indices, mask_locs)
+        self.log('val_loss', loss)
+        self.log("Pseudo-Perplexity", pp)
+        return loss
+
     def mask_tensor(self, tensor,mask_ratio=0.15):
         """
         Given a tensor, mask a ratio of the vectors in the tensor
@@ -85,6 +96,22 @@ class LitScGraphLLM(pl.LightningModule):
         labels = rank_global_gene_indices[batch_indices, seq_indices]
         loss = F.cross_entropy(masked_predictions,labels)
         return loss
+
+    def pseudo_perp(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
+        batch_indices, seq_indices=mask_locs
+        masked_predictions = predicted_gene_id[batch_indices, seq_indices, :] ## because we record the location of the masked tokens, we cna retrieve just the masked tokens, and collapse the first dimension, ie mapping from n x r x G to m x G where m is the number of masked tokens
+        labels = rank_global_gene_indices[batch_indices, seq_indices]
+
+        # Get softmax probabilities
+        sft = nn.Softmax(dim=1)
+        probabilities = sft(masked_predictions)
+
+        L = labels.shape[0]
+        # Get the summed log-likelihoods
+        sum_llk = sum([torch.log(probabilities[i, labels[i]]) for i in range(L)]) # sum of log likelihood # get the model's softmax probability for the correct token
+        # Pseudo-perplexity calculation
+        pp = torch.exp(-(1/L)*sum_llk)
+        return pp
 
     def configure_optimizers(self):
         optim_fn = self.optim_config["optimizer"]
