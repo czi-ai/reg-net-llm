@@ -16,10 +16,10 @@ There are two distinct steps:
 2. "preprocess: Preprocess the cells, including quality checks and filtering.
 
 Example: peform both steps 1 and 2:
-$ python python preprocess_cellxgene.py --steps separate preprocess --parallel
+$ python preprocess_cellxgene.py --steps separate preprocess --parallel
 
 Example: peform both steps 1 and 2, exlusively for heart and lung cells:
-$ python python preprocess_cellxgene.py --steps separate preprocess --tissues heart lung --parallel 
+$ python preprocess_cellxgene.py --steps separate preprocess --tissues heart lung --parallel 
 """
 
 import pandas as pd 
@@ -39,7 +39,6 @@ warnings.filterwarnings("ignore")
 # directories
 CELLXGENE_DIR = "/burg/pmg/users/rc3686/data/cellxgene"
 DATA_DIR = join(CELLXGENE_DIR, "data")
-TYPE_DIR = join(CELLXGENE_DIR, "data_by_type")
 
 # var names
 FEATURE_NAME = "feature_name"
@@ -116,8 +115,8 @@ def concatenate_partitions(partitions):
     return adata
 
 
-def get_tissue(tissue, data_dir=DATA_DIR, limit=None):
-    tissue_dir = join(data_dir, tissue)
+def get_tissue(tissue, tissue_dir, limit=None):
+    tissue_dir = join(tissue_dir, tissue)
     partitions = [read_cxg_h5ad_file(file) for file in list_files(tissue_dir)[:limit]]
     adata = concatenate_partitions(partitions)
     return adata
@@ -131,9 +130,9 @@ def clean_cell_type_name(cell_type_name):
     return cell_type_name
 
 
-def write_cell_types(tissue, data_dir, type_dir, limit=None):
+def write_cell_types(tissue, tissue_dir, type_dir, limit=None):
     print(f"Getting data for tissue {tissue}")
-    adata = get_tissue(tissue, data_dir=data_dir, limit=limit)
+    adata = get_tissue(tissue, tissue_dir=tissue_dir, limit=limit)
 
     # clean cell typenames
     adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
@@ -152,7 +151,7 @@ def write_cell_types(tissue, data_dir, type_dir, limit=None):
         subset.write_h5ad(join(cell_type_dir, f"{tissue}.h5ad"))
 
 
-def load_cell_type(cell_type_dir, type_dir=TYPE_DIR):
+def load_cell_type(cell_type_dir):
     partitions = [read_cxg_h5ad_file(file) for file in list_files(cell_type_dir)]
     adata = concatenate_partitions(partitions)
     return adata
@@ -180,10 +179,11 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
     adata.write_h5ad(join(cell_type_dir, "full.h5ad"))
     return adata
 
+
 def separate(args):
     kwargs = dict(
         type_dir=args.type_dir,
-        data_dir=args.data_dir,
+        tissue_dir=args.tissue_dir,
         limit=args.type_limit
     )
     if args.parallel:
@@ -227,6 +227,8 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--figures", action="store_true")
     parser.add_argument("--data_dir", type=str, default=DATA_DIR)
-    parser.add_argument("--type_dir", type=str, default=TYPE_DIR)
+    parser.add_argument("--suffix", default="001")
     args = parser.parse_args()
+    args.tissue_dir = join(args.data_dir, "tissue")
+    args.type_dir = join(args.data_dir, "cell_type" + "_" + args.suffix)
     main(args)
