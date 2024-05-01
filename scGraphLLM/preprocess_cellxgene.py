@@ -31,6 +31,7 @@ import os
 import re
 import warnings
 import multiprocessing as mp
+from typing import List
 from os.path import join, basename
 from functools import partial
 from argparse import ArgumentParser
@@ -66,8 +67,7 @@ TISSUES = [
     "kidney",
     "intestine"
     "pancreas",
-    "others",
-    "pan-cancer"
+    "others"
 ]
 
 def list_files(dir):
@@ -130,25 +130,27 @@ def clean_cell_type_name(cell_type_name):
     return cell_type_name
 
 
-def write_cell_types(tissue, tissue_dir, type_dir, limit=None):
+def write_cell_types(tissue, tissue_dir, type_dir, limit=None) -> List[str]:
+    """Writes cell-type subsets to specific"""
     print(f"Getting data for tissue {tissue}")
     adata = get_tissue(tissue, tissue_dir=tissue_dir, limit=limit)
 
     # clean cell typenames
+    adata.obs[f"original_{CELL_TYPE}"] = adata.obs[CELL_TYPE].copy()
     adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
-    cell_types = adata.obs[CELL_TYPE].unique().sort_values() \
+    cell_types = adata.obs[CELL_TYPE].unique().sort_values().to_series() \
         if limit is None else \
-        adata.obs[CELL_TYPE].value_counts(normalize=True, ascending=False).index[:limit]
+        adata.obs[CELL_TYPE].value_counts(ascending=False).index[:limit].to_series()
     
     # write cell type to separate partitions
     for cell_type in cell_types:
-        cell_type_str = cell_type.replace(" ", "_")
-        cell_type_dir = join(type_dir, cell_type_str)
-        os.makedirs(cell_type_dir, exist_ok=True)
-        
+        cell_type_dir = join(type_dir, cell_type)
+        os.makedirs(cell_type_dir, exist_ok=True) 
         print(f"Getting {cell_type} cells of {tissue}..." )
         subset = adata[adata.obs[CELL_TYPE] == cell_type]
         subset.write_h5ad(join(cell_type_dir, f"{tissue}.h5ad"))
+    
+    return cell_types
 
 
 def load_cell_type(cell_type_dir):
@@ -187,7 +189,9 @@ def separate(args):
         limit=args.type_limit
     )
     if args.parallel:
-        apply_parallel_list(args.tissues, func=partial(write_cell_types, **kwargs))
+        cell_types = apply_parallel_list(args.tissues, func=partial(write_cell_types, **kwargs))
+        cell_types = pd.Series(pd.concat(cell_types).unique()).rename("cell_type")
+        cell_types.to_csv(args.cell_types_path, index=False)
         return
     for tissue in args.tissues:
         write_cell_types(tissue, **kwargs)
@@ -227,8 +231,12 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--figures", action="store_true")
     parser.add_argument("--data_dir", type=str, default=DATA_DIR)
-    parser.add_argument("--suffix", default="001")
+    parser.add_argument("--suffix", required=True)
     args = parser.parse_args()
+    
+    # define directories
     args.tissue_dir = join(args.data_dir, "tissue")
     args.type_dir = join(args.data_dir, "cell_type" + "_" + args.suffix)
+    args.cell_types_path = join(args.type_dir, f"{CELL_TYPE}.csv")
+
     main(args)
