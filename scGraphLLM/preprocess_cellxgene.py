@@ -21,7 +21,7 @@ $ python preprocess_cellxgene.py --steps separate preprocess --parallel
 Example: peform both steps 1 and 2, exlusively for heart and lung cells:
 $ python preprocess_cellxgene.py --steps separate preprocess --tissues heart lung --parallel 
 """
-
+import json
 import pandas as pd 
 import numpy as np 
 import scanpy as sc
@@ -29,13 +29,21 @@ import anndata as ad
 
 import os
 import re
+import sys
 import warnings
+import logging
 import multiprocessing as mp
 from typing import List
 from os.path import join, basename
 from functools import partial
 from argparse import ArgumentParser
+
+from cell_types import *
+
 warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.setLevel(logging.DEBUG)
 
 # directories
 CELLXGENE_DIR = "/burg/pmg/users/rc3686/data/cellxgene"
@@ -65,7 +73,7 @@ TISSUES = [
     "brain",
     "lung",
     "kidney",
-    "intestine"
+    "intestine",
     "pancreas",
     "others"
 ]
@@ -132,11 +140,12 @@ def clean_cell_type_name(cell_type_name):
 
 def write_cell_types(tissue, tissue_dir, type_dir, limit=None) -> List[str]:
     """Writes cell-type subsets to specific"""
-    print(f"Getting data for tissue {tissue}")
+    logger.info(f"Getting data for tissue {tissue}")
     adata = get_tissue(tissue, tissue_dir=tissue_dir, limit=limit)
 
     # clean cell typenames
     adata.obs[f"original_{CELL_TYPE}"] = adata.obs[CELL_TYPE].copy()
+    adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(lambda t: CELL_TYPES_DICT.get(t, MISCELLANEOUS))    
     adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
     cell_types = adata.obs[CELL_TYPE].unique().sort_values().to_series() \
         if limit is None else \
@@ -146,7 +155,7 @@ def write_cell_types(tissue, tissue_dir, type_dir, limit=None) -> List[str]:
     for cell_type in cell_types:
         cell_type_dir = join(type_dir, cell_type)
         os.makedirs(cell_type_dir, exist_ok=True) 
-        print(f"Getting {cell_type} cells of {tissue}..." )
+        logger.info(f"Getting {cell_type} cells of {tissue}..." )
         subset = adata[adata.obs[CELL_TYPE] == cell_type]
         subset.write_h5ad(join(cell_type_dir, f"{tissue}.h5ad"))
     
@@ -160,7 +169,7 @@ def load_cell_type(cell_type_dir):
 
 
 def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum):
-    print(f"Preprocessing cell type: {basename(cell_type_dir)}...")
+    logger.info(f"Preprocessing cell type: {basename(cell_type_dir)}...")
     # load cell type data
     adata = load_cell_type(cell_type_dir)
 
@@ -212,10 +221,11 @@ def preprocess(args):
 
 
 def main(args):
+
     if "separate" in args.steps:
         separate(args)
     if "preprocess" in args.steps:
-        preprocess(args)
+        preprocess(args) 
     
 
 if __name__ == "__main__":
@@ -238,5 +248,15 @@ if __name__ == "__main__":
     args.tissue_dir = join(args.data_dir, "tissue")
     args.type_dir = join(args.data_dir, "cell_type" + "_" + args.suffix)
     args.cell_types_path = join(args.type_dir, f"{CELL_TYPE}.csv")
+    args.log_dir = join(args.data_dir, f"log")
+    
+    # logging
+    os.makedirs(args.log_dir, exist_ok=True)
+    logger.addHandler(logging.FileHandler(join(args.log_dir, f"log_{args.suffix}.txt")))
+    logger.info(json.dumps(vars(args), sort_keys=True, indent=4))
 
-    main(args)
+    try:
+        main(args)
+    except Exception as e: 
+        logger.exception(e)
+    
