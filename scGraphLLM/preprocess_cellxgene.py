@@ -26,6 +26,7 @@ import pandas as pd
 import numpy as np 
 import scanpy as sc
 import anndata as ad
+import matplotlib.pyplot as plt
 
 import os
 import re
@@ -77,6 +78,11 @@ TISSUES = [
     "pancreas",
     "others"
 ]
+
+# protein coding genes
+genes_names = pd.read_csv("/burg/pmg/users/rc3686/gene-name-map.csv", index_col=0)
+ENSG_PROTEIN_CODING = set(genes_names["ensg.values"])
+
 
 def list_files(dir):
     """List full paths of all files in a directory"""
@@ -143,6 +149,9 @@ def write_cell_types(tissue, tissue_dir, type_dir, limit=None) -> List[str]:
     logger.info(f"Getting data for tissue {tissue}")
     adata = get_tissue(tissue, tissue_dir=tissue_dir, limit=limit)
 
+    # filter non-protein-coding genes
+    adata = adata[:,adata.var["feature_id"].isin(ENSG_PROTEIN_CODING)]
+
     # clean cell typenames
     adata.obs[f"original_{CELL_TYPE}"] = adata.obs[CELL_TYPE].copy()
     adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(lambda t: CELL_TYPES_DICT.get(t, MISCELLANEOUS))    
@@ -167,15 +176,64 @@ def load_cell_type(cell_type_dir):
     adata = concatenate_partitions(partitions)
     return adata
 
+def plot_qc_figures(adata, title=None):
+    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
+    sc.pl.violin(adata, ['total_counts'], ax=axes[0,0], show=False)
+    axes[0,0].set_title("Total Counts")
+    
+    sc.pl.violin(adata, ['n_genes_by_counts'], ax=axes[1,0], show=False)
+    axes[1,0].set_title("N Genes by Counts")
+    
+    sc.pl.violin(adata, ['pct_counts_mt'], ax=axes[0,1], show=False)
+    axes[0,1].set_title("Percentage of Mitochondrial Counts")
 
-def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum):
-    logger.info(f"Preprocessing cell type: {basename(cell_type_dir)}...")
+    sc.pl.scatter(adata, x='total_counts', y='n_genes_by_counts', ax=axes[1,1], show=False)
+    axes[1,1].set_title("N Genes by Counts by Total Counts")
+
+    if title is not None:
+        fig.suptitle(title, size=30)
+    return fig, axes
+
+
+def plot_dim_reduction_figures(adata, title=None):
+    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
+    sc.pl.umap(adata, color="tissue", ax=axes[0,0], show=False)
+    axes[0,0].set_title("UMAP Plot, tissue")
+    axes[0,0].get_legend().remove()
+
+    sc.pl.pca(adata, color="tissue", ax=axes[0,1], show=False)
+    axes[0,1].set_title("PCA Plot, Tissue")
+
+    sc.pl.umap(adata, color="original_cell_type", ax=axes[1,0], show=False)
+    axes[1,0].set_title("UMAP Plot, Original Cell Type")
+    axes[1,0].get_legend().remove()
+
+    sc.pl.pca(adata, color="original_cell_type", ax=axes[1,1], show=False)
+    axes[1,1].set_title("PCA Plot, Original Cell Type")
+
+    if title is not None:
+        fig.suptitle(title, size=30)
+    return fig, axes
+
+
+def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum, 
+                         produce_figures=False, write=True):
+    cell_type = basename(cell_type_dir)
+    logger.info(f"Preprocessing cell type: {cell_type}...")
     # load cell type data
     adata = load_cell_type(cell_type_dir)
 
     # calculate qc metrics
     adata.var["mt"] = adata.var_names.map(lambda n: str(n).upper().startswith("MT"))
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
+
+    # produce qc figures
+    if produce_figures:
+        logger.info(f"Producing QC figures for cell type: {cell_type}")
+        fig_dir = join(cell_type_dir, "figures")
+        os.makedirs(fig_dir)
+        fig = plot_qc_figures(adata, title=f"Quality Checks, {cell_type}")[0]
+        fig.savefig(join(fig_dir, f"qc_{cell_type}.jpg"))
 
     # apply filters
     adata = adata[adata.obs["pct_counts_mt"] < mito_thres]
@@ -187,7 +245,20 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
     sc.pp.log1p(adata)
 
     # write 
-    adata.write_h5ad(join(cell_type_dir, "full.h5ad"))
+    if write:
+        adata.write_h5ad(join(cell_type_dir, "full.h5ad"))
+    
+    # produce dim reduction figures
+    if produce_figures:
+        logger.info(f"Producing DR figures for cell type: {cell_type}")
+        if adata.n_obs > 2 * 10000:
+            sc.pp.subsample(adata, n_obs=10000)
+        sc.pp.pca(adata, svd_solver="arpack")
+        sc.pp.neighbors(adata)
+        sc.tl.umap(adata)
+        fig = plot_dim_reduction_figures(adata, title=f"Dimensionality Reduction, {cell_type}")[0]
+        fig.savefig(join(fig_dir, f"dr_{cell_type}.jpg"))
+
     return adata
 
 
@@ -211,7 +282,8 @@ def preprocess(args):
         mito_thres=args.mito_thres, 
         umi_min=args.umi_min, 
         umi_max=args.umi_max, 
-        target_sum=args.target_sum
+        target_sum=args.target_sum,
+        produce_figures=args.figures
     )
     if args.parallel:
         apply_parallel_list(list_dirs(args.type_dir), func=partial(preprocess_cell_type, **kwargs))
@@ -221,7 +293,6 @@ def preprocess(args):
 
 
 def main(args):
-
     if "separate" in args.steps:
         separate(args)
     if "preprocess" in args.steps:
@@ -241,6 +312,8 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--figures", action="store_true")
     parser.add_argument("--data_dir", type=str, default=DATA_DIR)
+    parser.add_argument("--protein_coding", type=bool, default=True)
+    parser.add_argument("--figure", action="store_true")
     parser.add_argument("--suffix", required=True)
     args = parser.parse_args()
     
