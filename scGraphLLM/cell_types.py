@@ -4,10 +4,15 @@ PLASMA_CELL = 'Plasma Cell'
 MONOCYTE = 'Monocyte'
 DENDRITIC_CELL = 'Dendritic Cell'
 ENDOTHELIAL = 'Endothelial Cell'
+ERYTHROID_LINEAGE = 'Erythroid Lineage Cell'
 FIBROBLAST = 'Fibroblast'
+GRANULOCYTE = 'Granulocyte'
 NK_CELL = 'Natural Killer Cell'
 T_CELL = 'T Cell'
 NEURON = 'Neuron'
+SATELLITE = 'Satellite Cell'
+SKELETAL_MUSCLE = 'Skeletal Muscle Cell'
+SMOOOTH_MUSCLE = 'Smooth Muscle Cell'
 GLIAL_CELL = 'Glial Cell'
 EPITHELIAL_CELL = 'Epithelial Cell'
 MACROPHAGE = 'Macrophage'
@@ -29,10 +34,10 @@ CELL_TYPES_DICT = {
     'B-1 B cell': B_CELL,
     'B-2 B cell': B_CELL,
     'basal cell': EPITHELIAL_CELL,
-    'basophil': MISCELLANEOUS,
+    'basophil': GRANULOCYTE,
     'blood vessel endothelial cell': ENDOTHELIAL,
     'bronchial goblet cell': EPITHELIAL_CELL,
-    'bronchial smooth muscle cell': CONNECTIVE_TISSUE_CELL,
+    'bronchial smooth muscle cell': SMOOOTH_MUSCLE,
     'bronchus fibroblast of lung': FIBROBLAST,
     'brush cell of trachebronchial tree': EPITHELIAL_CELL,
     'capillary endothelial cell': ENDOTHELIAL,
@@ -53,7 +58,7 @@ CELL_TYPES_DICT = {
     'CD8-positive, alpha-beta cytotoxic T cell': T_CELL,
     'CD8-positive, alpha-beta memory T cell': T_CELL,
     'CD8-positive, alpha-beta T cell': T_CELL,
-    'cell of skeletal muscle': MISCELLANEOUS,
+    'cell of skeletal muscle': SKELETAL_MUSCLE,
     'central memory CD4-positive, alpha-beta T cell': T_CELL,
     'cerebral cortex endothelial cell': ENDOTHELIAL,
     'chandelier pvalb GABAergic cortical interneuron': NEURON,
@@ -98,10 +103,10 @@ CELL_TYPES_DICT = {
     'epithelial cell of proximal tubule': EPITHELIAL_CELL,
     'epithelial cell of proximal tubule segment 1': EPITHELIAL_CELL,
     'epithelial cell of proximal tubule segment 3': EPITHELIAL_CELL,
-    'erythroblast': MISCELLANEOUS,
-    'erythrocyte': MISCELLANEOUS,
-    'erythroid lineage cell': MISCELLANEOUS,
-    'erythroid progenitor cell': MISCELLANEOUS,
+    'erythroblast': ERYTHROID_LINEAGE,
+    'erythrocyte': ERYTHROID_LINEAGE,
+    'erythroid lineage cell': ERYTHROID_LINEAGE,
+    'erythroid progenitor cell': ERYTHROID_LINEAGE,
     'eurydendroid cell': MISCELLANEOUS,
     'extravillous trophoblast': MISCELLANEOUS,
     'fat cell': MISCELLANEOUS,
@@ -110,8 +115,8 @@ CELL_TYPES_DICT = {
     'gamma-delta T cell': T_CELL,
     'glial cell': GLIAL_CELL,
     'glomerular capillary endothelial cell': ENDOTHELIAL,
-    'goblet cell': MISCELLANEOUS,
-    'granulocyte': MISCELLANEOUS,
+    'goblet cell': EPITHELIAL_CELL,
+    'granulocyte': GRANULOCYTE,
     'granulocyte monocyte progenitor cell': MISCELLANEOUS,
     'group 2 innate lymphoid cell': MISCELLANEOUS,
     'group 3 innate lymphoid cell': MISCELLANEOUS,
@@ -141,9 +146,9 @@ CELL_TYPES_DICT = {
     'kidney interstitial fibroblast': FIBROBLAST,
     'kidney loop of Henle ascending limb epithelial cell': MISCELLANEOUS,
     'kidney loop of Henle epithelial cell': MISCELLANEOUS,
-    'kidney loop of Henle thick ascending limb epithelial cell': MISCELLANEOUS,
-    'kidney loop of Henle thin ascending limb epithelial cell': MISCELLANEOUS,
-    'kidney loop of Henle thin descending limb epithelial cell': MISCELLANEOUS,
+    'kidney loop of Henle thick ascending limb epithelial cell': EPITHELIAL_CELL,
+    'kidney loop of Henle thin ascending limb epithelial cell': EPITHELIAL_CELL,
+    'kidney loop of Henle thin descending limb epithelial cell': EPITHELIAL_CELL,
     'L2/3-6 intratelencephalic projecting glutamatergic cortical neuron': NEURON,
     'L5 extratelencephalic projecting glutamatergic cortical neuron': NEURON,
     'L6b glutamatergic cortical neuron': NEURON,
@@ -233,9 +238,9 @@ CELL_TYPES_DICT = {
     'Schwann cell': GLIAL_CELL,
     'serous cell of epithelium of bronchus': MISCELLANEOUS,
     'serous secreting cell': MISCELLANEOUS,
-    'skeletal muscle satellite cell': MISCELLANEOUS,
+    'skeletal muscle satellite cell': SATELLITE,
     'small pre-B-II cell': B_CELL,
-    'smooth muscle cell': CONNECTIVE_TISSUE_CELL,
+    'smooth muscle cell': SMOOOTH_MUSCLE,
     'sncg GABAergic cortical interneuron': NEURON,
     'sst GABAergic cortical interneuron': NEURON,
     'stromal cell': MISCELLANEOUS,
@@ -244,17 +249,17 @@ CELL_TYPES_DICT = {
     'T-helper 17 cell': T_CELL,
     'tracheobronchial goblet cell': EPITHELIAL_CELL,
     'tracheobronchial serous cell': MISCELLANEOUS,
-    'tracheobronchial smooth muscle cell': CONNECTIVE_TISSUE_CELL,
+    'tracheobronchial smooth muscle cell': SMOOOTH_MUSCLE,
     'trophoblast giant cell': MISCELLANEOUS,
     'type B pancreatic cell': MISCELLANEOUS,
     'type I NK T cell': NK_CELL,
     'type I pneumocyte': MISCELLANEOUS,
     'type II pneumocyte': MISCELLANEOUS,
     'unswitched memory B cell': B_CELL,
-    'uterine smooth muscle cell': MISCELLANEOUS,
+    'uterine smooth muscle cell': SMOOOTH_MUSCLE,
     'vasa recta ascending limb cell': MISCELLANEOUS,
     'vasa recta descending limb cell': MISCELLANEOUS,
-    'vascular associated smooth muscle cell': CONNECTIVE_TISSUE_CELL,
+    'vascular associated smooth muscle cell': SMOOOTH_MUSCLE,
     'vascular leptomeningeal cell': MISCELLANEOUS,
     'vascular lymphangioblast': MISCELLANEOUS,
     'vein endothelial cell': ENDOTHELIAL,

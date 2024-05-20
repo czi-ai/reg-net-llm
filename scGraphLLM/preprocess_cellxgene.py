@@ -52,8 +52,8 @@ DATA_DIR = join(CELLXGENE_DIR, "data")
 
 # var names
 FEATURE_NAME = "feature_name"
+FEATURE_ID = "feature_id" # ENSG
 SOMA_JOINID = "soma_joinid"
-FEATURE_ID = "feature_id"
 FEATURE_LENGTH ="feature_length"
 NNZ = "nnz"
 N_MEASURED_OBS = "n_measured_obs"
@@ -177,6 +177,7 @@ def load_cell_type(cell_type_dir):
     return adata
 
 def plot_qc_figures(adata, title=None):
+    plt.style.use("ggplot")
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
     sc.pl.violin(adata, ['total_counts'], ax=axes[0,0], show=False)
     axes[0,0].set_title("Total Counts")
@@ -196,6 +197,7 @@ def plot_qc_figures(adata, title=None):
 
 
 def plot_dim_reduction_figures(adata, title=None):
+    plt.style.use("default")
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
     sc.pl.umap(adata, color="tissue", ax=axes[0,0], show=False)
     axes[0,0].set_title("UMAP Plot, tissue")
@@ -227,11 +229,11 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
     adata.var["mt"] = adata.var_names.map(lambda n: str(n).upper().startswith("MT"))
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
 
-    # produce qc figures
+    # produce qc figures before preprocessing
     if produce_figures:
         logger.info(f"Producing QC figures for cell type: {cell_type}")
         fig_dir = join(cell_type_dir, "figures")
-        os.makedirs(fig_dir)
+        os.makedirs(fig_dir, exist_ok=True)
         fig = plot_qc_figures(adata, title=f"Quality Checks, {cell_type}")[0]
         fig.savefig(join(fig_dir, f"qc_{cell_type}.jpg"))
 
@@ -244,9 +246,21 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
     sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
 
+    # produce qc figures before preprocessing
+    if produce_figures:
+        logger.info(f"Producing QC figures for cell type: {cell_type}")
+        fig_dir = join(cell_type_dir, "figures")
+        os.makedirs(fig_dir, exist_ok=True)
+        fig = plot_qc_figures(adata, title=f"Quality Checks, {cell_type}")[0]
+        fig.savefig(join(fig_dir, f"qc_pp_{cell_type}.jpg"))
+
     # write 
     if write:
         adata.write_h5ad(join(cell_type_dir, "full.h5ad"))
+        # for aracne inference
+        check_index(adata.var, FEATURE_ID)
+        df = adata.to_df().T
+        df.to_csv(join(cell_type_dir, "full.tsv"), header=True, index=True, sep="\t")
     
     # produce dim reduction figures
     if produce_figures:
