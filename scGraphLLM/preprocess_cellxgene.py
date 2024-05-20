@@ -218,6 +218,36 @@ def plot_dim_reduction_figures(adata, title=None):
     return fig, axes
 
 
+def write_adata_to_tsv_buffered(adata, file, places=4, buffer_size=1000):
+    df = adata.to_df().T
+    X = df.to_numpy().round(places)
+    names = df.index.tolist()
+    
+    def compile_row_string(name, row):
+        return "\t".join([name] + [str(v) if v != 0 else "0" for v in row])
+    
+    with open(file, "w") as f:
+        header = compile_row_string(df.index.name, range(1, X.shape[1]+1))
+        f.write(header + "\n")
+        buffer = []
+        for i, (name, row) in enumerate(zip(names, X)):
+            buffer.append(compile_row_string(name, row))
+            if (i + 1) % buffer_size == 0:
+                f.write("\n".join(buffer) + "\n")
+                buffer = []
+        
+        # Write remaining rows in buffer
+        if buffer:
+            f.write("\n".join(buffer) + "\n")
+
+
+def get_variability(adata):
+    variability = sc.pp.highly_variable_genes(adata, inplace=False)
+    variability.index = adata.var_names
+    variability[lambda df: ~df["dispersions_norm"].isna()].sort_values("dispersions_norm", ascending=False)
+    return variability
+
+
 def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum, 
                          produce_figures=False, write=True):
     cell_type = basename(cell_type_dir)
@@ -246,6 +276,10 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
     sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
 
+    
+    # re-calculate qc metrics after filtering 
+    sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
+
     # produce qc figures before preprocessing
     if produce_figures:
         logger.info(f"Producing QC figures for cell type: {cell_type}")
@@ -259,8 +293,10 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
         adata.write_h5ad(join(cell_type_dir, "full.h5ad"))
         # for aracne inference
         check_index(adata.var, FEATURE_ID)
+        write_adata_to_tsv_buffered(adata, join(cell_type_dir, "full.tsv"))
         df = adata.to_df().T
         df.to_csv(join(cell_type_dir, "full.tsv"), header=True, index=True, sep="\t")
+
     
     # produce dim reduction figures
     if produce_figures:
@@ -322,8 +358,9 @@ if __name__ == "__main__":
     parser.add_argument("--cores", default=os.cpu_count())
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
-    parser.add_argument("--umi_max", type=int, default=1e6)
+    parser.add_argument("--umi_max", type=int, default=1e5)
     parser.add_argument("--target_sum", type=int, default=1e6)
+    parser.add_argument("--n_top_genes", type=int, default=2000)
     parser.add_argument("--figures", action="store_true")
     parser.add_argument("--data_dir", type=str, default=DATA_DIR)
     parser.add_argument("--protein_coding", type=bool, default=True)
