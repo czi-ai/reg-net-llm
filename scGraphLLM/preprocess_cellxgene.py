@@ -365,6 +365,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_top_genes", type=int, default=2000)
     parser.add_argument("--figures", action="store_true")
     parser.add_argument("--data_dir", type=str, default=DATA_DIR)
+    parser.add_argument("--out_dir", type=str, default=DATA_DIR)
     parser.add_argument("--protein_coding", type=bool, default=True)
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")
@@ -373,9 +374,9 @@ if __name__ == "__main__":
     
     # define directories
     args.tissue_dir = join(args.data_dir, "tissue")
-    args.type_dir = join(args.data_dir, "cell_type" + "_" + args.suffix)
+    args.type_dir = join(args.out_dir, "cell_type" + "_" + args.suffix)
     args.cell_types_path = join(args.type_dir, f"{CELL_TYPE}.csv")
-    args.log_dir = join(args.data_dir, f"log")
+    args.log_dir = join(args.out_dir, f"log")
     
     # logging
     os.makedirs(args.log_dir, exist_ok=True)
