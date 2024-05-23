@@ -18,10 +18,16 @@ import anndata as ad
 import matplotlib.pyplot as plt
 
 import os
+import logging
+import sys
 import multiprocessing as mp
 from typing import List
 from os.path import join
 from functools import partial
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.setLevel(logging.DEBUG)
 
 
 def list_files(dir):
@@ -132,11 +138,8 @@ def preprocess_data(adata, mito_thres, umi_min, umi_max, target_sum, save_path):
     # re-calculate qc metrics after filtering 
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
 
-    # save
-    check_index(adata.var, "feature_id")
-    write_adata_to_csv_buffered(adata, file=save_path)
-
     return adata
+
 
 def make_aracne_counts(adata, n_sample, filename):
     # excludle invariable genes
@@ -149,6 +152,7 @@ def make_aracne_counts(adata, n_sample, filename):
 
 def main(args):
     adata = load_data(args.data_path)
+    logger.info(f"Loaded dataset: {adata.shape[0]:,} cells, {adata.shape[1]:,} genes")
 
     adata = preprocess_data(
         adata=adata, 
@@ -156,13 +160,18 @@ def main(args):
         umi_min=args.umi_min, 
         umi_max=args.umi_max, 
         target_sum=args.target_sum,
-        save_path=args.counts_path  
+        save_path=args.counts_path
     )
+    logger.info(f"Preprocessed dataset: {adata.shape[0]:,} cells, {adata.shape[1]:,} genes")
+
+    # # save
+    # check_index(adata.var, "feature_id")
+    # write_adata_to_csv_buffered(adata, file=args.counts_path)
 
     make_aracne_counts(
         adata=adata,
-        n_sampe=args.aracne_n_sample,
-        filename=args.args.aracne_counts_path
+        n_sample=args.aracne_n_sample,
+        filename=args.aracne_counts_path
     )
 
     # calculate and stats/figures
@@ -204,6 +213,8 @@ if __name__ == "__main__":
     args.ranks_path = join(args.out_dir, "ranks_raw.csv")
     args.aracne_counts_path = join(args.out_dir, "counts.tsv")
     args.h5ad_path = join(args.out_dir, "counts.h5ad")
+    args.log_path = join(args.out_dir, "log.txt")
+    logger.addHandler(logging.FileHandler(args.log_path)) 
     
     main(args)
 
