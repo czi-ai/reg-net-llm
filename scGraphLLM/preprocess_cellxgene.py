@@ -98,6 +98,7 @@ def list_dirs(dir):
 
 def apply_parallel_list(lst, func, n_cores=None, **kwargs):
     """Parallel apply function to elements of a list"""
+    n_cores = mp.cpu_count() if n_cores is None else n_cores
     with mp.Pool(n_cores) as pool:
         result = pool.map(partial(func, **kwargs), lst)
     return result
@@ -129,11 +130,11 @@ def concatenate_partitions(partitions):
     return adata
 
 
-def get_tissue(tissue, tissue_dir, limit=None):
-    tissue_dir = join(tissue_dir, tissue)
-    partitions = [read_cxg_h5ad_file(file) for file in list_files(tissue_dir)[:limit]]
-    adata = concatenate_partitions(partitions)
-    return adata
+def get_tissue(tissue, tissue_dir, partition_limit=None):
+    partition_files = list_files(join(tissue_dir, tissue))
+    partitions = [sc.read_h5ad(file) for file in partition_files[:partition_limit]]
+    partitions = [p[:,p.var[FEATURE_ID].isin(ENSG_PROTEIN_CODING)] for p in partitions]
+    return concatenate_partitions(partitions)
 
 
 def clean_cell_type_name(cell_type_name):
@@ -144,21 +145,19 @@ def clean_cell_type_name(cell_type_name):
     return cell_type_name
 
 
-def write_cell_types(tissue, tissue_dir, type_dir, limit=None) -> List[str]:
+def write_cell_types(tissue, tissue_dir, type_dir, type_limit=None, partition_limit=None) -> List[str]:
     """Writes cell-type subsets to specific"""
     logger.info(f"Getting data for tissue {tissue}")
-    adata = get_tissue(tissue, tissue_dir=tissue_dir, limit=limit)
+    adata = get_tissue(tissue, tissue_dir=tissue_dir, partition_limit=partition_limit)
 
     # filter non-protein-coding genes
-    adata = adata[:,adata.var["feature_id"].isin(ENSG_PROTEIN_CODING)]
+    adata = adata[:,adata.var[FEATURE_ID].isin(ENSG_PROTEIN_CODING)]
 
-    # clean cell typenames
-    adata.obs[f"original_{CELL_TYPE}"] = adata.obs[CELL_TYPE].copy()
-    adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(lambda t: CELL_TYPES_DICT.get(t, MISCELLANEOUS))    
+    # clean cell typenames    
     adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
-    cell_types = adata.obs[CELL_TYPE].unique().sort_values().to_series() \
-        if limit is None else \
-        adata.obs[CELL_TYPE].value_counts(ascending=False).index[:limit].to_series()
+    cell_types = pd.Series(adata.obs[CELL_TYPE].unique().sort_values()) \
+        if type_limit is None else \
+        adata.obs[CELL_TYPE].value_counts(ascending=False).index[:type_limit].to_series()
     
     # write cell type to separate partitions
     for cell_type in cell_types:
@@ -175,6 +174,7 @@ def load_cell_type(cell_type_dir):
     partitions = [read_cxg_h5ad_file(file) for file in list_files(cell_type_dir)]
     adata = concatenate_partitions(partitions)
     return adata
+
 
 def plot_qc_figures(adata, title=None):
     plt.style.use("ggplot")
@@ -244,12 +244,12 @@ def write_adata_to_tsv_buffered(adata, file, places=4, buffer_size=1000):
 def get_variability(adata):
     variability = sc.pp.highly_variable_genes(adata, inplace=False)
     variability.index = adata.var_names
-    variability[lambda df: ~df["dispersions_norm"].isna()].sort_values("dispersions_norm", ascending=False)
+    variability = variability[lambda df: ~df["dispersions_norm"].isna()].sort_values("dispersions_norm", ascending=False)
     return variability
 
 
 def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum, 
-                         produce_figures=False, write=True):
+                         produce_figures=False, produce_stats=True, write=True):
     cell_type = basename(cell_type_dir)
     logger.info(f"Preprocessing cell type: {cell_type}...")
     # load cell type data
@@ -275,7 +275,6 @@ def preprocess_cell_type(cell_type_dir, mito_thres, umi_min, umi_max, target_sum
     # normalize
     sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
-
     
     # re-calculate qc metrics after filtering 
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
@@ -316,10 +315,11 @@ def separate(args):
     kwargs = dict(
         type_dir=args.type_dir,
         tissue_dir=args.tissue_dir,
-        limit=args.type_limit
+        partition_limit=args.partition_limit,
+        type_limit=args.type_limit
     )
     if args.parallel:
-        cell_types = apply_parallel_list(args.tissues, func=partial(write_cell_types, **kwargs))
+        cell_types = apply_parallel_list(args.tissues, func=partial(write_cell_types, **kwargs), n_cores=args.n_cores)
         cell_types = pd.Series(pd.concat(cell_types).unique()).rename("cell_type")
         cell_types.to_csv(args.cell_types_path, index=False)
         return
@@ -333,10 +333,11 @@ def preprocess(args):
         umi_min=args.umi_min, 
         umi_max=args.umi_max, 
         target_sum=args.target_sum,
-        produce_figures=args.figures
+        produce_figures=args.figures,
+        produce_stats=args.produce_stats
     )
     if args.parallel:
-        apply_parallel_list(list_dirs(args.type_dir), func=partial(preprocess_cell_type, **kwargs))
+        apply_parallel_list(list_dirs(args.type_dir), func=partial(preprocess_cell_type, **kwargs), n_cores=args.n_cores)
         return
     for cell_type_dir in list_dirs(args.type_dir):
         preprocess_cell_type(cell_type_dir, **kwargs)
@@ -355,7 +356,8 @@ if __name__ == "__main__":
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--tissues", nargs="+", default=TISSUES)
     parser.add_argument("--type_limit", type=int, default=None)
-    parser.add_argument("--cores", default=os.cpu_count())
+    parser.add_argument("--partition_limit", type=int, default=None)
+    parser.add_argument("--n_cores", type=int, default=os.cpu_count())
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
     parser.add_argument("--umi_max", type=int, default=1e5)
@@ -364,7 +366,8 @@ if __name__ == "__main__":
     parser.add_argument("--figures", action="store_true")
     parser.add_argument("--data_dir", type=str, default=DATA_DIR)
     parser.add_argument("--protein_coding", type=bool, default=True)
-    parser.add_argument("--figure", action="store_true")
+    parser.add_argument("--produce_figures", action="store_true")
+    parser.add_argument("--produce_stats", action="store_true")
     parser.add_argument("--suffix", required=True)
     args = parser.parse_args()
     
