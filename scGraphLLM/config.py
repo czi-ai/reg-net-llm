@@ -66,12 +66,12 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "batch_size":64, 
+            "num_neigborhoods":64, 
             "neigborhood_size":-1, 
             "num_hops":3,  # this needs to be length of GNN hidden layers
             "shuffle_nl":True,
             "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cache"
+            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
         }),
         "val": Config({
             "aracne_outdirs":[
@@ -81,12 +81,12 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac12'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "batch_size":64, 
+            "num_neigborhoods":64, 
             "neigborhood_size":-1, 
             "num_hops":3,  # this needs to be length of GNN hidden layers
             "shuffle_nl":False,
             "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cache_val"
+            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
         }),
         "test": Config({
             "aracne_outdirs":[
@@ -94,12 +94,12 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC10'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "batch_size":64, 
+            "num_neigborhoods":64,
             "neigborhood_size":-1, 
             "num_hops":3,  # this needs to be length of GNN hidden layers
             "shuffle_nl":False,
             "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cache_test"
+            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
         }),
         "num_workers": 4
     }),

@@ -58,7 +58,7 @@ def main(args):
     if mode == "debug":
         ### run a miminal debug run to make sure everything is working
         print("***debug***")
-        mconfig.trainer_config.max_epochs=1
+        mconfig.trainer_config.max_epochs=2
         mconfig.data_config.train["subsample"] = True
         mconfig.data_config.val["subsample"] = True
         mconfig.data_config.test["subsample"] = True
@@ -122,7 +122,10 @@ def main(args):
                           shuffle = False, 
                           num_workers = data_conf['num_workers'],
                           collate_fn = lambda x: x)
-    #mconfig["model_config"]["node_embedding_size"] = len(train_ds.unique_genes)+1                       
+    
+    #mconfig["model_config"]["node_embedding_size"] = len(train_ds.unique_genes)+1
+    ##VS: ^ avoid dynamically changing model config within the code base itself - this should be done directly in the config or using one of the command line overrides
+    ## its a little more clunky to use, but leads to better reproducibility and less bugs
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
@@ -173,6 +176,7 @@ def main(args):
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         litmodel = model_fn(mconfig)
+
         trainer.fit(litmodel, train_dataloaders = train_dl, val_dataloaders = val_dl)
         # trainer.validate(model=litmodel, dataloaders=val_dl)
 

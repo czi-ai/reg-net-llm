@@ -12,7 +12,9 @@ import warnings
 from typing import List, Dict
 from pathlib import Path
 from torch_geometric.utils import k_hop_subgraph
-
+import sys 
+from multiprocessing import Pool
+import time 
 def aracne_to_edge_list(aracne_out: List, global_gene_to_node_index:str):
     """_summary_
 
@@ -101,6 +103,7 @@ class SubgraphDataset(Dataset):
         return self.subgraphs[idx]
 
 
+####
 
 def repack_ranks(ranks: pd.core.frame.DataFrame, global_gene_to_node: Dict[str, int] ):
     """_summary_
@@ -129,7 +132,9 @@ def repack_ranks(ranks: pd.core.frame.DataFrame, global_gene_to_node: Dict[str, 
         repacked_ranks.append(torch.tensor(rank_values[nonzero], dtype = torch.long) )
         repacked_global_indices.append(torch.tensor(rank_global_indices[nonzero], dtype = torch.long) )
         repacked_local_indices.append(torch.tensor(rank_local_indices[nonzero], dtype = torch.long) )
-    return torch.nested.nested_tensor(repacked_ranks), torch.nested.nested_tensor(repacked_global_indices), torch.nested.nested_tensor(repacked_local_indices)
+    return pd.Series(repacked_ranks), pd.Series(repacked_global_indices), pd.Series(repacked_local_indices)
+
+    
 
 def pad_make_masks(tns_list:List[torch.Tensor], return_mask:bool=True) -> torch.Tensor:
     """_summary_
@@ -157,14 +162,26 @@ def pad_make_masks(tns_list:List[torch.Tensor], return_mask:bool=True) -> torch.
 ## dont need to stored outsdie of data loading code - main to deal with accessing ranks from the
 ## right now loads everything into mem, but can easily be modified to first write to then read from disk 
 ## only issue is that the node batching itself is fixed - meaning that the same nodes are used for each batch
+
+### TODO:
+## right now we are statically batching both the graph and the RNA-seq, but what we should be doing is
+## statically batching the graph, and then dynamically batching the RNA-seq data. We'll need to make some changes here 
+## that will allow us to do this. 
+## extract the neighbor hood batched 
+def minibatch_wrapper(dataset, batch, global_gene_to_node):
+    ranks_repacked = repack_ranks(dataset.rank_embedding.iloc[:,batch.n_id.numpy()], global_gene_to_node )
+    return batch.x, batch.edge_index, batch.edge_weight, ranks_repacked
+    
+
 class MultiGraphWrapperDataset:
-    def __init__(self, aracne_outdirs, gene_to_node_file, batch_size=64, 
-                 neigborhood_size=-1, num_hops=1, shuffle_nl=True, subsample=False, use_cache = False, cache_dir = "/pmglocal/vss2134/scGraphLLM/data_cache"):
+    def __init__(self, aracne_outdirs, gene_to_node_file, num_neigborhoods=64, ## NOTE: need to double check this is actually the number of neigborhoods
+                 cells_per_batch = 64,  neigborhood_size=-1, num_hops=1, shuffle_nl=True, subsample=False, use_cache = False, cache_dir = "/pmglocal/vss2134/scGraphLLM/data_cache", pp_workers = 8):
         self.batched_data = []
         self.subsample = subsample
         global_gene_to_node = pd.read_csv(gene_to_node_file)
         global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
         self.unique_genes = []
+        self.cell_per_batch = cells_per_batch
         ## right now we use just the outdir to check for timestamps 
         ## it would be better to use the timestamps of the actual network and rank files.
         for outdir in tqdm.tqdm(aracne_outdirs):
@@ -175,8 +192,6 @@ class MultiGraphWrapperDataset:
                 if os.path.exists(cache_file):
                     with open(cache_file, "rb") as f:
                         batched_data, unique_genes, saved_timestamp, saved_gene_to_node_file = pickle.load(f)
-                    ## TODO: fix the timestamp check
-                    #if orig_timestamp == saved_timestamp and gene_to_node_file == saved_gene_to_node_file:
                         print(f"using cache for {network_name}")
                         self.batched_data+= batched_data
                         self.unique_genes+= unique_genes
@@ -188,8 +203,10 @@ class MultiGraphWrapperDataset:
                                         node_index=node_indices, rank_embedding=ranks)
             nl= NeighborLoader(data=dataset, replace=False, num_neighbors=[neigborhood_size] * num_hops, 
                                     input_nodes=None, subgraph_type="bidirectional", disjoint=False,
-                                    weight_attr="edge_weight", batch_size=batch_size, shuffle=shuffle_nl)
+                                    weight_attr="edge_weight", batch_size=num_neigborhoods, shuffle=shuffle_nl)
             batched_data = [(batch.x, batch.edge_index, batch.edge_weight, repack_ranks(dataset.rank_embedding.iloc[:,batch.n_id.numpy()], global_gene_to_node ) ) for batch in nl]
+#            with Pool(pp_workers) as p:
+#                batched_data = p.starmap(minibatch_wrapper, [(dataset, batch, global_gene_to_node) for batch in nl])
             if use_cache:
                 print(f"writing cache for {network_name}")
                 Path(cache_dir).mkdir(parents=True, exist_ok=True)
@@ -202,6 +219,27 @@ class MultiGraphWrapperDataset:
             return 3
         return len(self.batched_data)
     def __getitem__(self, idx):
-        return self.batched_data[idx]
+        ## changes - now we dynamically select the cells in each batch 
+        nodes, edges, edge_weights, ranks = self.batched_data[idx]
+        exp_rank, gene_global_idx, gene_local_idx = ranks
+        cells_per_batch = min([self.cell_per_batch, len(exp_rank)]) ## corner case where there are fewer cells available than the batch size                                                                                   
+        subset_indics = np.random.choice(range(len(exp_rank)), cells_per_batch, replace=False)
+        exp_rank, attn_mask = pad_make_masks(exp_rank.iloc[subset_indics].to_list() , return_mask=True)
+        gene_global_idx = pad_make_masks(gene_global_idx.iloc[subset_indics].to_list(), return_mask=False)
+        gene_local_idx = pad_make_masks(gene_local_idx.iloc[subset_indics].to_list(), return_mask=False)
+        return nodes, edges, edge_weights, (exp_rank, gene_global_idx, gene_local_idx, attn_mask)
 
 
+if __name__ == "__main__":
+    from config import * ## keep this here to avoid a circular import error 
+    ## this will generate the cached data for a given aracne output, as it can be quite slow
+    _, config, outdir = sys.argv
+    config = eval(config)
+    ## this assumes that the settings used for train data are consistent for val and test as well 
+    default_data_config = config["data_config"]["train"]
+    del default_data_config["aracne_outdirs"]
+    default_data_config["aracne_outdirs"] = [outdir]
+    start = time.time()
+    MultiGraphWrapperDataset(**default_data_config)
+    end = time.time()
+    print(f"Time taken: {end-start}")
