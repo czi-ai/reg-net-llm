@@ -36,6 +36,12 @@ def list_files(dir):
     return sorted([join(root, file) for file in files])
 
 
+def list_dirs(dir):
+    """List full paths of all subdirectories of a directory"""
+    root, dirs, _ = list(os.walk(dir))[0]
+    return sorted([join(root, dir) for dir in dirs])
+
+
 def apply_parallel_list(lst, func, n_cores=None, **kwargs):
     """Parallel apply function to elements of a list"""
     n_cores = mp.cpu_count() if n_cores is None else n_cores
@@ -50,7 +56,7 @@ def check_index(df, name):
 
 
 def concatenate_partitions(partitions, require_matching_metadata=True):
-    """Concatenate the partitions of a datasets"""
+    """Concatenate the partitions of a dataset"""
     # concatenate observations
     adata = ad.concat(partitions, axis=0)
     if require_matching_metadata:
@@ -69,6 +75,28 @@ def load_data(data_path):
     else:
         adata = sc.read_h5ad(data_path)
     return adata
+
+
+def plot_dim_reduction_figures(adata, title=None):
+    plt.style.use("default")
+    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
+    sc.pl.umap(adata, color="tissue", ax=axes[0,0], show=False)
+    axes[0,0].set_title("UMAP Plot, tissue")
+    axes[0,0].get_legend().remove()
+
+    sc.pl.pca(adata, color="tissue", ax=axes[0,1], show=False)
+    axes[0,1].set_title("PCA Plot, Tissue")
+
+    sc.pl.umap(adata, color="original_cell_type", ax=axes[1,0], show=False)
+    axes[1,0].set_title("UMAP Plot, Original Cell Type")
+    axes[1,0].get_legend().remove()
+
+    sc.pl.pca(adata, color="original_cell_type", ax=axes[1,1], show=False)
+    axes[1,1].set_title("PCA Plot, Original Cell Type")
+
+    if title is not None:
+        fig.suptitle(title, size=30)
+    return fig, axes
 
 
 def plot_qc_figures(adata, title=None):
