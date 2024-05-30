@@ -17,6 +17,7 @@ import scanpy as sc
 import anndata as ad
 import matplotlib.pyplot as plt
 
+import pandas as pd
 import os
 import logging
 import sys
