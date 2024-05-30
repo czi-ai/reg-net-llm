@@ -177,6 +177,12 @@ def make_aracne_counts(adata, n_sample, filename):
     adata = sc.pp.subsample(adata, n_obs=n_sample, copy=True)
     write_adata_to_csv_buffered(adata, sep="\t", file=filename)
     
+def rank(args):
+    logger.info(f"Performing Rank Operation... [{args.aracne_counts_path}]")
+    counts_df = pd.read_csv(f"{args.aracne_counts_path}", sep="\t")
+    df = counts_df.loc[:, counts_df.columns != "feature_name"]
+    rank_df_raw = df.rank(axis = 1, method = "dense") +1
+    rank_df_raw.to_csv(f"{args.ranks_path}")
 
 def main(args):
     adata = load_data(args.data_path)
@@ -205,7 +211,7 @@ def main(args):
     # calculate and stats/figures
 
     # calculate/save ranks
-    
+    rank(args)
 
 
 if __name__ == "__main__":
