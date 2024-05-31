@@ -172,6 +172,20 @@ class ContrastiveLoss(nn.Module):
         return loss
 
         
+class LinkPredictor(nn.Module):
+    def __init__(self, in_dim, hidden_dim, dropout_rate=0.5):
+        super(LinkPredictor, self).__init__()
+        self.net = nn.Sequential(
+                nn.Linear(2 * in_dim, hidden_dim),
+                nn.GELU(),
+                nn.LayerNorm(hidden_dim),
+                nn.Dropout(dropout_rate),
+                nn.Linear(hidden_dim, 1)
+            )
 
+    def forward(self, x_i, x_j):
+        x = torch.cat([x_i, x_j], dim=-1)
+        h = torch.sigmoid(self.net(x))
+        return h
 
 
