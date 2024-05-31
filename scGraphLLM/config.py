@@ -63,21 +63,43 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC22',
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC20',
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac10',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC21',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC09',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL30',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac12',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac6',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC10'
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "batch_size":64, 
+            "num_neigborhoods":64, 
             "neigborhood_size":-1, 
             "num_hops":3,  # this needs to be length of GNN hidden layers
             "shuffle_nl":True,
             "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cache"
+            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
+        }),
+        "val": Config({
+            "aracne_outdirs":[
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC21',
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC09',
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL30',
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac12'
+                            ],
+            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
+            "num_neigborhoods":64, 
+            "neigborhood_size":-1, 
+            "num_hops":3,  # this needs to be length of GNN hidden layers
+            "shuffle_nl":False,
+            "use_cache":True,
+            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
+        }),
+        "test": Config({
+            "aracne_outdirs":[
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac6',
+                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC10'
+                            ],
+            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
+            "num_neigborhoods":64,
+            "neigborhood_size":-1, 
+            "num_hops":3,  # this needs to be length of GNN hidden layers
+            "shuffle_nl":False,
+            "use_cache":True,
+            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
         }),
         "num_workers": 4
     }),
