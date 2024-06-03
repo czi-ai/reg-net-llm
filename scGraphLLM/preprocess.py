@@ -60,9 +60,9 @@ def concatenate_partitions(partitions, require_matching_metadata=True):
     # concatenate observations
     adata = ad.concat(partitions, axis=0)
     if require_matching_metadata:
-        var = partitions[0].var.columns
+        var = partitions[0].var
         for p in partitions:
-            assert p.var.columns.equals(var),\
+            assert p.var.columns.tolist() == (var.columns.tolist()),\
                 "Static vars are not consistent across partitions, cannot be concatenated"
         adata.var = var
     return adata
@@ -149,7 +149,7 @@ def get_variability(adata):
     return variability
 
 
-def preprocess_data(adata, mito_thres, umi_min, umi_max, target_sum, save_path):
+def preprocess_data(adata, mito_thres, umi_min, umi_max, target_sum, save_path=None):
     # calculate qc metrics
     adata.var["mt"] = adata.var_names.map(lambda n: str(n).upper().startswith("MT"))
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
