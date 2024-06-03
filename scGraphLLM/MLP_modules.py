@@ -3,6 +3,15 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.utils import get_laplacian, dense_to_sparse, to_dense_adj
+
+
+def laplacian_normalized(A):
+    edge_index, weight = dense_to_sparse(A)
+    laplacian_ind, laplacian_weight = get_laplacian(edge_index, edge_weight=weight, 
+                                                 normalization='sym', num_nodes=A.shape[0])
+    L = to_dense_adj(laplacian_ind, edge_attr=laplacian_weight)
+    return L
 
 
 def pseudoinverse(A):
@@ -136,10 +145,51 @@ class MLPLocalCrossAttention(nn.Module):
 
         return updated_A2, attention_weights
     
+
+class ContrastiveLossCos(nn.Module):
+    def __init__(self, margin=1.0):
+        super(ContrastiveLossCos, self).__init__()
+        self.margin = margin
+        self.cosine_similarity = nn.CosineSimilarity(dim=1)
+
+    def forward(self, embedding1, embedding2, label):
+        # Cosine similarity
+        similarity = self.cosine_similarity(embedding1, embedding2)
+        loss = torch.mean((1 - label) * (1 - similarity) +
+                          label * torch.clamp(self.margin - similarity, min=0.0))
+        return loss
+    
+
+class CombinedContrastiveLoss(nn.Module):
+    def __init__(self, margin=1.0, alpha=0.5, beta=0.5):
+        super(CombinedContrastiveLoss, self).__init__()
+        self.margin = margin
+        self.cosine_similarity = nn.CosineSimilarity(dim=1)
+        self.alpha = alpha
+        self.beta = beta
+
+    def forward(self, embedding1, embedding2, adj1, adj2, k, label):
+        # Node embedding cosine similarity
+        embedding_similarity = self.cosine_similarity(embedding1, embedding2)
+        embedding_loss = torch.mean((1 - label) * (1 - embedding_similarity) +
+                                    label * torch.clamp(self.margin - embedding_similarity, min=0.0))
+        
+        # Graph Spectral distance: top k eigenvalue of normalized graph laplacians
+        L_adj1 = laplacian_normalized(adj1)
+        L_adj2 = laplacian_normalized(adj2)
+        eigvals1, _ = torch.linalg.eigh(L_adj1)
+        eigvals2, _ = torch.linalg.eigh(L_adj2)
+        eigvals1 = eigvals1[:k]
+        eigvals2 = eigvals2[:k]
+        spectral_distance = torch.norm(eigvals1 - eigvals2)
+        
+        return self.alpha * embedding_loss + self.beta * spectral_distance
+
+    
 # Siamese contrastive loss
-class ContrastiveLoss(nn.Module):
+class ContrastiveLossSiamese(nn.Module):
     def __init__(self, margin=1.0, verbose=False):
-        super(ContrastiveLoss, self).__init__()
+        super(ContrastiveLossSiamese, self).__init__()
         self.margin = margin
         self.verbose = verbose
 
@@ -188,4 +238,17 @@ class LinkPredictor(nn.Module):
         h = torch.sigmoid(self.net(x))
         return h
 
+class Discriminator(nn.Module):
+    def __init__(self, in_dim, hidden_dim, dropout_rate=0.5):
+        super(Discriminator, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.GELU(),
+            nn.LayerNorm(hidden_dim),
+            nn.Dropout(dropout_rate),
+            nn.Linear(hidden_dim, 1)
+        )
+
+    def forward(self, x):
+        return self.network(x)
 
