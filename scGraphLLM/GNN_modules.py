@@ -5,7 +5,90 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
 from MLP_modules import MLPAttention, MLPCrossAttention
-from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian
+from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
+from torch_geometric.nn.inits import glorot
+from torch_geometric.nn.dense.linear import Linear
+
+class GRNAttention(GATConv):
+    def __init__(self, in_channels, out_channels, heads=1, concat=True, 
+                 negative_slope=0.2, dropout=0, add_self_loops=True, bias=True):
+        super(GRNAttention, self).__init__(in_channels, out_channels, heads=heads, 
+                                           concat=concat, negative_slope=negative_slope, 
+                                           dropout=dropout, add_self_loops=add_self_loops, bias=bias)
+        
+        # different attention weights for R-R edges and R-T edges
+        self.att_r_r = torch.nn.Parameter(torch.Tensor(1, heads, out_channels))
+        self.att_r_t = torch.nn.Parameter(torch.Tensor(1, heads, out_channels))
+
+        # projection heads for R-R edges
+        self.query_r_r = torch.nn.Linear(out_channels, out_channels)
+        self.key_r_r = torch.nn.Linear(out_channels, out_channels)
+        self.value_r_r = torch.nn.Linear(out_channels, out_channels)
+
+        self.reset_parameters()
+    
+    def reset_parameters(self):
+        torch.nn.init.xavier_uniform_(self.att_r_r)
+        torch.nn.init.xavier_uniform_(self.att_r_t)
+        torch.nn.init.xavier_uniform_(self.query_r_r.weight)
+        torch.nn.init.xavier_uniform_(self.key_r_r.weight)
+        torch.nn.init.xavier_uniform_(self.value_r_r.weight)     
+        if self.query_r_r.bias is not None:
+            torch.nn.init.zeros_(self.query_r_r.bias)
+        if self.key_r_r.bias is not None:
+            torch.nn.init.zeros_(self.key_r_r.bias)
+        if self.value_r_r.bias is not None:
+            torch.nn.init.zeros_(self.value_r_r.bias)
+
+    def forward(self, x, edge_index, edge_type):
+        if self.add_self_loops:
+            edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+        return self.propagate(edge_index, x=x, edge_type=edge_type)
+    
+    def propagate(self, edge_index, x, edge_type, **kwargs):
+        size = (x.size(0), x.size(0))
+        coll_dict = self.__collect__(self.__user_args__, edge_index, size, x=x, 
+                                     edge_type=edge_type, **kwargs)
+        msg_kwargs = self.inspector.distribute('message', coll_dict)
+        out = self.message(**msg_kwargs)
+
+        aggr_kwargs = self.inspector.distribute('aggregate', coll_dict)
+        out = self.aggregate(out, **aggr_kwargs)
+
+        update_kwargs = self.inspector.distribute('update', coll_dict)
+        return self.update(out, **update_kwargs)
+
+    # edge type needs to be binary vector of shape E
+    # x_i, x_j has shape (E, out_channels)
+    def message(self, x_i, x_j, edge_type):
+        # Mask for different edge types
+        mask_rr = (edge_type == 0)  # R->R
+        mask_rt = (edge_type == 1)  # R->T
+        
+        # Create an empty tensor for messages
+        msg = torch.zeros_like(x_j)
+        
+        if mask_rr.sum() > 0:
+            # Multiplicative attention for R->R
+            q = self.query_r_r(x_i[mask_rr])
+            k = self.key_r_r(x_j[mask_rr])
+            v = self.value_r_r(x_j[mask_rr])
+            alpha_rr = (q * k).sum(dim=-1) / (self.out_channels ** 0.5)
+            alpha_rr = F.softmax(alpha_rr, dim=1)
+            msg[mask_rr] = v * alpha_rr.view(-1, self.heads, 1)
+
+        if mask_rt.sum() > 0:
+            # Additive attention for R->T
+            alpha_rt = (x_i[mask_rt] * self.att_r_t).sum(dim=-1) + (x_j[mask_rt] * self.att_r_t).sum(dim=-1)
+            alpha_rt = F.leaky_relu(alpha_rt, negative_slope=self.negative_slope)
+            alpha_rt = F.softmax(alpha_rt, dim=1)
+            msg[mask_rt] = x_j[mask_rt] * alpha_rt.view(-1, self.heads, 1)
+
+        return msg
+
+    def aggregate(self, inputs, index):
+        return torch_geometric.nn.aggr.add(inputs, index)
+    
   
 # Vanilla graph conovolution network
 class baseGCN(nn.Module):

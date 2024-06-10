@@ -15,8 +15,7 @@ class LitScGraphLLM(pl.LightningModule):
         super().__init__()
         self.gnn_encoder = GNN(**config.model_config.gnn_config)
 
-        self.link_pred_decoder = LinkPredictor(in_dim=config.model_config.node_embedding_dim + config.model_config.rank_embedding_dim, 
-                                               hidden_dim=config.model_config.gnn_config.hidden_dims[0])
+        self.link_pred_decoder = LinkPredictor(in_dim=config.model_config.node_embedding_dim, hidden_dim=config.model_config.gnn_config.hidden_dims[0])
         self.node_embedding = torch.nn.Embedding(config.model_config.node_embedding_size, config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
         self.rank_embedding = torch.nn.Embedding(config.model_config.rank_embedding_size, config.model_config.rank_embedding_dim, padding_idx=PAD_IDX)
 
@@ -37,6 +36,7 @@ class LitScGraphLLM(pl.LightningModule):
         
         ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
+        gnn_out = node_embeddings
 
         ranks, rank_global_gene_indices, rank_local_gene_indices, attn_mask = rank_data # 
         # these are now padded tensors
@@ -54,7 +54,6 @@ class LitScGraphLLM(pl.LightningModule):
             node_embeddings
             ], dim=0) ## this adds the <PAD> token to the node_embeddings tensor, so that we can index into it with the rank_global_gene_indices tensor. This is a n x G_dim tensor
         gene_embeddings = node_embeddings[rank_local_gene_indices]
-        print("gene embedding shape: ", gene_embeddings.shape)
         ## here, the individual integers in each row of rank_local_gene_indices are mapped to the embedding stored at that position in node_embeddings. We do a similar looping operation as above, but we also return an attention mask that corresponds to the padding. This function outputs an n x r x G_dim tensor and an n x r attention mask tensor
         global_gene_indices = rank_global_gene_indices
         
@@ -62,7 +61,7 @@ class LitScGraphLLM(pl.LightningModule):
         ### TODO: this masking setup will allow padded tokens to be included in the masked language modeling task. In order to fix this,We'll need to add the masking to the batch generation step in the dataloader. We also should also roughly standardize the tokens in each batch, or include a scaling factor for the loss based on the number of tokens in each batch 
         masked_full_cell_embedding, mask_locs = self.mask_tensor(torch.cat([gene_embeddings, rank_embeddings], dim=2)) ## the rank embedding and gene embedding layers are concatenated together and masked. in the masking operation, 15% of the token embedding vectors are replaced with <MASK> values, which is a concatenation of the <MASK> token from the node_embedding layer and the <MASK> token from the rank_embedding layer. This is a n x r x L_dim tensor
         learned_cell_embedding = self.mlm_encoder(masked_full_cell_embedding, attn_mask) ## this outputs an n x r x L_dim tensor
-        return learned_cell_embedding, node_embeddings, global_gene_indices, rank_local_gene_indices, mask_locs, edge_list
+        return learned_cell_embedding, gnn_out, global_gene_indices, rank_local_gene_indices, mask_locs, edge_list
 
         
     def training_step(self, batch, batch_idx):
@@ -79,11 +78,16 @@ class LitScGraphLLM(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        learned_cell_embedding, rank_global_gene_indices, mask_locs = self(batch)
+        learned_cell_embedding, node_embedding, rank_global_gene_indices,local_gene_to_node_index, mask_locs, edge_list = self(batch)
         predicted_gene_id= self.prediction_head(learned_cell_embedding) ## this maps the n x r x L_dim tensor to an n x r x G tensor
-        loss = self.mlm_loss(predicted_gene_id, rank_global_gene_indices, mask_locs)
+        L_mlm = self.mlm_loss(predicted_gene_id, rank_global_gene_indices, mask_locs)
+        L_g = self.link_pred_loss(node_embedding, mask_locs, rank_global_gene_indices, local_gene_to_node_index, edge_list)
+        loss = L_mlm + L_g
+        pp = self.pseudo_perp(predicted_gene_id, rank_global_gene_indices, mask_locs)
         pp = self.pseudo_perp(predicted_gene_id, rank_global_gene_indices, mask_locs)
         self.log('val_loss', loss, batch_size=1)
+        self.log('val_MLM_loss', L_mlm)
+        self.log('val_link_pred_loss', L_g)
         self.log("val_perplexity", pp, batch_size=1)
         return loss
 
@@ -120,26 +124,26 @@ class LitScGraphLLM(pl.LightningModule):
         predictor = self.link_pred_decoder
         node_embeddings = node_embedding
         global_masked_nodes = global_gene_index[batch_indices, seq_indices]
-        local_masked_nodes = local_gene_index[batch_indices, seq_indices]
-        map_dict = dict(zip(global_masked_nodes.detach().cpu().numpy(), local_masked_nodes.detach().cpu().numpy()))
-        for global_m, local_m in zip(global_masked_nodes, local_masked_nodes):
+        #local_masked_nodes = local_gene_index[batch_indices, seq_indices]
+        #map_dict = dict(zip(global_masked_nodes.detach().cpu().numpy(), local_masked_nodes.detach().cpu().numpy()))
+        #for global_m, local_m in zip(global_masked_nodes, local_masked_nodes):
+        for global_m in global_masked_nodes:
 
             # Positive examples
             pos_neighbors = edge_index[1, edge_index[0] == global_m]
-            pos_neighbors = torch.tensor(list(set(pos_neighbors).intersection(list(global_masked_nodes.detach().cpu().numpy()))))
+            #pos_neighbors = torch.tensor(list(set(pos_neighbors).intersection(list(global_masked_nodes.detach().cpu().numpy()))))
             # skip if no connections
             if len(pos_neighbors) == 0:
                 continue
 
-            
-            local_ids = [map_dict[n] for n in pos_neighbors]
-            pos_scores = predictor(node_embeddings[local_m, :].repeat(len(pos_neighbors), 1), node_embeddings[local_ids, :])
+            #local_ids = [map_dict[n.item()] for n in pos_neighbors]
+            pos_scores = predictor(node_embeddings[global_m, :].repeat(len(pos_neighbors), 1), node_embeddings[pos_neighbors, :])
             pos_out.append(pos_scores)
 
             # Negative examples - sampled randomly
-            neg_neighbors = negative_sampling(edge_index, num_nodes=node_embeddings.size(0), num_neg_samples=pos_neighbors.size(0))
-            local_neg_ids = [map_dict[n] for n in neg_neighbors]
-            neg_scores = predictor(node_embeddings[local_m, :].repeat(len(neg_neighbors), 1), node_embeddings[local_neg_ids, :])
+            neg_neighbors = negative_sampling(edge_index, num_nodes=node_embeddings.size(0), num_neg_samples=pos_neighbors.size(0)).view(-1)
+            #local_neg_ids = [map_dict[n] for n in neg_neighbors]
+            neg_scores = predictor(node_embeddings[global_m, :].repeat(len(neg_neighbors), 1), node_embeddings[neg_neighbors, :])
             neg_out.append(neg_scores)
 
         pos_out = torch.cat(pos_out, dim=0)

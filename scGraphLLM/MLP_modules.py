@@ -223,13 +223,15 @@ class ContrastiveLossSiamese(nn.Module):
 
         
 class LinkPredictor(nn.Module):
-    def __init__(self, in_dim, hidden_dim, dropout_rate=0.5):
+    def __init__(self, in_dim, hidden_dim):
         super(LinkPredictor, self).__init__()
         self.net = nn.Sequential(
                 nn.Linear(2 * in_dim, hidden_dim),
-                nn.GELU(),
                 nn.LayerNorm(hidden_dim),
-                nn.Dropout(dropout_rate),
+                nn.GELU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
                 nn.Linear(hidden_dim, 1)
             )
 
