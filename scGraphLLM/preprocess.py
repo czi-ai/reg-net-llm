@@ -13,6 +13,7 @@ heart
 |-- ...
 """
 from argparse import ArgumentParser
+import pyviper
 import scanpy as sc
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -21,11 +22,13 @@ import pandas as pd
 import os
 import logging
 import sys
+import warnings
 import multiprocessing as mp
 from typing import List
 from os.path import join
 from functools import partial
 
+warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler(sys.stdout))
 logger.setLevel(logging.DEBUG)
@@ -129,7 +132,8 @@ def write_adata_to_csv_buffered(adata, file, places=4, sep=",", buffer_size=1000
         return sep.join([name] + [str(v) if v != 0 else "0" for v in row])
     
     with open(file, "w") as f:
-        header = compile_row_string(df.index.name, range(1, X.shape[1]+1))
+        index_name = df.index.name if df.index.name is not None else "index"
+        header = compile_row_string(index_name, range(1, X.shape[1]+1))
         f.write(header + "\n")
         buffer = []
         for i, (name, row) in enumerate(zip(names, X)):
@@ -144,23 +148,59 @@ def write_adata_to_csv_buffered(adata, file, places=4, sep=",", buffer_size=1000
 
 
 def get_variability(adata):
+    """Compute the variability metrics for adata, filtering out non-variable columns"""
     variability = sc.pp.highly_variable_genes(adata, inplace=False)
     variability.index = adata.var_names
     variability = variability[lambda df: ~df["dispersions_norm"].isna()].sort_values("dispersions_norm", ascending=False)
     return variability
 
 
-def preprocess_data(adata, mito_thres, umi_min, umi_max, target_sum, save_path=None):
+def calculate_sparsity(counts):
+    """Calculate the sparsity of an Counts matrix"""
+    if isinstance(counts, sc.AnnData):
+        counts = counts.to_df().to_numpy()
+    elif isinstance(counts, pd.DataFrame):
+        counts = counts.to_numpy()
+    return (counts != 0).mean()
+
+
+def get_samples(adata, index_vars, assign_sample_id=True):
+    """Compute samples and sizes for samples, as indexed by tuplets of `index_vars`"""
+    if assign_sample_id:
+        adata.obs["sample_id"] = adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1)
+    samples_groupby = adata.obs.groupby(index_vars)
+    samples = samples_groupby.size()[lambda size: size > 0]
+    return samples
+
+
+def preprocess_data(
+        adata, 
+        mito_thres, 
+        umi_min, 
+        umi_max, 
+        target_sum, 
+        max_perc_umi_filtering=0.10):
+    
     # calculate qc metrics
     adata.var["mt"] = adata.var_names.map(lambda n: str(n).upper().startswith("MT"))
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
     
+    if max_perc_umi_filtering is not None:
+        assert 0 <= max_perc_umi_filtering <= 1, "max_perc_umi_filtering must be within (0 and 1)."
+        umi_lb, umi_ub = adata.obs["total_counts"].quantile([max_perc_umi_filtering/2, 1-max_perc_umi_filtering/2])
+        umi_max = max(umi_max, umi_ub)
+        umi_min = min(umi_min, umi_lb)
+
+    # store raw
+    adata.raw = adata
+
     # apply filters
     adata = adata[adata.obs["pct_counts_mt"] < mito_thres]
     sc.pp.filter_cells(adata, min_counts=umi_min)
     sc.pp.filter_cells(adata, max_counts=umi_max)
     
     # normalize
+    adata.raw = adata
     sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
 
@@ -174,45 +214,99 @@ def make_aracne_counts(adata, n_sample, filename):
     # excludle invariable genes
     variability = get_variability(adata)
     adata = adata[:,variability.index]
+
     # subsample
-    adata = sc.pp.subsample(adata, n_obs=n_sample, copy=True)
-    write_adata_to_csv_buffered(adata, sep="\t", file=filename)
+    if adata.shape[0] > n_sample:
+        adata = sc.pp.subsample(adata, n_obs=n_sample, copy=True)
+
+    # write_adata_to_csv_buffered(adata, sep="\t", file=filename)
     
+
+def make_metacells(adata, target_depth, compression, by_cluster, random_state):
+    if by_cluster:
+        sc.tl.pca(adata, svd_solver='arpack', random_state=random_state)
+        sc.pp.neighbors(adata)
+        sc.tl.louvain(adata, key_added="cluster", flavor='vtraag')
+        clusters = adata.obs["cluster"].value_counts()
+        logger.info(f"Detected {len(clusters)} clusters, ranging from {clusters[-1]:,} to {clusters[0]:,} cells")
+
+    metacells = {}
+    for name in clusters.index:
+        cluster = adata[adata.obs["cluster"] == name]
+        sc.pp.scale(cluster)
+        pyviper.pp.repr_metacells(
+            cluster, 
+            counts=None,
+            pca_slot="X_pca", 
+            dist_slot="corr_dist", 
+            size=int(clusters[name] * compression), 
+            min_median_depth=target_depth, 
+            clusters_slot=None,
+            key_added=f"metacells"
+        )
+        metacells[name] = cluster.uns["metacells"]
+        metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
+        del cluster
+    
+    metacells_array = pd.concat([metacells.get(name) for name in sorted(metacells.keys())]).to_numpy()
+    metacells_clusters = sum([[name] * metacells.get(name).shape[0] for name in sorted(metacells.keys())], [])
+    metacells_obs = pd.DataFrame({"cluster": metacells_clusters})
+    metacells_adata = sc.AnnData(metacells_array)
+    metacells_adata.obs = metacells_obs
+    metacells_adata.var = adata.var
+
+    return metacells_adata
+
+
 def rank(args):
     logger.info(f"Performing Rank Operation... [{args.aracne_counts_path}]")
     counts_df = pd.read_csv(f"{args.aracne_counts_path}", sep="\t")
     df = counts_df.loc[:, counts_df.columns != "feature_name"]
-    rank_df_raw = df.rank(axis = 1, method = "dense") +1
+    rank_df_raw = df.rank(axis=1, method="dense") +1
     rank_df_raw.to_csv(f"{args.ranks_path}")
+
 
 def main(args):
     adata = load_data(args.data_path)
-    logger.info(f"Loaded dataset: {adata.shape[0]:,} cells, {adata.shape[1]:,} genes")
+    adata = adata[adata.obs["is_primary_data"],:]
+    adata.obs.reset_index(inplace=True)
+    adata.var.reset_index(inplace=True)
+    spar = calculate_sparsity(adata)
+    logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {spar:.2f}")
 
     adata = preprocess_data(
         adata=adata, 
         mito_thres=args.mito_thres, 
         umi_min=args.umi_min, 
-        umi_max=args.umi_max, 
-        target_sum=args.target_sum,
-        save_path=args.counts_path
+        umi_max=args.umi_max,
+        max_perc_umi_filtering=args.max_perc_umi_filtering,
+        target_sum=args.target_sum
     )
-    logger.info(f"Preprocessed dataset: {adata.shape[0]:,} cells, {adata.shape[1]:,} genes")
+    spar = calculate_sparsity(adata)
+    logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {spar:.2f}")
 
-    # # save
-    # check_index(adata.var, "feature_id")
-    # write_adata_to_csv_buffered(adata, file=args.counts_path)
+    samples = get_samples(adata, index_vars=["dataset_id", "donor_id", "tissue"])
+    logger.info(f"Detected {samples.size} samples")
 
-    make_aracne_counts(
+    metacells = make_metacells(
         adata=adata,
-        n_sample=args.aracne_n_sample,
-        filename=args.aracne_counts_path
+        target_depth=args.metacells_target_depth, 
+        by_cluster=args.metacells_by_cluster, 
+        compression=args.metacells_compression,
+        random_state=args.random_state
     )
+    logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {calculate_sparsity(metacells):2f}")
+
+    # make_aracne_counts(
+    #     adata=metacells,
+    #     n_sample=args.aracne_n,
+    #     save_dir=args.aracne_dir
+    # )
 
     # calculate and stats/figures
 
     # calculate/save ranks
-    rank(args)
+    # rank(args)
 
 
 if __name__ == "__main__":
@@ -224,9 +318,15 @@ if __name__ == "__main__":
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
     parser.add_argument("--umi_max", type=int, default=1e5)
+    parser.add_argument("--max_perc_umi_filtering", type=float, default=0.10)
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
+    
+    parser.add_argument("--index_vars", nargs="+")
+    parser.add_argument("--metacells_by_cluster", action="store_true")
+    parser.add_argument("--metacells_target_depth", type=float, default=10000)
+    parser.add_argument("--metacells_compression", type=float, default=0.2)
 
     # figures
     parser.add_argument("--produce_figures", action="store_true")
@@ -234,21 +334,25 @@ if __name__ == "__main__":
     parser.add_argument("--save_h5ad", action="store_true")
 
     # aracne
-    parser.add_argument("--aracne_n_sample", type=int, default=1000)
+    parser.add_argument("--aracne_n", type=int, default=1000)
 
     # computation
+    parser.add_argument("--random_state", type=int, default=0)
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--n_cores", type=int, default=os.cpu_count())
     
     args = parser.parse_args()
     
-    # define paths
-    os.makedirs(args.out_dir, exist_ok=True)
+    # define paths 
     args.counts_path = join(args.out_dir, "counts.csv")
     args.ranks_path = join(args.out_dir, "ranks_raw.csv")
-    args.aracne_counts_path = join(args.out_dir, "counts.tsv")
+    args.aracne_dir = join(args.out_dir, "aracne")
+    args.aracne_counts_path = join(args.aracne_dir, "counts.tsv")
     args.h5ad_path = join(args.out_dir, "counts.h5ad")
     args.log_path = join(args.out_dir, "log.txt")
+    os.makedirs(args.out_dir, exist_ok=True)
+    os.makedirs(args.aracne_dir, exist_ok=True)
+
     logger.addHandler(logging.FileHandler(args.log_path)) 
     
     main(args)
