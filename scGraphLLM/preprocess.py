@@ -105,7 +105,7 @@ def plot_dim_reduction_figures(adata, title=None):
     return fig, axes
 
 
-def plot_qc_figures(adata, title=None):
+def plot_qc_figures(adata, title=None, fig_path=None):
     plt.style.use("ggplot")
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
     sc.pl.violin(adata, ['total_counts'], ax=axes[0,0], show=False)
@@ -122,7 +122,42 @@ def plot_qc_figures(adata, title=None):
 
     if title is not None:
         fig.suptitle(title, size=30)
+
+    if fig_path is not None:
+        plt.savefig(fig_path)
+        plt.close()
+        
     return fig, axes
+
+
+def plot_dim_reduction_by_sample_cluster(adata, title=None, level_limit=100, n_limit=20000, fig_path=None):
+    """Plot UMAP projections that colored by sample and by cluster """
+    if not "X_umap" in adata.obsm:
+        sc.tl.umap(adata)
+    cluster_levels = adata.obs["cluster"].value_counts(ascending=False)[:level_limit].index
+    samples_levels = adata.obs["sample_id"].value_counts(ascending=False)[:level_limit].index
+    adata_umap = adata[(
+        adata.obs["cluster"].isin(cluster_levels) &
+        adata.obs["sample_id"].isin(samples_levels)), :]
+    if adata_umap.shape[0] > n_limit:
+        adata_umap = sc.pp.subsample(adata, n_obs=n_limit)
+
+    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(16, 8))
+    sc.pl.umap(adata_umap, color="cluster", ax=axes[0], show=False)
+    axes[0].set_title("UMAP Plot, Cluster")
+    axes[0].get_legend().remove()
+    sc.pl.umap(adata_umap, color="sample_id", ax=axes[1], show=False)
+    axes[1].set_title("UMAP Plot, Samples")
+    axes[1].get_legend().remove()
+    if title is not None:
+        fig.suptitle(title, size=30)
+
+    if fig_path is not None:
+        plt.savefig(fig_path)
+        plt.close()
+
+    return fig, axes
+
 
 
 def write_adata_to_csv_buffered(adata, file, places=4, sep=",", buffer_size=1000):
@@ -158,13 +193,15 @@ def get_variability(adata):
     return variability
 
 
-def mean_qc_metrics_dict(adata, metrics=["n_genes_by_counts", "total_counts"]):
-    sc.pp.calculate_qc_metrics(adata, percent_top=None, inplace=True)
-    adata.obs["sparsity"] = adata.obs["n_genes_by_counts"] / adata.shape[1]
-    qc_dict = adata.obs[metrics + ["sparsity"]].mean().round(4).to_dict()
-    qc_dict["n_cells"] = adata.shape[0]
-    qc_dict["n_genes"] = adata.shape[1]
-    return qc_dict
+def qc_metrics_dict(adata):
+    nnz = adata.X != 0
+    return {
+        "n_cells": adata.shape[0],
+        "n_genes": adata.shape[1],
+        "sparsity": nnz.mean().round(4).item(),
+        "mean_umi": adata.X.sum(axis=1).mean().round(4).item(),
+        "mean_nnz": nnz.sum(axis=1).mean().round(4).item()
+    }
 
 
 def calculate_sparsity(counts):
@@ -179,9 +216,12 @@ def calculate_sparsity(counts):
 def get_samples(adata, index_vars, assign_sample_id=True):
     """Compute samples and sizes for samples, as indexed by tuplets of `index_vars`"""
     if assign_sample_id:
-        adata.obs["sample_id"] = adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1)
-    samples_groupby = adata.obs.groupby(index_vars)
-    samples = samples_groupby.size()[lambda size: size > 0]
+        adata.obs["sample_id"] = pd.Categorical(adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1))
+    samples = adata.obs\
+        .groupby(index_vars)\
+        .size()[lambda size: size > 0]\
+        .sort_values(ascending=False)
+    
     return samples
 
 
@@ -216,7 +256,7 @@ def preprocess_data(
     sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
 
-    return adata, mean_qc_metrics_dict(adata)
+    return adata, qc_metrics_dict(adata)
 
 
 def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.001, aracne_dir=None):
@@ -226,9 +266,9 @@ def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.
     for key in adata.obs["cluster"].unique():
         cluster = adata[adata.obs["cluster"] == key,:].copy()
         
-        # exclude invariable genes
-        sc.pp.calculate_qc_metrics(cluster)
-        cluster = cluster[:, cluster.var["n_cells_by_counts"] / cluster.shape[1] > min_perc_nz]
+        # exclude genes not sufficiently represented
+        perc_nz = cluster.X.sum(axis=0) / cluster.shape[1]
+        cluster = cluster[:, perc_nz > min_perc_nz]
 
         # enforce sample bounds
         if cluster.shape[0] > max_n_sample:
@@ -237,7 +277,7 @@ def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.
             logger.info(f"Cluster {key} has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
             continue
         samples[key] = cluster.shape
-        logger.info(f"Cluster {key} has {cluster.shape[0]:,} cells and {cluster.shape[0]:,} genes for ARACNe inference")
+        logger.info(f"Cluster {key} has {cluster.shape[0]:,} cells and {cluster.shape[1]:,} genes for ARACNe inference")
         
         # save
         write_adata_to_csv_buffered(
@@ -257,20 +297,19 @@ def get_clusters(adata, random_state, qc=True):
     sc.tl.pca(adata, svd_solver='arpack', random_state=random_state)
     sc.pp.neighbors(adata)
     sc.tl.louvain(adata, key_added="cluster", flavor='vtraag')
-
     return {
         "count": adata.obs["cluster"].nunique(),
         "size": adata.obs["cluster"].value_counts().to_dict()
     }
 
 
-def make_metacells(adata, target_depth, compression, by_cluster, random_state, qc=True):
+def make_metacells(adata, target_depth, compression, by_cluster, random_state, save_path=None, qc=True):
     """Make meta cells within clusters"""
     assert "cluster" in adata.obs.columns, "Making metacells requires cluster info"
     clusters = adata.obs["cluster"].value_counts()
     metacells = {}
     for name in clusters.index:
-        cluster = adata[adata.obs["cluster"] == name]
+        cluster = adata[adata.obs["cluster"] == name].copy()
         sc.pp.scale(cluster)
         pyviper.pp.repr_metacells(
             cluster, 
@@ -293,7 +332,10 @@ def make_metacells(adata, target_depth, compression, by_cluster, random_state, q
     metacells_adata.obs = metacells_obs
     metacells_adata.var = adata.var
     
-    return metacells_adata, mean_qc_metrics_dict(metacells_adata)
+    if save_path is not None:
+        metacells_adata.write_h5ad(save_path)
+
+    return metacells_adata, qc_metrics_dict(metacells_adata)
 
 
 def rank(args):
@@ -309,7 +351,7 @@ def main(args):
     logger.info(json.dumps(args.__dict__, indent=4))
     
     adata = load_data(args.data_path)
-    qc_initial = mean_qc_metrics_dict(adata)
+    qc_initial = qc_metrics_dict(adata)
     logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
 
     # CellXGene specific processing
@@ -336,6 +378,7 @@ def main(args):
         target_depth=args.metacells_target_depth, 
         by_cluster=args.metacells_by_cluster, 
         compression=args.metacells_compression,
+        save_path=(args.meta_path if args.save_metacells else None),
         random_state=args.random_state)
     logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")
 
@@ -346,8 +389,25 @@ def main(args):
         min_perc_nz=args.aracne_min_perc_nz,
         aracne_dir=args.aracne_dir)
     logger.info(f"{qc_aracne['count']} clusters from {qc_cluster} with sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
-    
-    json.dump({
+
+    # calculate and stats/figures
+    # calculate/save ranks
+    # rank(args)    
+
+    if args.produce_figures:
+        plot_dim_reduction_by_sample_cluster(
+            adata=adata,
+            title="UMAP Plots by Cluster and Sample",
+            fig_path=join(args.fig_dir, "umap.png")
+        )
+        plot_qc_figures(
+            adata=metacells, 
+            title="QC Figures for Metacells", 
+            fig_path=join(args.fig_dir, "qc_metacells.png")
+        )
+        
+    # Save Statistics & config
+    info = {
         "config": args.__dict__,
         "stats": {
             "initial": qc_initial,
@@ -356,12 +416,10 @@ def main(args):
             "metacells": qc_metacells,
             "aracne": qc_aracne
         }
-    }, args.info_path, indent=4)
-
-    # calculate and stats/figures
-    # calculate/save ranks
-    # rank(args)
-
+    }
+    with open(args.info_path, 'w') as file:
+        json.dump(info, file, indent=4)
+    
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -384,7 +442,7 @@ if __name__ == "__main__":
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")
-    parser.add_argument("--save_h5ad", action="store_true")
+    parser.add_argument("--save_metacells", action="store_true")
     # computation
     parser.add_argument("--random_state", type=int, default=0)
     parser.add_argument("--parallel", action="store_true")
@@ -394,14 +452,14 @@ if __name__ == "__main__":
     # define paths 
     args.counts_path = join(args.out_dir, "counts.csv")
     args.ranks_path = join(args.out_dir, "ranks_raw.csv")
-    args.aracne_dir = join(args.out_dir, "aracne")
-    args.aracne_counts_path = join(args.aracne_dir, "counts.tsv")
-    args.h5ad_path = join(args.out_dir, "counts.h5ad")
-    args.log_path = join(args.out_dir, "log.txt")
+    args.meta_path = join(args.out_dir, "metacells.h5ad")
     args.info_path = join(args.out_dir, "info.json")
+    args.log_path = join(args.out_dir, "log.txt")
+    args.aracne_dir = join(args.out_dir, "aracne")
+    args.fig_dir = join(args.out_dir, "figure")
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.aracne_dir, exist_ok=True)
-
+    os.makedirs(args.fig_dir, exist_ok=True)
     logger.addHandler(logging.FileHandler(args.log_path)) 
     
     main(args)
