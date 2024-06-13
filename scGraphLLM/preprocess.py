@@ -106,6 +106,7 @@ def plot_dim_reduction_figures(adata, title=None):
 
 
 def plot_qc_figures(adata, title=None, fig_path=None):
+    sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
     plt.style.use("ggplot")
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(20, 16))
     sc.pl.violin(adata, ['total_counts'], ax=axes[0,0], show=False)
@@ -157,7 +158,6 @@ def plot_dim_reduction_by_sample_cluster(adata, title=None, level_limit=100, n_l
         plt.close()
 
     return fig, axes
-
 
 
 def write_adata_to_csv_buffered(adata, file, places=4, sep=",", buffer_size=1000):
@@ -213,16 +213,22 @@ def calculate_sparsity(counts):
     return (counts != 0).mean()
 
 
-def get_samples(adata, index_vars, assign_sample_id=True):
+def get_samples(adata, index_vars=None):
     """Compute samples and sizes for samples, as indexed by tuplets of `index_vars`"""
-    if assign_sample_id:
+    logger.info(f"Detecting samples indexed by variables {index_vars}...")
+    if index_vars is None or len(index_vars) == 0:
+        adata.obs["sample_id"] = "0"
+    else:
+        index_vars = sorted(index_vars)
         adata.obs["sample_id"] = pd.Categorical(adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1))
+        
     samples = adata.obs\
-        .groupby(index_vars)\
+        .groupby("sample_id")\
         .size()[lambda size: size > 0]\
         .sort_values(ascending=False)
     
-    return samples
+    qc = samples.describe().astype(float).to_dict()
+    return samples, qc
 
 
 def preprocess_data(
@@ -303,7 +309,7 @@ def get_clusters(adata, random_state, qc=True):
     }
 
 
-def make_metacells(adata, target_depth, compression, by_cluster, random_state, save_path=None, qc=True):
+def make_metacells(adata, target_depth, compression, random_state, save_path=None, qc=True):
     """Make meta cells within clusters"""
     assert "cluster" in adata.obs.columns, "Making metacells requires cluster info"
     clusters = adata.obs["cluster"].value_counts()
@@ -319,7 +325,8 @@ def make_metacells(adata, target_depth, compression, by_cluster, random_state, s
             size=int(clusters[name] * compression), 
             min_median_depth=target_depth, 
             clusters_slot=None,
-            key_added=f"metacells"
+            key_added=f"metacells",
+            seed=random_state
         )
         metacells[name] = cluster.uns["metacells"]
         metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
@@ -367,7 +374,12 @@ def main(args):
         max_perc_umi_filtering=args.max_perc_umi_filtering,
         target_sum=args.target_sum)
     logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
-    
+
+    samples, qc_samples = get_samples(
+        adata=adata,
+        index_vars=args.sample_index_vars)
+    logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
+
     qc_cluster = get_clusters(
         adata, 
         random_state=args.random_state)
@@ -375,8 +387,7 @@ def main(args):
 
     metacells, qc_metacells = make_metacells(
         adata=adata,
-        target_depth=args.metacells_target_depth, 
-        by_cluster=args.metacells_by_cluster, 
+        target_depth=args.metacells_target_depth,
         compression=args.metacells_compression,
         save_path=(args.meta_path if args.save_metacells else None),
         random_state=args.random_state)
@@ -412,6 +423,7 @@ def main(args):
         "stats": {
             "initial": qc_initial,
             "preprocessed": qc_processed,
+            "samples": qc_samples,
             "clusters": qc_cluster,
             "metacells": qc_metacells,
             "aracne": qc_aracne
@@ -432,7 +444,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
-    parser.add_argument("--index_vars", nargs="+")
+    parser.add_argument("--sample_index_vars", nargs="+")
     parser.add_argument("--metacells_by_cluster", action="store_true")
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
