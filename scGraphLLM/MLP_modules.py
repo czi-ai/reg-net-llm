@@ -144,7 +144,24 @@ class MLPLocalCrossAttention(nn.Module):
             updated_A2[i, topk_indices_A2[i]] = updated_values[i]
 
         return updated_A2, attention_weights
-    
+
+class CrossAttentionFuse(nn.Module):
+    def __init__(self, embedding_dim, num_heads):
+        super().__init__()
+        self.local_attn = nn.MultiheadAttention(embedding_dim, num_heads)
+        self.global_attn = nn.MultiheadAttention(embedding_dim, num_heads)
+
+    def forward(self, node_embeddings, global_embedding):
+        node_embeddings = node_embeddings.unsqueeze(1)
+        global_embedding = global_embedding.unsqueeze(0).expand(node_embeddings.size(0), -1, -1)
+        
+        node_out, _ = self.local_attn(node_embeddings, global_embedding, global_embedding)
+        global_out, _ = self.global_attn(global_embedding, node_embeddings, node_embeddings)
+        
+        node_out = node_out.squeeze(1)
+        global_out = global_out[0]
+        
+        return node_out, global_out
 
 class ContrastiveLossCos(nn.Module):
     def __init__(self, margin=1.0):

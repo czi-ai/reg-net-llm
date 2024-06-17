@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
-from MLP_modules import MLPAttention, MLPCrossAttention
+from MLP_modules import MLPAttention, MLPCrossAttention, CrossAttentionFuse
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
 from torch_geometric.nn.inits import glorot
 from torch_geometric.nn.dense.linear import Linear
@@ -16,8 +16,7 @@ class GRNAttention(GATConv):
                                            concat=concat, negative_slope=negative_slope, 
                                            dropout=dropout, add_self_loops=add_self_loops, bias=bias)
         
-        # different attention weights for R-R edges and R-T edges
-        self.att_r_r = torch.nn.Parameter(torch.Tensor(1, heads, out_channels))
+        # attention weights R-T edges
         self.att_r_t = torch.nn.Parameter(torch.Tensor(1, heads, out_channels))
 
         # projection heads for R-R edges
@@ -65,11 +64,11 @@ class GRNAttention(GATConv):
         mask_rr = (edge_type == 0)  # R->R
         mask_rt = (edge_type == 1)  # R->T
         
-        # Create an empty tensor for messages
+        # Create an empty tensor for messages, dim (E, out_channels)
         msg = torch.zeros_like(x_j)
         
-        if mask_rr.sum() > 0:
-            # Multiplicative attention for R->R
+        if mask_rt.sum() > 0:
+            # Multiplicative attention for R->T
             q = self.query_r_r(x_i[mask_rr])
             k = self.key_r_r(x_j[mask_rr])
             v = self.value_r_r(x_j[mask_rr])
@@ -77,8 +76,8 @@ class GRNAttention(GATConv):
             alpha_rr = F.softmax(alpha_rr, dim=1)
             msg[mask_rr] = v * alpha_rr.view(-1, self.heads, 1)
 
-        if mask_rt.sum() > 0:
-            # Additive attention for R->T
+        if mask_rr.sum() > 0:
+            # Additive attention for R->R
             alpha_rt = (x_i[mask_rt] * self.att_r_t).sum(dim=-1) + (x_j[mask_rt] * self.att_r_t).sum(dim=-1)
             alpha_rt = F.leaky_relu(alpha_rt, negative_slope=self.negative_slope)
             alpha_rt = F.softmax(alpha_rt, dim=1)
@@ -132,7 +131,7 @@ class baseGCN(nn.Module):
 
 class GNN(nn.Module):
   def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, num_heads, 
-                activation=nn.LeakyReLU(), dropout_rate=0.5):
+                activation=nn.LeakyReLU(), dropout_rate=0.5, as_encoder=False):
     super().__init__()
     self.input_dim = input_dim
     self.hidden_dims = hidden_dims
@@ -141,6 +140,7 @@ class GNN(nn.Module):
     self.out_dim = out_dim
     self.f = activation
     self.dropout = nn.Dropout(dropout_rate)
+    self.as_encoder=as_encoder
 
     # GAT layers
     self.layers = nn.ModuleList([GATConv(input_dim, hidden_dims[0], heads=num_heads[0], concat=True, dropout=dropout_rate)])
@@ -177,8 +177,23 @@ class GNN(nn.Module):
       # residual connection
       if i > 0: 
         h += h_prev
-    h = self.output_layer(h)
+    if not self.as_encoder:
+      h = self.output_layer(h)
     return h
+
+# takes in GNN and a attention network and compute embeddings
+class GraphLMEnc(nn.Module):
+   def __init__(self, gnn, transformer):
+    super().__init__()
+    self.gnn = gnn
+    self.transformer = transformer # this is a cross attention module instead of a regular transformer
+  
+   def forward(self,  x, edge_index, edge_weight, batch):
+    local_embedding = self.gnn(x, edge_index, edge_weight, batch)
+    global_embedding = global_mean_pool(local_embedding, batch)
+    local_rep, global_rep = self.transformer(local_embedding, global_embedding)
+    return local_rep, global_rep
+
 
 # Graph smoothness reg
 def graph_smoothness(x, adj):
