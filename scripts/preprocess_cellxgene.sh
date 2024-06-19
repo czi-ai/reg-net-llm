@@ -12,8 +12,6 @@ source activate /pmglocal/$USER/mambaforge/envs/scllm
 cell_types=("photoreceptor_cell")
 # cell_types=("type_i_nk_t_cell" "mast_cell" "skin_fibroblast")
 
-USER = ld3154
-
 # Base paths
 data_base_path="/burg/pmg/collab/scGraphLLM/data/cellxgene/cell_type_005"
 out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/cell_type_examples"
