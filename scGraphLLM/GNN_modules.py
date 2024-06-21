@@ -8,6 +8,8 @@ from MLP_modules import MLPAttention, MLPCrossAttention, CrossAttentionFuse
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
 from torch_geometric.nn.inits import glorot
 from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.utils import degree
+import networkx as nx
 
 class GRNAttention(GATConv):
     def __init__(self, in_channels, out_channels, heads=1, concat=True, 
@@ -167,6 +169,9 @@ class GNN(nn.Module):
       self.dim_match.append(nn.Linear(prev_dim, curr_dim) if prev_dim != curr_dim else nn.Identity())
 
   def forward(self, X, edge_index, edge_weight):
+    # positional encoding based on shortest path distance
+    pos_embedding = shortest_path_embeddings(edge_index, X.shape[0])
+    X = torch.cat([X, pos_embedding], dim=1)
     h = X
     for i, (layer, match) in enumerate(zip(self.layers, self.dim_match)):
       h_prev = match(h)
@@ -208,28 +213,29 @@ class FuseTransformer(nn.Module):
         node_embeddings = node_embeddings.unsqueeze(1)
         global_embedding = global_embedding.unsqueeze(0).expand(node_embeddings.size(0), -1, -1)
 
-        # Local Attention
+        # Q=local, K,V=global
         node_out, _ = self.local_attn(node_embeddings, global_embedding, global_embedding, key_padding_mask=mask)
         node_out = self.dropout(self.norm1(node_out + node_embeddings))
 
-        # Global Attention
+        # Q=global, K,V=local
         global_out, _ = self.global_attn(global_embedding, node_embeddings, node_embeddings, key_padding_mask=mask)
         global_out = self.dropout(self.norm2(global_out + global_embedding))
 
         node_out = node_out.squeeze(1)
         global_out = global_out[0]
 
-        # Feed-Forward Network for node_out
+        # FFN for local
         node_ffn_out = self.ffn1(node_out)
         node_out = self.dropout(self.norm3(node_ffn_out + node_out))
 
-        # Feed-Forward Network for global_out
+        # FFN for global
         global_ffn_out = self.ffn2(global_out)
         global_out = self.dropout(self.norm4(global_ffn_out + global_out))
 
         return node_out, global_out
 
-# takes in GNN and a attention network and compute embeddings
+# GNN to obtain local information. Transformer with cross-attention to attend pooled global information to nodes.
+# No mask
 class GraphLMEnc(nn.Module):
    def __init__(self, gnn, transformer):
     super().__init__()
@@ -241,6 +247,23 @@ class GraphLMEnc(nn.Module):
     global_embedding = global_mean_pool(local_embedding, batch)
     local_rep, global_rep = self.transformer(local_embedding, global_embedding)
     return local_rep, global_rep
+
+
+# Masked node prediction
+# Takes in mask
+class GraphLMDec(nn.Module):
+    def __init__(self, embedding_dim, num_heads, forward_expansion, dropout, output_dim):
+        super().__init__()
+        self.transformer_block = FuseTransformer(embedding_dim, num_heads, forward_expansion, dropout)
+        self.output_layer = nn.Linear(embedding_dim, output_dim)
+    
+    def forward(self, node_embeddings, global_embedding, edge_index, mask):
+        pos_embedding = shortest_path_embeddings(edge_index, node_embeddings.shape[0])
+        node_embeddings = torch.cat([node_embeddings, pos_embedding], dim=1)
+        # masked attention in decoder
+        node_out, _ = self.transformer_block(node_embeddings, global_embedding, mask)
+        predictions = self.output_layer(node_out) # used to compute MLM loss
+        return predictions
 
 
 # Graph smoothness reg
@@ -256,7 +279,18 @@ def graph_smoothness(x, adj):
 def attention_sparsity(attn):
   return attn.norm(p = 1)
 
-
-      
+# shortest path positional embedding
+def shortest_path_embeddings(edge_index, num_nodes):
+    G = nx.Graph()
+    edge_list = edge_index.t().tolist()
+    G.add_edges_from(edge_list)
+    shortest_paths = dict(nx.shortest_path_length(G))
     
+    sp_matrix = torch.zeros((num_nodes, num_nodes))
+    for i in range(num_nodes):
+        for j in shortest_paths[i]:
+            sp_matrix[i, j] = shortest_paths[i][j]
+    
+    sp_embeddings = sp_matrix.mean(dim=1, keepdim=True)  # Example aggregation, mean of shortest paths
+    return sp_embeddings   
 
