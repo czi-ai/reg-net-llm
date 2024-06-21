@@ -180,6 +180,54 @@ class GNN(nn.Module):
     if not self.as_encoder:
       h = self.output_layer(h)
     return h
+  
+
+# Transformer block with cross attention
+class FuseTransformer(nn.Module):
+    def __init__(self, embedding_dim, num_heads, forward_expansion, dropout):
+        super(FuseTransformer, self).__init__()
+        self.local_attn = nn.MultiheadAttention(embedding_dim, num_heads)
+        self.global_attn = nn.MultiheadAttention(embedding_dim, num_heads)
+        self.norm1 = nn.LayerNorm(embedding_dim)
+        self.norm2 = nn.LayerNorm(embedding_dim)
+        self.norm3 = nn.LayerNorm(embedding_dim)
+        self.norm4 = nn.LayerNorm(embedding_dim)
+        self.ffn1 = nn.Sequential(
+            nn.Linear(embedding_dim, forward_expansion * embedding_dim),
+            nn.ReLU(),
+            nn.Linear(forward_expansion * embedding_dim, embedding_dim)
+        )
+        self.ffn2 = nn.Sequential(
+            nn.Linear(embedding_dim, forward_expansion * embedding_dim),
+            nn.ReLU(),
+            nn.Linear(forward_expansion * embedding_dim, embedding_dim)
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, node_embeddings, global_embedding, mask=None):
+        node_embeddings = node_embeddings.unsqueeze(1)
+        global_embedding = global_embedding.unsqueeze(0).expand(node_embeddings.size(0), -1, -1)
+
+        # Local Attention
+        node_out, _ = self.local_attn(node_embeddings, global_embedding, global_embedding, key_padding_mask=mask)
+        node_out = self.dropout(self.norm1(node_out + node_embeddings))
+
+        # Global Attention
+        global_out, _ = self.global_attn(global_embedding, node_embeddings, node_embeddings, key_padding_mask=mask)
+        global_out = self.dropout(self.norm2(global_out + global_embedding))
+
+        node_out = node_out.squeeze(1)
+        global_out = global_out[0]
+
+        # Feed-Forward Network for node_out
+        node_ffn_out = self.ffn1(node_out)
+        node_out = self.dropout(self.norm3(node_ffn_out + node_out))
+
+        # Feed-Forward Network for global_out
+        global_ffn_out = self.ffn2(global_out)
+        global_out = self.dropout(self.norm4(global_ffn_out + global_out))
+
+        return node_out, global_out
 
 # takes in GNN and a attention network and compute embeddings
 class GraphLMEnc(nn.Module):
