@@ -17,29 +17,19 @@ class Config(dict):
 
 
 
-mlm_config = Config({
-    "d_model": 128, 
-    "nhead" :4, 
-    "dim_feedforward" : 512, 
-    "dropout":0.1 ,
-    "activation":"gelu",
-    "batch_first":True
-})
 
 gnn_config = Config({ 
-    "input_dim": 64,
-    "hidden_dims": [128, 64, 32],
-    "conv_dim": 64, # this needs to be 2 * last layer dim
+    "input_dim": 128,
+    "hidden_dims": [128, 128, 128],
+    "conv_dim": 256, # this needs to be 2 * last layer dim
     "num_heads": [2, 2, 2, 1], #number of head per graph attention layer. Length = num_hidden_layers + 1
-    "out_dim": 64
+    "out_dim": 128
 })
 
 base_model_config = Config({
     "gnn_config" : gnn_config,
-    "mlm_config" : mlm_config,
-    "rank_embedding_size":5010, ## arbitary rn, but theoretically should be the cell with most genes 
-    "rank_embedding_dim": 64,
-    "node_embedding_size": 5010, 
+    "num_ranks":5002, ## arbitary rn, but theoretically should be the cell with most genes 
+    "num_genes": 5003, 
     "node_embedding_dim": 64
 })
 
@@ -66,12 +56,7 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "num_neigborhoods":64, 
-            "neigborhood_size":-1, 
-            "num_hops":3,  # this needs to be length of GNN hidden layers
-            "shuffle_nl":True,
-            "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
+            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         }),
         "val": Config({
             "aracne_outdirs":[
@@ -81,12 +66,7 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac12'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "num_neigborhoods":64, 
-            "neigborhood_size":-1, 
-            "num_hops":3,  # this needs to be length of GNN hidden layers
-            "shuffle_nl":False,
-            "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
+            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", 
         }),
         "test": Config({
             "aracne_outdirs":[
@@ -94,14 +74,10 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC10'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "num_neigborhoods":64,
-            "neigborhood_size":-1, 
-            "num_hops":3,  # this needs to be length of GNN hidden layers
-            "shuffle_nl":False,
-            "use_cache":True,
-            "cache_dir":"/burg/pmg/collab/scGraphLLM/data/cachenew"
+            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", 
         }),
-        "num_workers": 4
+        "num_workers": 4,
+        "batch_size": 16
     }),
     "trainer_config":Config({
         "max_epochs" : 100,
