@@ -13,9 +13,9 @@ source activate /pmglocal/$USER/mambaforge/envs/scllm
 cell_types=("type_i_nk_t_cell")
 
 # Base paths
-data_base_path="/pmglocal/rc3686/cellxgene/data/cell_type_005"
-out_base_path="/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_examples"
-script_path="/burg/pmg/users/rc3686/scGraphLLM/scGraphLLM/preprocess.py"
+data_base_path="/burg/pmg/collab/scGraphLLM/data/cellxgene/cell_type_005"
+out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/cell_type_examples"
+script_path="/burg/pmg/users/$USER/scGraphLLM/scGraphLLM/preprocess.py"
 
 # Iterate through each cell type
 for cell_type in "${cell_types[@]}"

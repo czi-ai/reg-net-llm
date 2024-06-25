@@ -18,6 +18,7 @@ import scanpy as sc
 import anndata as ad
 import matplotlib.pyplot as plt
 
+import numpy as np
 import pandas as pd
 import os
 import logging
@@ -346,12 +347,59 @@ def make_metacells(adata, target_depth, compression, random_state, save_path=Non
     return metacells_adata, qc_metrics_dict(metacells_adata)
 
 
-def rank(args):
-    logger.info(f"Performing Rank Operation... [{args.aracne_counts_path}]")
-    counts_df = pd.read_csv(f"{args.aracne_counts_path}", sep="\t")
-    df = counts_df.loc[:, counts_df.columns != "feature_name"]
-    rank_df_raw = df.rank(axis=1, method="dense") +1
-    rank_df_raw.to_csv(f"{args.ranks_path}")
+def rank(metacells, args, n_bins=100, plot=False):
+    df_ = pd.DataFrame(metacells.X)
+    rank_bins = np.zeros_like(df_, dtype=np.int64)
+    df = df_.copy().replace(0, np.nan) # Replace zeros with NaN so they are not considered in the ranking
+
+    if plot:
+        plot_gene_counts(df, save_to=args.out_dir)
+    
+    df_ranked = df.rank(axis=1, method="first", ascending=False).replace(np.nan, 0)
+    for i in range(df_ranked.shape[0]): # Iterate through rows (single cells)
+        row = df_ranked.iloc[i].to_numpy(dtype=int)
+        non_zero = row.nonzero()
+        if len(row[non_zero]) != 0: # Make sure row is not all zeros/nans (expressionless)
+            bins = np.quantile(row[non_zero], np.linspace(0, 1, n_bins-1))
+            bindices = np.digitize(row[non_zero], bins)
+            rank_bins[i, non_zero] = bindices
+
+    np.savetxt(f"{args.ranks_path}", rank_bins, delimiter=",", fmt='%d') # Save ranks_raw.csv file to cell-type-specific directory
+
+    # Info
+    df_info = df.count(axis=1)
+    rank_info = {
+        "n_bins": n_bins,
+        "min_genes_per_metacell": int(df_info.min()),
+        "max_genes_per_metacell": int(df_info.max()),
+        "median_genes_per_metacell": df_info.median(),
+        "mean_genes_per_bin": round(df.count(axis=0).sum()/(df.dropna(how="all").shape[0] * n_bins), 2),
+        "num_unique_highest_expressed": int(np.sum(np.any(np.isin(rank_bins, [99]), axis=0))) # Number of genes that were in the highest bin rank across metacells
+    }
+
+    return rank_bins, rank_info
+
+def plot_gene_counts(df, save_to, upper_range=2500):
+    dfmax = df.count(axis=1)
+    counts = []
+    for i in range(df.shape[1]):
+        mask = (dfmax == i)
+        indices = df.index[mask]
+        s0 = pd.Series(indices)
+        counts.append(s0.shape[0])
+
+    # Create the bar plot
+    plt.figure(figsize=(10, 6)) 
+    plt.bar(range(upper_range), counts[:upper_range])
+
+    # Customize the plot
+    cell_type = save_to.split("/")[-1]
+    plt.title(f'Gene Expression Distribution ({cell_type})')
+    plt.xlabel('# Expressed Genes per Metacell')
+    plt.ylabel('# Metacells')
+
+    plt.savefig(f"{save_to}/gene_counts_distripution.png")
+    plt.close()
 
 
 def main(args):
@@ -404,7 +452,7 @@ def main(args):
 
     # calculate and stats/figures
     # calculate/save ranks
-    # rank(args)    
+    rank_bins, rank_info = rank(metacells, args, n_bins=100, plot=True)
 
     if args.produce_figures:
         plot_dim_reduction_by_sample_cluster(
@@ -428,7 +476,8 @@ def main(args):
             "clusters": qc_cluster,
             "metacells": qc_metacells,
             "aracne": qc_aracne
-        }
+        },
+        "rank_bins": rank_info
     }
     with open(args.info_path, 'w') as file:
         json.dump(info, file, indent=4)
@@ -476,4 +525,3 @@ if __name__ == "__main__":
     logger.addHandler(logging.FileHandler(args.log_path)) 
     
     main(args)
-
