@@ -9,8 +9,8 @@
 source activate /pmglocal/$USER/mambaforge/envs/scllm
 
 # Define the list of cell types
-cell_types=("photoreceptor_cell")
 # cell_types=("type_i_nk_t_cell" "mast_cell" "skin_fibroblast")
+cell_types=("type_i_nk_t_cell")
 
 # Base paths
 data_base_path="/pmglocal/rc3686/cellxgene/data/cell_type_005"
@@ -21,11 +21,15 @@ script_path="/burg/pmg/users/rc3686/scGraphLLM/scGraphLLM/preprocess.py"
 for cell_type in "${cell_types[@]}"
 do  
     echo "Processing ${cell_type}..."
+    start_time=$(date +%s)
+
     python "$script_path" \
         --data_path "${data_base_path}/${cell_type}/partitions" \
         --out_dir "${out_base_path}/${cell_type}" \
         --save_metacells \
-        --produce_figures
+        --produce_figures \
+        --sample_index_vars dataset_id donor_id tissue \
+        --aracne_min_n 50
 
     # Check if the command succeeded
     if [ $? -eq 0 ]; then
@@ -33,4 +37,8 @@ do
     else
         echo "Failed to process ${cell_type}"
     fi
+    
+    end_time=$(date +%s)
+    elapsed_time=$((end_time - start_time))
+    echo "Time taken to process ${cell_type}: ${elapsed_time} seconds"
 done

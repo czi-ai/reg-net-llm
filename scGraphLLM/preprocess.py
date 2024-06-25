@@ -326,7 +326,8 @@ def make_metacells(adata, target_depth, compression, random_state, save_path=Non
             min_median_depth=target_depth, 
             clusters_slot=None,
             key_added=f"metacells",
-            seed=random_state
+            seed=random_state,
+            verbose=False
         )
         metacells[name] = cluster.uns["metacells"]
         metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
