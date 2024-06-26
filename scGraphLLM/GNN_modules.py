@@ -2,14 +2,103 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import MessagePassing
-from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
-from MLP_modules import CrossAttentionMLP
+from torch_geometric.nn import GATConv
+from MLP_modules import AttentionMLP
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
-from torch_geometric.nn.inits import glorot
-from torch_geometric.nn.dense.linear import Linear
-from torch_geometric.utils import degree
 import networkx as nx
+
+
+class GNN(nn.Module):
+  def __init__(self, num_nodes, input_dim, hidden_dims, conv_dim, out_dim, num_heads, cross_attn_dim=16,
+                activation=nn.GELU(), dropout_rate=0.5):
+    super().__init__()
+    self.input_dim = input_dim
+    self.hidden_dims = hidden_dims
+    self.conv_dim = conv_dim
+    self.num_heads = num_heads
+    self.cross_attn_dim = cross_attn_dim
+    self.out_dim = out_dim
+    self.f = activation
+    self.dropout = nn.Dropout(dropout_rate)
+    self.PE = SPosPE(num_nodes, out_dim) # assume out dim = in dim. Project from num_nodes dim
+
+    # GAT layers
+    self.layers = nn.ModuleList([GATConv(input_dim, hidden_dims[0], heads=num_heads[0], 
+                                         concat=False, dropout=dropout_rate)])
+    for i in range(1, len(hidden_dims)):
+      self.layers.append(GATConv(hidden_dims[i - 1] * num_heads[i - 1], hidden_dims[i], heads=num_heads[i], 
+                                 concat=False, dropout=dropout_rate))
+    self.layers.append(GATConv(hidden_dims[-1] * num_heads[-1], conv_dim, heads=num_heads[-1], 
+                               concat=False, dropout=dropout_rate))
+
+    # Layer Norm layers
+    self.layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dims[0])])
+    for i in range(1, len(hidden_dims)):
+      self.layer_norms.append(nn.LayerNorm(hidden_dims[i]))
+    self.layer_norms.append(nn.LayerNorm(conv_dim))
+
+    # Final linear layer
+    self.output_layer = nn.Linear(conv_dim, out_dim)
+    
+    # attention network
+    self.attn_network = AttentionMLP(in_size=out_dim, hidden_size=64, num_heads=num_heads)
+
+  def forward(self, X, edge_index, edge_weight):
+    # positional embedding based on shortest path distance
+    pos_embedding = self.PE(edge_index, X.shape[0])
+    X = torch.cat([X, pos_embedding], dim=1)
+
+    # Virutal node connected to every other nodes
+    virtual_node = torch.mean(X, dim=0, keepdim=True)
+    X = torch.cat([X, virtual_node], dim=0)
+    virtual_node_idx = X.size(0) - 1
+    virtual_edges = torch.stack([torch.arange(virtual_node_idx), 
+                                 torch.full((virtual_node_idx,), virtual_node_idx)], dim=0)
+    edge_index = torch.cat([edge_index, virtual_edges, virtual_edges.flip(0)], dim=1)
+
+    h = X
+    for i, layer in enumerate(self.layers):
+      h_prev = h
+      h = layer(h, edge_index, edge_weight)
+      h = self.layer_norms[i](h)
+      h = self.f(h)
+      h = self.dropout(h)
+      # residual connection
+      if i > 0: 
+        h += h_prev
+
+    virtual_node_embedding = h[-1].unsqueeze(0).repeat(h.shape[0]-1, 1) 
+    node_embedding = h[:-1]
+    # virtual_node_embedding is broadcasted to (G, D) from (1, D)
+    assert virtual_node_embedding.shape == node_embedding.shape
+    combined_embedding = torch.stack([node_embedding, virtual_node_embedding], dim=1) # shape = (G, 2, D)
+    final_node_embedding = self.attn_network(combined_embedding)
+    h = self.output_layer(final_node_embedding)
+    return h
+
+# shortest path positional embedding
+class SPosPE(nn.Module):
+    def __init__(self, input_dim, projection_dim):
+        super().__init__()
+        self.projection = nn.Linear(input_dim, projection_dim)
+
+    def forward(self, edge_index, num_nodes):
+        G = nx.Graph()
+        edge_list = edge_index.t().tolist()
+        G.add_edges_from(edge_list)
+        shortest_paths = dict(nx.shortest_path_length(G))
+        
+        sp_matrix = torch.zeros((num_nodes, num_nodes))
+        for i in range(num_nodes):
+            for j in shortest_paths[i]:
+                sp_matrix[i, j] = shortest_paths[i][j]
+        
+        sp_embeddings = sp_matrix.mean(dim=1, keepdim=True)  # Example aggregation, mean of shortest paths
+        
+        # Project to latent dimension
+        sp_embeddings = self.projection(sp_embeddings)
+        
+        return sp_embeddings  
 
 # optional attention 
 class GRNAttention(GATConv):
@@ -90,114 +179,8 @@ class GRNAttention(GATConv):
 
     def aggregate(self, inputs, index):
         return torch_geometric.nn.aggr.add(inputs, index)
-    
-  
-# Vanilla graph conovolution network
-class baseGCN(nn.Module):
-  def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, activation = nn.LeakyReLU()):
-    super().__init__()
-    self.input_dim = input_dim
-    self.hidden_dims = hidden_dims
-    self.conv_dim = conv_dim
-    self.out_dim = out_dim
-    self.f = activation
 
-    # First layer
-    layers = [GCNConv(self.input_dim, self.hidden_dims[0])]
-    bns = [BatchNorm(self.hidden_dims[0])]
 
-    # Hidden layers
-    for i in range(1, len(self.hidden_dims)):
-      layers.append(GCNConv(self.hidden_dims[i - 1], self.hidden_dims[i]))
-      bns.append(self.hidden_dims[i])
-    
-    # Last conv and bn layers
-    layers.append(GCNConv(self.hidden_dims[-1], self.conv_dim))
-    bns.append(BatchNorm(self.conv_dim))
-
-    self.layers = nn.ModuleList(layers)
-    self.bns = nn.ModuleList(bns)
-
-    # MLP head
-    self.output_layer = nn.Linear(self.conv_dim, self.out_dim)
-
-  def forward(self, X, A, W):
-    h = X
-    for i, layer in enumerate(self.layers):
-      if i < len(self.layers) - 1:
-        h = layer(h, A, W)
-        h = self.bns[i](h)
-        h = self.f(h)
-      else:
-        h = layer(h)
-    return h
-
-class GNN(nn.Module):
-  def __init__(self, num_nodes, input_dim, hidden_dims, conv_dim, out_dim, num_heads, cross_attn_dim=16,
-                activation=nn.GELU(), dropout_rate=0.5):
-    super().__init__()
-    self.input_dim = input_dim
-    self.hidden_dims = hidden_dims
-    self.conv_dim = conv_dim
-    self.num_heads = num_heads
-    self.cross_attn_dim = cross_attn_dim
-    self.out_dim = out_dim
-    self.f = activation
-    self.dropout = nn.Dropout(dropout_rate)
-    self.PE = SPosPE(num_nodes, out_dim) # assume out dim = in dim. Project from num_nodes dim
-
-    # GAT layers
-    self.layers = nn.ModuleList([GATConv(input_dim, hidden_dims[0], heads=num_heads[0], 
-                                         concat=False, dropout=dropout_rate)])
-    for i in range(1, len(hidden_dims)):
-      self.layers.append(GATConv(hidden_dims[i - 1] * num_heads[i - 1], hidden_dims[i], heads=num_heads[i], 
-                                 concat=False, dropout=dropout_rate))
-    self.layers.append(GATConv(hidden_dims[-1] * num_heads[-1], conv_dim, heads=num_heads[-1], 
-                               concat=False, dropout=dropout_rate))
-
-    # Layer Norm layers
-    self.layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dims[0])])
-    for i in range(1, len(hidden_dims)):
-      self.layer_norms.append(nn.LayerNorm(hidden_dims[i]))
-    self.layer_norms.append(nn.LayerNorm(conv_dim))
-
-    # Final linear layer
-    self.output_layer = nn.Linear(conv_dim, out_dim)
-    
-    # cross attention network
-    self.cross_attn_network = CrossAttentionMLP(d_model=out_dim, projection_dim=self.cross_attn_dim)
-
-  def forward(self, X, edge_index, edge_weight):
-    # positional embedding based on shortest path distance
-    pos_embedding = self.PE(edge_index, X.shape[0])
-    X = torch.cat([X, pos_embedding], dim=1)
-
-    # Virutal node connected to every other nodes
-    virtual_node = torch.mean(X, dim=0, keepdim=True)
-    X = torch.cat([X, virtual_node], dim=0)
-    virtual_node_idx = X.size(0) - 1
-    virtual_edges = torch.stack([torch.arange(virtual_node_idx), 
-                                 torch.full((virtual_node_idx,), virtual_node_idx)], dim=0)
-    edge_index = torch.cat([edge_index, virtual_edges, virtual_edges.flip(0)], dim=1)
-
-    h = X
-    for i, layer in enumerate(self.layers):
-      h_prev = h
-      h = layer(h, edge_index, edge_weight)
-      h = self.layer_norms[i](h)
-      h = self.f(h)
-      h = self.dropout(h)
-      # residual connection
-      if i > 0: 
-        h += h_prev
-
-    virtual_node_embedding = h[-1].unsqueeze(0)
-    node_embedding = h[:-1]
-    # q = virtual node, k,v = real nodes
-    final_node_embedding = self.cross_attn_network(virtual_node_embedding, node_embedding)
-    h = self.output_layer(final_node_embedding)
-    return h
-  
 # Graph smoothness reg
 def graph_smoothness(x, adj):
   edge_index, weight = dense_to_sparse(adj)
@@ -210,28 +193,3 @@ def graph_smoothness(x, adj):
 
 def attention_sparsity(attn):
   return attn.norm(p = 1)
-
-# shortest path positional embedding
-class SPosPE(nn.Module):
-    def __init__(self, input_dim, projection_dim):
-        super().__init__()
-        self.projection = nn.Linear(input_dim, projection_dim)
-
-    def forward(self, edge_index, num_nodes):
-        G = nx.Graph()
-        edge_list = edge_index.t().tolist()
-        G.add_edges_from(edge_list)
-        shortest_paths = dict(nx.shortest_path_length(G))
-        
-        sp_matrix = torch.zeros((num_nodes, num_nodes))
-        for i in range(num_nodes):
-            for j in shortest_paths[i]:
-                sp_matrix[i, j] = shortest_paths[i][j]
-        
-        sp_embeddings = sp_matrix.mean(dim=1, keepdim=True)  # Example aggregation, mean of shortest paths
-        
-        # Project to latent dimension
-        sp_embeddings = self.projection(sp_embeddings)
-        
-        return sp_embeddings  
-
