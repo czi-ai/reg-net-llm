@@ -468,18 +468,6 @@ def main(args):
     # calculate/save ranks
     rank_bins, rank_info = rank(metacells, args, n_bins=100, plot=True)
 
-    if args.produce_figures:
-        plot_dim_reduction_by_sample_cluster(
-            adata=adata,
-            title="UMAP Plots by Cluster and Sample",
-            fig_path=join(args.fig_dir, "umap.png")
-        )
-        plot_qc_figures(
-            adata=metacells, 
-            title="QC Figures for Metacells", 
-            fig_path=join(args.fig_dir, "qc_metacells.png")
-        )
-        
     # Save Statistics & config
     info = {
         "config": args.__dict__,
@@ -495,6 +483,18 @@ def main(args):
     }
     with open(args.info_path, 'w') as file:
         json.dump(info, file, indent=4)
+
+    if args.produce_figures:
+        plot_dim_reduction_by_sample_cluster(
+            adata=adata,
+            title="UMAP Plots by Cluster and Sample",
+            fig_path=join(args.fig_dir, "umap.png")
+        )
+        plot_qc_figures(
+            adata=metacells, 
+            title="QC Figures for Metacells", 
+            fig_path=join(args.fig_dir, "qc_metacells.png")
+        )
     
 
 if __name__ == "__main__":
@@ -515,7 +515,7 @@ if __name__ == "__main__":
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
-    parser.add_argument("--aracne_min_perc_nz", type=int, default=0.05)
+    parser.add_argument("--aracne_min_perc_nz", type=int, default=0.01)
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")

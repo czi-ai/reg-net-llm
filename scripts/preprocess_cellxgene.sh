@@ -7,7 +7,7 @@
 
 PREPROCESS=false
 RUN_ARACNE=true
-N_SUBNETS=3
+MIN_TOTAL_SUBNETS=50
 
 # activate virtual environment
 source activate /pmglocal/$USER/mambaforge/envs/scllm
@@ -50,35 +50,37 @@ do
         # Generate ARACNe subnetworks for each cluster
         counts_files=($(find "$out_base_path/$cell_type/aracne/counts/" -name "counts_*.tsv" | sort))
         n_clusters=${#counts_files[@]}
-        n_total_subnets=$((n_clusters * N_SUBNETS))
-        echo "Generating ${N_SUBNETS} ARACNe subnetworks for ${n_clusters} clusters...${n_total_subnets} total subnetworks..."
+        n_subnets_per_cluster=$(((MIN_TOTAL_SUBNETS + n_clusters) / n_clusters))
+        n_total_subnets=$((n_clusters * n_subnets_per_cluster)) # make this ~50-100
+        echo "Generating ${n_subnets_per_cluster} ARACNe subnetworks for ${n_clusters} clusters...${n_total_subnets} total subnetworks..."
         for file_path in "${counts_files[@]}"
         do  
             index=$(basename "$file_path" | sed 's/counts_\([0-9]*\)\.tsv/\1/')
-            echo "Running ARACNe for ${file_path} (Index: $index)"
+            echo "Running ARACNe for ${file_path} (Cluster: $index)"
             
             aracne \
                 -e $file_path \
                 -r $regulators_path \
                 -o $out_base_path/$cell_type/aracne \
-                -x $N_SUBNETS \
+                -x $n_subnets_per_cluster \
                 -FDR \
                 --runid $index \
-                --subsample 1.00 \
                 --alpha 0.05 \
                 --noConsolidate \
                 --seed 12345
         done
 
-        # Consolidate aracne subnetworks using all counts
+        echo "Consolidating ARACNe subnetworks for ${n_clusters} clusters of cell type: ${cell_type} "
         aracne \
             -e $out_base_path/$cell_type/aracne/counts/counts.tsv \
             -r $regulators_path \
             -o $out_base_path/$cell_type/aracne \
             -x $n_total_subnets \
             -FDR \
+            --subsample 1.00 \
             --alpha 0.05 \
-            --consolidate
+            --consolidate \
+            --seed 12345
 
         # Check if the ARACNe command succeeded
         if [ $? -eq 0 ]; then
