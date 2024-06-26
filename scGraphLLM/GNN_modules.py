@@ -4,13 +4,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import GCNConv, BatchNorm, global_mean_pool, GATConv
-from MLP_modules import MLPAttention, MLPCrossAttention, CrossAttentionFuse
+from MLP_modules import CrossAttentionMLP
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
 from torch_geometric.nn.inits import glorot
 from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.utils import degree
 import networkx as nx
 
+# optional attention 
 class GRNAttention(GATConv):
     def __init__(self, in_channels, out_channels, heads=1, concat=True, 
                  negative_slope=0.2, dropout=0, add_self_loops=True, bias=True):
@@ -132,140 +133,71 @@ class baseGCN(nn.Module):
     return h
 
 class GNN(nn.Module):
-  def __init__(self, input_dim, hidden_dims, conv_dim, out_dim, num_heads, 
-                activation=nn.LeakyReLU(), dropout_rate=0.5, as_encoder=False):
+  def __init__(self, num_nodes, input_dim, hidden_dims, conv_dim, out_dim, num_heads, cross_attn_dim=16,
+                activation=nn.GELU(), dropout_rate=0.5):
     super().__init__()
     self.input_dim = input_dim
     self.hidden_dims = hidden_dims
     self.conv_dim = conv_dim
     self.num_heads = num_heads
+    self.cross_attn_dim = cross_attn_dim
     self.out_dim = out_dim
     self.f = activation
     self.dropout = nn.Dropout(dropout_rate)
-    self.as_encoder=as_encoder
+    self.PE = SPosPE(num_nodes, out_dim) # assume out dim = in dim. Project from num_nodes dim
 
     # GAT layers
-    self.layers = nn.ModuleList([GATConv(input_dim, hidden_dims[0], heads=num_heads[0], concat=True, dropout=dropout_rate)])
+    self.layers = nn.ModuleList([GATConv(input_dim, hidden_dims[0], heads=num_heads[0], 
+                                         concat=False, dropout=dropout_rate)])
     for i in range(1, len(hidden_dims)):
-      self.layers.append(GATConv(hidden_dims[i - 1] * num_heads[i - 1], hidden_dims[i], heads=num_heads[i], concat=True, dropout=dropout_rate))
-    self.layers.append(GATConv(hidden_dims[-1] * num_heads[-1], conv_dim, heads=num_heads[-1], concat=False, dropout=dropout_rate))
+      self.layers.append(GATConv(hidden_dims[i - 1] * num_heads[i - 1], hidden_dims[i], heads=num_heads[i], 
+                                 concat=False, dropout=dropout_rate))
+    self.layers.append(GATConv(hidden_dims[-1] * num_heads[-1], conv_dim, heads=num_heads[-1], 
+                               concat=False, dropout=dropout_rate))
 
-    # Batch Norm layers
-    self.bns = nn.ModuleList([BatchNorm(hidden_dims[0] * num_heads[0])])
+    # Layer Norm layers
+    self.layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dims[0])])
     for i in range(1, len(hidden_dims)):
-      self.bns.append(BatchNorm(hidden_dims[i] * num_heads[i]))
-    self.bns.append(BatchNorm(conv_dim))
+      self.layer_norms.append(nn.LayerNorm(hidden_dims[i]))
+    self.layer_norms.append(nn.LayerNorm(conv_dim))
 
     # Final linear layer
     self.output_layer = nn.Linear(conv_dim, out_dim)
-
-    # Dimension matching for residual connections
-    self.dim_match = nn.ModuleList()
-    initial_out_dim = hidden_dims[0] * num_heads[0]
-    self.dim_match.append(nn.Linear(input_dim, initial_out_dim) if input_dim != initial_out_dim else nn.Identity())
-    for i in range(1, len(hidden_dims)):
-      prev_dim = hidden_dims[i - 1] * num_heads[i - 1]
-      curr_dim = hidden_dims[i] * num_heads[i]
-      self.dim_match.append(nn.Linear(prev_dim, curr_dim) if prev_dim != curr_dim else nn.Identity())
+    
+    # cross attention network
+    self.cross_attn_network = CrossAttentionMLP(d_model=out_dim, projection_dim=self.cross_attn_dim)
 
   def forward(self, X, edge_index, edge_weight):
-    # positional encoding based on shortest path distance
-    pos_embedding = shortest_path_embeddings(edge_index, X.shape[0])
+    # positional embedding based on shortest path distance
+    pos_embedding = self.PE(edge_index, X.shape[0])
     X = torch.cat([X, pos_embedding], dim=1)
+
+    # Virutal node connected to every other nodes
+    virtual_node = torch.mean(X, dim=0, keepdim=True)
+    X = torch.cat([X, virtual_node], dim=0)
+    virtual_node_idx = X.size(0) - 1
+    virtual_edges = torch.stack([torch.arange(virtual_node_idx), 
+                                 torch.full((virtual_node_idx,), virtual_node_idx)], dim=0)
+    edge_index = torch.cat([edge_index, virtual_edges, virtual_edges.flip(0)], dim=1)
+
     h = X
-    for i, (layer, match) in enumerate(zip(self.layers, self.dim_match)):
-      h_prev = match(h)
+    for i, layer in enumerate(self.layers):
+      h_prev = h
       h = layer(h, edge_index, edge_weight)
-      h = self.bns[i](h)
+      h = self.layer_norms[i](h)
       h = self.f(h)
       h = self.dropout(h)
       # residual connection
       if i > 0: 
         h += h_prev
-    if not self.as_encoder:
-      h = self.output_layer(h)
+
+    virtual_node_embedding = h[-1].unsqueeze(0)
+    node_embedding = h[:-1]
+    # q = virtual node, k,v = real nodes
+    final_node_embedding = self.cross_attn_network(virtual_node_embedding, node_embedding)
+    h = self.output_layer(final_node_embedding)
     return h
   
-
-# Transformer block with cross attention
-class FuseTransformer(nn.Module):
-    def __init__(self, embedding_dim, num_heads, forward_expansion, dropout):
-        super(FuseTransformer, self).__init__()
-        self.local_attn = nn.MultiheadAttention(embedding_dim, num_heads)
-        self.global_attn = nn.MultiheadAttention(embedding_dim, num_heads)
-        self.norm1 = nn.LayerNorm(embedding_dim)
-        self.norm2 = nn.LayerNorm(embedding_dim)
-        self.norm3 = nn.LayerNorm(embedding_dim)
-        self.norm4 = nn.LayerNorm(embedding_dim)
-        self.ffn1 = nn.Sequential(
-            nn.Linear(embedding_dim, forward_expansion * embedding_dim),
-            nn.ReLU(),
-            nn.Linear(forward_expansion * embedding_dim, embedding_dim)
-        )
-        self.ffn2 = nn.Sequential(
-            nn.Linear(embedding_dim, forward_expansion * embedding_dim),
-            nn.ReLU(),
-            nn.Linear(forward_expansion * embedding_dim, embedding_dim)
-        )
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, node_embeddings, global_embedding, mask=None):
-        node_embeddings = node_embeddings.unsqueeze(1)
-        global_embedding = global_embedding.unsqueeze(0).expand(node_embeddings.size(0), -1, -1)
-
-        # Q=local, K,V=global
-        node_out, _ = self.local_attn(node_embeddings, global_embedding, global_embedding, key_padding_mask=mask)
-        node_out = self.dropout(self.norm1(node_out + node_embeddings))
-
-        # Q=global, K,V=local
-        global_out, _ = self.global_attn(global_embedding, node_embeddings, node_embeddings, key_padding_mask=mask)
-        global_out = self.dropout(self.norm2(global_out + global_embedding))
-
-        node_out = node_out.squeeze(1)
-        global_out = global_out[0]
-
-        # FFN for local
-        node_ffn_out = self.ffn1(node_out)
-        node_out = self.dropout(self.norm3(node_ffn_out + node_out))
-
-        # FFN for global
-        global_ffn_out = self.ffn2(global_out)
-        global_out = self.dropout(self.norm4(global_ffn_out + global_out))
-
-        return node_out, global_out
-
-# GNN to obtain local information. Transformer with cross-attention to attend pooled global information to nodes.
-# No mask
-class GraphLMEnc(nn.Module):
-   def __init__(self, gnn, transformer):
-    super().__init__()
-    self.gnn = gnn
-    self.transformer = transformer # this is a cross attention module instead of a regular transformer
-  
-   def forward(self,  x, edge_index, edge_weight, batch):
-    local_embedding = self.gnn(x, edge_index, edge_weight, batch)
-    global_embedding = global_mean_pool(local_embedding, batch)
-    local_rep, global_rep = self.transformer(local_embedding, global_embedding)
-    return local_rep, global_rep
-
-
-# Masked node prediction
-# Takes in mask
-class GraphLMDec(nn.Module):
-    def __init__(self, embedding_dim, num_heads, forward_expansion, dropout, output_dim):
-        super().__init__()
-        self.transformer_block = FuseTransformer(embedding_dim, num_heads, forward_expansion, dropout)
-        self.output_layer = nn.Linear(embedding_dim, output_dim)
-    
-    def forward(self, node_embeddings, global_embedding, edge_index, mask):
-        pos_embedding = shortest_path_embeddings(edge_index, node_embeddings.shape[0])
-        node_embeddings = torch.cat([node_embeddings, pos_embedding], dim=1)
-        # masked attention in decoder
-        node_out, _ = self.transformer_block(node_embeddings, global_embedding, mask)
-        predictions = self.output_layer(node_out) # used to compute MLM loss
-        return predictions
-
-
 # Graph smoothness reg
 def graph_smoothness(x, adj):
   edge_index, weight = dense_to_sparse(adj)
@@ -280,17 +212,26 @@ def attention_sparsity(attn):
   return attn.norm(p = 1)
 
 # shortest path positional embedding
-def shortest_path_embeddings(edge_index, num_nodes):
-    G = nx.Graph()
-    edge_list = edge_index.t().tolist()
-    G.add_edges_from(edge_list)
-    shortest_paths = dict(nx.shortest_path_length(G))
-    
-    sp_matrix = torch.zeros((num_nodes, num_nodes))
-    for i in range(num_nodes):
-        for j in shortest_paths[i]:
-            sp_matrix[i, j] = shortest_paths[i][j]
-    
-    sp_embeddings = sp_matrix.mean(dim=1, keepdim=True)  # Example aggregation, mean of shortest paths
-    return sp_embeddings   
+class SPosPE(nn.Module):
+    def __init__(self, input_dim, projection_dim):
+        super().__init__()
+        self.projection = nn.Linear(input_dim, projection_dim)
+
+    def forward(self, edge_index, num_nodes):
+        G = nx.Graph()
+        edge_list = edge_index.t().tolist()
+        G.add_edges_from(edge_list)
+        shortest_paths = dict(nx.shortest_path_length(G))
+        
+        sp_matrix = torch.zeros((num_nodes, num_nodes))
+        for i in range(num_nodes):
+            for j in shortest_paths[i]:
+                sp_matrix[i, j] = shortest_paths[i][j]
+        
+        sp_embeddings = sp_matrix.mean(dim=1, keepdim=True)  # Example aggregation, mean of shortest paths
+        
+        # Project to latent dimension
+        sp_embeddings = self.projection(sp_embeddings)
+        
+        return sp_embeddings  
 

@@ -4,6 +4,7 @@ from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import get_laplacian, dense_to_sparse, to_dense_adj
+from GNN_modules import SPosPE
 
 
 def laplacian_normalized(A):
@@ -37,7 +38,22 @@ class RobertaLMHead(nn.Module):
 
     def forward(self, features):
         return self.net(features)
-        return x
+
+class RobertaLMHeadPE(nn.Module):
+    def __init__(self, num_nodes, embed_dim, output_dim):
+        super().__init__()
+        self.PE = SPosPE(num_nodes, embed_dim)
+        self.net = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.GELU(),
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, output_dim)
+        )
+
+    def forward(self, edge_index, features):
+        pos_embedding = self.PE(edge_index, features.shape[0])
+        features = torch.cat([features, pos_embedding], dim=1)
+        return self.net(features)
 
 
 # Fully connect self attention network
@@ -67,102 +83,46 @@ class MLPAttention(nn.Module):
         output = attended.mean(dim=1)
         return output, beta
     
-
-# Per edge cross attention with Nystrom approx
-class MLPCrossAttention(nn.Module):
-    def __init__(self, hidden_size=16, num_heads=1, num_landmarks=50):
+# Q = virtual node, K,V = actual node embedding
+class CrossAttentionMLP(nn.Module):
+    def __init__(self, d_model, projection_dim):
         super().__init__()
-        self.num_heads = num_heads
-        self.num_landmarks = num_landmarks
-        self.q_linear = nn.Linear(1, hidden_size * num_heads)
-        self.k_linear = nn.Linear(1, hidden_size * num_heads)
-        self.v_linear = nn.Linear(1, hidden_size * num_heads)
-        self.leaky_relu = nn.LeakyReLU()
-        self.out_linear = nn.Linear(hidden_size * num_heads, 1, bias=False)
-
-        def init_weights(m):
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain("leaky_relu"))
-
-        self.apply(init_weights)
-
-    def forward(self, A1, A2):
-        num_nodes = A1.shape[0]
-        Q = self.leaky_relu(self.q_linear(A1.reshape(-1, 1))).view(num_nodes, -1, self.num_heads)
-        K = self.leaky_relu(self.k_linear(A2.reshape(-1, 1))).view(num_nodes, -1, self.num_heads)
-        V = self.leaky_relu(self.v_linear(A2.reshape(-1, 1))).view(num_nodes, -1, self.num_heads)
-
-        landmark_indices = torch.randperm(K.size(1))[:self.num_landmarks]
-        K_landmarks = K[:, landmark_indices, :]
-        QK_landmarks = torch.matmul(Q, K_landmarks.transpose(1, 2))
-        K_landmarks_inv = pseudoinverse(K_landmarks)
-        attention_scores = torch.matmul(QK_landmarks, torch.matmul(K_landmarks_inv, K.transpose(1, 2)))
-        attention_weights = torch.softmax(attention_scores, dim=-1)
-        attended = torch.matmul(attention_weights, V)
-        output = self.out_linear(attended.view(num_nodes, -1)).reshape(num_nodes, num_nodes)
-        return output, attention_weights
-
-
-# Fully connected local cross attention network on edges. Only attend to top 10 neighbours
-# A1 = Q, A2 = K, V
-class MLPLocalCrossAttention(nn.Module):
-    def __init__(self, hidden_size=16, num_heads=1, k=50):
-        super().__init__()
-        self.num_heads = num_heads
-        self.hidden_size = hidden_size
-        self.k = k
-
-        self.q_proj = nn.Linear(1, hidden_size * num_heads)
-        self.k_proj = nn.Linear(1, hidden_size * num_heads)
-        self.v_proj = nn.Linear(1, hidden_size * num_heads)
-
-        self.leaky_relu = nn.LeakyReLU()
-
-        def init_weights(m):
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain("leaky_relu"))
-
-        self.apply(init_weights)
-
-    def forward(self, A1, A2):
-        _, topk_indices_A1 = torch.topk(A1, self.k, dim=1)
-        _, topk_indices_A2 = torch.topk(A2, self.k, dim=1)
-
-        topk_A1 = torch.gather(A1, 1, topk_indices_A1)
-        topk_A2 = torch.gather(A2, 1, topk_indices_A2)
-
-        Q = self.q_proj(topk_A1.view(-1, 1)).view(-1, self.k, self.hidden_size)
-        K = self.k_proj(topk_A2.view(-1, 1)).view(-1, self.k, self.hidden_size)
-        V = self.v_proj(topk_A2.view(-1, 1)).view(-1, self.k, self.hidden_size)
-
-        attention_scores = torch.matmul(Q, K.transpose(1, 2))
-        attention_weights = F.softmax(attention_scores, dim=-1)
-
-        updated_values = torch.matmul(attention_weights, V).mean(dim=2).squeeze()
-        updated_A2 = torch.zeros_like(A2)
-        for i in range(A2.size(0)):
-            updated_A2[i, topk_indices_A2[i]] = updated_values[i]
-
-        return updated_A2, attention_weights
-
-class CrossAttentionFuse(nn.Module):
-    def __init__(self, embedding_dim, num_heads):
-        super().__init__()
-        self.local_attn = nn.MultiheadAttention(embedding_dim, num_heads)
-        self.global_attn = nn.MultiheadAttention(embedding_dim, num_heads)
-
-    def forward(self, node_embeddings, global_embedding):
-        node_embeddings = node_embeddings.unsqueeze(1)
-        global_embedding = global_embedding.unsqueeze(0).expand(node_embeddings.size(0), -1, -1)
+        self.query_layer = nn.Sequential(
+            nn.Linear(d_model, projection_dim),
+            nn.GELU(),
+        )
+        self.key_layer = nn.Sequential(
+            nn.Linear(d_model, projection_dim),
+            nn.GELU(),
+        )
+        self.value_layer = nn.Sequential(
+            nn.Linear(d_model, projection_dim),
+            nn.GELU(),
+        )
+        self.final_projection = nn.Linear(projection_dim, d_model)
+        self.softmax = nn.Softmax(dim=-1)
+        self.layer_norm = nn.LayerNorm(d_model)
+    
+    def forward(self, virtual_node, node_features):
+        query = self.query_layer(virtual_node)
+        keys = self.key_layer(node_features)
+        values = self.value_layer(node_features)
         
-        node_out, _ = self.local_attn(node_embeddings, global_embedding, global_embedding)
-        global_out, _ = self.global_attn(global_embedding, node_embeddings, node_embeddings)
+        # Compute attention weights
+        attention_scores = torch.matmul(query, keys.transpose(-2, -1))
+        attention_weights = self.softmax(attention_scores)
         
-        node_out = node_out.squeeze(1)
-        global_out = global_out[0]
+        # Compute attended values
+        attended_features = torch.matmul(attention_weights, values)
         
-        return node_out, global_out
-
+        # Project back to the original dimension
+        attended_features = self.final_projection(attended_features)
+        
+        # Layer norm 
+        attended_features = self.layer_norm(attended_features + virtual_node)
+        
+        return attended_features
+    
 class ContrastiveLossCos(nn.Module):
     def __init__(self, margin=1.0):
         super(ContrastiveLossCos, self).__init__()
