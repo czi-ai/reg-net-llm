@@ -38,6 +38,7 @@ class LitScGraphLLM(pl.LightningModule):
         
         ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
+        gnn_out = node_embeddings
 
         gene_ids = node_indices[ :, 0] ## n x r
         rank_ids = node_indices[ :, 1] 
@@ -112,26 +113,26 @@ class LitScGraphLLM(pl.LightningModule):
         predictor = self.link_pred_decoder
         node_embeddings = node_embedding
         global_masked_nodes = global_gene_index[batch_indices, seq_indices]
-        local_masked_nodes = local_gene_index[batch_indices, seq_indices]
-        map_dict = dict(zip(global_masked_nodes.detach().cpu().numpy(), local_masked_nodes.detach().cpu().numpy() ))
-
-        for global_m, local_m in zip(global_masked_nodes, local_masked_nodes):
+        #local_masked_nodes = local_gene_index[batch_indices, seq_indices]
+        #map_dict = dict(zip(global_masked_nodes.detach().cpu().numpy(), local_masked_nodes.detach().cpu().numpy()))
+        #for global_m, local_m in zip(global_masked_nodes, local_masked_nodes):
+        for global_m in global_masked_nodes:
 
             # Positive examples
             pos_neighbors = edge_index[1, edge_index[0] == global_m]
-
+            #pos_neighbors = torch.tensor(list(set(pos_neighbors).intersection(list(global_masked_nodes.detach().cpu().numpy()))))
             # skip if no connections
-            if pos_neighbors.size(0) == 0:
+            if len(pos_neighbors) == 0:
                 continue
-            
-            local_ids = [map_dict[n] for n in pos_neighbors]
-            pos_scores = predictor(node_embeddings[local_m, :].repeat(len(pos_neighbors), 1), node_embeddings[local_ids, :])
+
+            #local_ids = [map_dict[n.item()] for n in pos_neighbors]
+            pos_scores = predictor(node_embeddings[global_m, :].repeat(len(pos_neighbors), 1), node_embeddings[pos_neighbors, :])
             pos_out.append(pos_scores)
 
             # Negative examples - sampled randomly
-            neg_neighbors = negative_sampling(edge_index, num_nodes=node_embeddings.size(0), num_neg_samples=pos_neighbors.size(0))
-            local_neg_ids = [map_dict[n] for n in neg_neighbors]
-            neg_scores = predictor(node_embeddings[local_m, :].repeat(len(neg_neighbors), 1), node_embeddings[local_neg_ids, :])
+            neg_neighbors = negative_sampling(edge_index, num_nodes=node_embeddings.size(0), num_neg_samples=pos_neighbors.size(0)).view(-1)
+            #local_neg_ids = [map_dict[n] for n in neg_neighbors]
+            neg_scores = predictor(node_embeddings[global_m, :].repeat(len(neg_neighbors), 1), node_embeddings[neg_neighbors, :])
             neg_out.append(neg_scores)
 
         pos_out = torch.cat(pos_out, dim=0)
@@ -141,6 +142,9 @@ class LitScGraphLLM(pl.LightningModule):
         pos_loss = -torch.log(pos_out + 1e-10).mean()
         neg_loss = -torch.log(1 - neg_out + 1e-10).mean()
         return pos_loss + neg_loss
+
+    def alignment_loss():
+        pass
 
     def pseudo_perp(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
         
