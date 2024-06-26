@@ -75,12 +75,14 @@ def concatenate_partitions(partitions, require_matching_metadata=True):
     return adata
 
 
-def load_data(data_path):
+def load_data(data_path, var_index_name=None):
     if os.path.isdir(data_path):
         partitions = [sc.read_h5ad(file) for file in list_files(data_path)]
         adata = concatenate_partitions(partitions)
     else:
         adata = sc.read_h5ad(data_path)
+    if var_index_name is not None:
+        check_index(adata.var, name=var_index_name)
     return adata
 
 
@@ -269,7 +271,8 @@ def preprocess_data(
 def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.001, aracne_dir=None):
     """Make counts ARACNe inference for each cluster
     """
-    samples = {}
+    clusters = dict()
+    genes = set()
     for key in adata.obs["cluster"].unique():
         cluster = adata[adata.obs["cluster"] == key,:].copy()
         
@@ -283,7 +286,8 @@ def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.
         elif cluster.shape[0] < min_n_sample:
             logger.info(f"Cluster {key} has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
             continue
-        samples[key] = cluster.shape
+        clusters[key] = cluster.shape
+        genes = genes.union(cluster.var_names.tolist())
         logger.info(f"Cluster {key} has {cluster.shape[0]:,} cells and {cluster.shape[1]:,} genes for ARACNe inference")
         
         # save
@@ -294,9 +298,17 @@ def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.
             buffer_size=int(min_n_sample/2))
         del cluster
 
+    # write all 
+    aracne_adata = adata[adata.obs["cluster"].isin(clusters), adata.var_names.isin(genes)]
+    write_adata_to_csv_buffered(
+        aracne_adata, 
+        sep="\t", 
+        file=join(aracne_dir, f"counts.tsv"), 
+        buffer_size=1000)
+
     return {
-        "count": len(samples),
-        "size": samples
+        "count": len(clusters),
+        "size": clusters
     }
 
 
@@ -310,7 +322,7 @@ def get_clusters(adata, random_state, qc=True):
     }
 
 
-def make_metacells(adata, target_depth, compression, random_state, save_path=None, qc=True):
+def make_metacells(adata, target_depth, compression, target_sum, random_state, save_path=None, qc=True):
     """Make meta cells within clusters"""
     assert "cluster" in adata.obs.columns, "Making metacells requires cluster info"
     clusters = adata.obs["cluster"].value_counts()
@@ -398,7 +410,7 @@ def plot_gene_counts(df, save_to, upper_range=2500):
     plt.xlabel('# Expressed Genes per Metacell')
     plt.ylabel('# Metacells')
 
-    plt.savefig(f"{save_to}/gene_counts_distripution.png")
+    plt.savefig(f"{save_to}/gene_counts_distribution.png")
     plt.close()
 
 
@@ -406,7 +418,7 @@ def main(args):
     logger.info(f"Preprocessing cells on {date.today()} with the following configuration:")
     logger.info(json.dumps(args.__dict__, indent=4))
     
-    adata = load_data(args.data_path)
+    adata = load_data(args.data_path, var_index_name=args.var_index_name)
     qc_initial = qc_metrics_dict(adata)
     logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
 
@@ -414,6 +426,7 @@ def main(args):
     adata = adata[adata.obs["is_primary_data"],:]
     adata.obs.reset_index(inplace=True)
     adata.var.reset_index(inplace=True)
+    check_index(adata.var, "feature_id")
 
     adata, qc_processed = preprocess_data(
         adata=adata, 
@@ -438,6 +451,7 @@ def main(args):
         adata=adata,
         target_depth=args.metacells_target_depth,
         compression=args.metacells_compression,
+        target_sum=args.target_sum,
         save_path=(args.meta_path if args.save_metacells else None),
         random_state=args.random_state)
     logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")
@@ -475,9 +489,9 @@ def main(args):
             "samples": qc_samples,
             "clusters": qc_cluster,
             "metacells": qc_metacells,
-            "aracne": qc_aracne
+            "aracne": qc_aracne,
+            "ranks": rank_info
         },
-        "rank_bins": rank_info
     }
     with open(args.info_path, 'w') as file:
         json.dump(info, file, indent=4)
@@ -487,6 +501,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
     parser.add_argument("--umi_max", type=int, default=1e5)
@@ -517,7 +532,7 @@ if __name__ == "__main__":
     args.meta_path = join(args.out_dir, "metacells.h5ad")
     args.info_path = join(args.out_dir, "info.json")
     args.log_path = join(args.out_dir, "log.txt")
-    args.aracne_dir = join(args.out_dir, "aracne")
+    args.aracne_dir = join(args.out_dir, "aracne/counts")
     args.fig_dir = join(args.out_dir, "figure")
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.aracne_dir, exist_ok=True)
