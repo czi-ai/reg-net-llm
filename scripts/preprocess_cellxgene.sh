@@ -38,7 +38,8 @@ do
             --out_dir "${out_base_path}/${cell_type}" \
             --save_metacells \
             --sample_index_vars dataset_id donor_id tissue \
-            --aracne_min_n 250
+            --aracne_min_n 250 \
+            --n_bins 100
 
         # Check if the command succeeded
         if [ $? -eq 0 ]; then

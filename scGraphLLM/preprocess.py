@@ -359,10 +359,12 @@ def make_metacells(adata, target_depth, compression, target_sum, random_state, s
     return metacells_adata, qc_metrics_dict(metacells_adata)
 
 
-def rank(metacells, args, n_bins=100, plot=False):
-    df_ = pd.DataFrame(metacells.X)
-    rank_bins = np.zeros_like(df_, dtype=np.int64)
-    df = df_.copy().replace(0, np.nan) # Replace zeros with NaN so they are not considered in the ranking
+def rank(metacells, args, plot=False):
+    n_bins = args.n_bins
+
+    df = metacells.to_df()
+    rank_bins = np.zeros_like(df, dtype=np.int64)
+    df = df.replace(0, np.nan) # Replace zeros with NaN so they are not considered in the ranking
 
     if plot:
         plot_gene_counts(df, save_to=args.out_dir)
@@ -376,7 +378,8 @@ def rank(metacells, args, n_bins=100, plot=False):
             bindices = np.digitize(row[non_zero], bins)
             rank_bins[i, non_zero] = bindices
 
-    np.savetxt(f"{args.ranks_path}", rank_bins, delimiter=",", fmt='%d') # Save ranks_raw.csv file to cell-type-specific directory
+    ranks = pd.DataFrame(rank_bins, columns=df.columns)
+    ranks.to_csv(f"{args.ranks_path}", index=False, header=True) # Save ranks_raw.csv file to cell-type-specific directory
 
     # Info
     df_info = df.count(axis=1)
@@ -389,7 +392,7 @@ def rank(metacells, args, n_bins=100, plot=False):
         "num_unique_highest_expressed": int(np.sum(np.any(np.isin(rank_bins, [99]), axis=0))) # Number of genes that were in the highest bin rank across metacells
     }
 
-    return rank_bins, rank_info
+    return ranks, rank_info
 
 def plot_gene_counts(df, save_to, upper_range=2500):
     dfmax = df.count(axis=1)
@@ -464,9 +467,8 @@ def main(args):
         aracne_dir=args.aracne_dir)
     logger.info(f"{qc_aracne['count']} clusters from {qc_cluster} with sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
 
-    # calculate and stats/figures
     # calculate/save ranks
-    rank_bins, rank_info = rank(metacells, args, n_bins=100, plot=True)
+    ranks, rank_info = rank(metacells, args, plot=False) # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
 
     # Save Statistics & config
     info = {
@@ -516,6 +518,7 @@ if __name__ == "__main__":
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
     parser.add_argument("--aracne_min_perc_nz", type=int, default=0.01)
+    parser.add_argument("--n_bins", type=int, default=100)
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")
