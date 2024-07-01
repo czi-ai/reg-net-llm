@@ -5,8 +5,8 @@
 #SBATCH --nodelist=m012
 #SBATCH --account pmg
 
-PREPROCESS=true
-RUN_ARACNE=false
+PREPROCESS=false
+RUN_ARACNE=true
 MIN_TOTAL_SUBNETS=50
 
 # activate virtual environment
@@ -14,7 +14,7 @@ source activate /pmglocal/$USER/mambaforge/envs/scllm
 
 # Define the list of cell types
 # cell_types=("type_i_nk_t_cell" "mast_cell" "skin_fibroblast")
-cell_types=("photoreceptor_cell")
+cell_types=("neutrophil")
 # cell_types=("photoreceptor_cell")
 
 # Base paths
