@@ -1,11 +1,11 @@
 #!/bin/bash 
 #SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem-per-cpu=100G
-#SBATCH --nodelist=m012
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=5G
+#SBATCH --nodelist=m011
 #SBATCH --account pmg
 
-PREPROCESS=false
+PREPROCESS=true
 RUN_ARACNE=true
 MIN_TOTAL_SUBNETS=50
 
@@ -14,15 +14,17 @@ source activate /pmglocal/$USER/mambaforge/envs/scllm
 
 # Define the list of cell types
 # cell_types=("type_i_nk_t_cell" "mast_cell" "skin_fibroblast")
-cell_types=("neutrophil")
-# cell_types=("photoreceptor_cell")
+# cell_types=("elicited_macrophage" "mast_cell" "glial_cell" "b_cell" "cd4-positive_alpha-beta_t_cell" "dendritic_cell")
+# cell_types=("neutrophil")
+
+cell_types=("photoreceptor_cell")
 
 # Base paths
-data_base_path="/burg/pmg/collab/scGraphLLM/data/cellxgene/cell_type_005"
-out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/cell_type_examples"
+data_base_path="/burg/pmg/collab/scGraphLLM/data/cellxgene/cell_type_0005/cell_type_005"
+out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/cell_type_0005"
 regulators_path="/burg/pmg/users/$USER/data/regulators.txt"
+preprocess_path="/burg/pmg/users/$USER/scGraphLLM/scGraphLLM/preprocess.py"
 alias aracne="/burg/pmg/users/$USER/ARACNe3/build/src/app/ARACNe3_app_release"
-alias preprocess="python /burg/pmg/users/$USER/scGraphLLM/scGraphLLM/preprocess.py"
 
 # Iterate through each cell type
 for cell_type in "${cell_types[@]}"
@@ -31,7 +33,7 @@ do
     start_time=$(date +%s)
 
     if $PREPROCESS; then
-        preprocess \
+        python $preprocess_path\
             --data_path "${data_base_path}/${cell_type}/partitions" \
             --out_dir "${out_base_path}/${cell_type}" \
             --save_metacells \
@@ -67,7 +69,8 @@ do
                 --runid $index \
                 --alpha 0.05 \
                 --noConsolidate \
-                --seed 12345
+                --seed 12345 \
+                --threads 4
         done
 
         echo "Consolidating ARACNe subnetworks for ${n_clusters} clusters of cell type: ${cell_type} "
@@ -80,7 +83,8 @@ do
             --subsample 1.00 \
             --alpha 0.05 \
             --consolidate \
-            --seed 12345
+            --seed 12345 \
+            --threads 4
 
         # Check if the ARACNe command succeeded
         if [ $? -eq 0 ]; then
