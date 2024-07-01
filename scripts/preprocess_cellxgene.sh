@@ -5,8 +5,8 @@
 #SBATCH --nodelist=m012
 #SBATCH --account pmg
 
-PREPROCESS=false
-RUN_ARACNE=true
+PREPROCESS=true
+RUN_ARACNE=false
 MIN_TOTAL_SUBNETS=50
 
 # activate virtual environment
@@ -14,7 +14,7 @@ source activate /pmglocal/$USER/mambaforge/envs/scllm
 
 # Define the list of cell types
 # cell_types=("type_i_nk_t_cell" "mast_cell" "skin_fibroblast")
-cell_types=("neutrophil")
+cell_types=("photoreceptor_cell")
 # cell_types=("photoreceptor_cell")
 
 # Base paths
@@ -36,7 +36,8 @@ do
             --out_dir "${out_base_path}/${cell_type}" \
             --save_metacells \
             --sample_index_vars dataset_id donor_id tissue \
-            --aracne_min_n 250
+            --aracne_min_n 250 \
+            --n_bins 100
 
         # Check if the command succeeded
         if [ $? -eq 0 ]; then
