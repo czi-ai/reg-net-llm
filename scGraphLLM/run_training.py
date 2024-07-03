@@ -7,7 +7,7 @@ from data import *
 from pathlib import Path
 import json 
 import os
-from data import MultiGraphWrapperDataset
+from data import AracneGraphWithRanksDataset
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -21,12 +21,13 @@ import pickle
 import wandb
 import glob 
 from config import *
-from torch.utils.data import DataLoader
+from torch_geometric.loader import DataLoader
 def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
+filesystem = os.environ["WHEREAMI"]
 user = os.environ["USER"]
 filesystem = f"/manitou/pmg/users/{user}"
 ## ^This makes it easier to switch between different machines;  WHEREAMI is set in the .bashrc file and is the location of where we store repos; 
@@ -58,8 +59,10 @@ def main(args):
     if mode == "debug":
         ### run a miminal debug run to make sure everything is working
         print("***debug***")
-        mconfig.trainer_config.max_epochs=1
-        mconfig.data_config.train["subsample"] = True
+        mconfig.trainer_config.max_epochs=2
+        mconfig.data_config.train["debug"] = True
+        mconfig.data_config.val["debug"] = True
+        mconfig.data_config.test["debug"] = True
         mconfig.data_config.num_workers=1
         mconfig['wandb_project']='debug'
         name = "debug"
@@ -94,15 +97,32 @@ def main(args):
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a refulart dataloader
     print("loading data...")
     data_conf=mconfig['data_config']
-    train_ds = MultiGraphWrapperDataset(**data_conf['train'])
+    train_ds = AracneGraphWithRanksDataset(**data_conf['train'])
     train_dl = DataLoader(train_ds, 
-                          batch_size = None, 
-                          batch_sampler = None, 
+                          batch_size = data_conf["batch_size"], 
                           pin_memory = True, 
                           shuffle = True, 
+                          num_workers = data_conf['num_workers'])
+
+    val_ds = AracneGraphWithRanksDataset(**data_conf['val'])
+    val_dl = DataLoader(val_ds, 
+                          batch_size = data_conf["batch_size"],
+                          pin_memory = True, 
+                          shuffle = False, 
                           num_workers = data_conf['num_workers'],
-                          collate_fn = lambda x: x)
-    #mconfig["model_config"]["node_embedding_size"] = len(train_ds.unique_genes)+1                       
+                          )
+
+    test_ds = AracneGraphWithRanksDataset(**data_conf['test'])
+    test_dl = DataLoader(test_ds, 
+                          batch_size = data_conf["batch_size"],
+                          pin_memory = True, 
+                          shuffle = False, 
+                          num_workers = data_conf['num_workers']
+                          )
+    
+    #mconfig["model_config"]["node_embedding_size"] = len(train_ds.unique_genes)+1
+    ##VS: ^ avoid dynamically changing model config within the code base itself - this should be done directly in the config or using one of the command line overrides
+    ## its a little more clunky to use, but leads to better reproducibility and less bugs
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
@@ -153,7 +173,10 @@ def main(args):
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         litmodel = model_fn(mconfig)
-        trainer.fit(litmodel, train_dataloaders = train_dl)
+
+        trainer.fit(litmodel, train_dataloaders = train_dl, val_dataloaders = val_dl)
+        # trainer.validate(model=litmodel, dataloaders=val_dl)
+
     elif mode == "resume":
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         ckpt = args.ckpt_file
