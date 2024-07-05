@@ -531,7 +531,7 @@ if __name__ == "__main__":
     
     # define paths 
     args.counts_path = join(args.out_dir, "counts.csv")
-    args.ranks_path = join(args.out_dir, "ranks_raw.csv")
+    args.ranks_path = join(args.out_dir, "rank_raw.csv")
     args.meta_path = join(args.out_dir, "metacells.h5ad")
     args.info_path = join(args.out_dir, "info.json")
     args.log_path = join(args.out_dir, "log.txt")
