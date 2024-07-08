@@ -5,6 +5,8 @@
 #SBATCH --nodelist=m011
 #SBATCH --account pmg
 
+CELL_TYPE=$1
+
 PREPROCESS=false
 RUN_ARACNE=true
 MIN_TOTAL_SUBNETS=50
@@ -13,7 +15,8 @@ MIN_TOTAL_SUBNETS=50
 source activate /pmglocal/$USER/mambaforge/envs/scllm
 
 # Define the list of cell types
-cell_types=("elicited_macrophage" "mast_cell" "glial_cell" "b_cell" "cd4-positive_alpha-beta_t_cell" "dendritic_cell")
+cell_types=("${CELL_TYPE}")
+# cell_types=("elicited_macrophage" "mast_cell" "glial_cell" "b_cell" "cd4-positive_alpha-beta_t_cell" "dendritic_cell")
 #cell_types=("mast_cell")
 
 # Base paths
