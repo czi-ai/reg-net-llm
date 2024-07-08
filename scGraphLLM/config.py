@@ -1,5 +1,6 @@
 import models as models
 import torch 
+from _globals import * 
 
 class Config(dict):
     def __getattr__(self, item):
@@ -18,11 +19,11 @@ class Config(dict):
 
 
 
-gnn_config = Config({ 
+gnn_config = Config({
     "input_dim": 128,
     "hidden_dims": [128, 128, 128],
-    "conv_dim": 256, # this needs to be 2 * last layer dim
-    "num_heads": [2, 2, 2, 1], #number of head per graph attention layer. Length = num_hidden_layers + 1
+    "conv_dim": 256, 
+    "num_heads": [2, 2, 2],
     "out_dim": 128
 })
 
@@ -56,7 +57,7 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+            "cache_dir":"/pmglocal/mz2934/data", # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         }),
         "val": Config({
             "aracne_outdirs":[
@@ -66,7 +67,7 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac12'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", 
+            "cache_dir":"/pmglocal/mz2934/data", 
         }),
         "test": Config({
             "aracne_outdirs":[
@@ -74,7 +75,7 @@ full_run_config = Config({
                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC10'
                             ],
             "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", 
+            "cache_dir":"/pmglocal/mz2934/data", 
         }),
         "num_workers": 4,
         "batch_size": 16
@@ -102,13 +103,4 @@ full_run_config = Config({
     "wandb_project":"scGraphLLM",
 })
 
-
-# class GNNConfig:
-#     num_nodes: int = 5000
-#     input_dim: int = 2000
-#     hidden_dims: tuple = (128,)
-#     conv_dim: int = 50
-#     out_dim: int = 20
-#     latent_dim: int = 64
-#     num_graphs: int = 6
         

@@ -13,11 +13,10 @@ class LitScGraphLLM(pl.LightningModule):
         super().__init__()
         self.gnn_encoder = GNN(**config.model_config.gnn_config)
 
-        self.link_pred_decoder = LinkPredictor(in_dim=config.model_config.node_embedding_dim *2 ,
+        self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
                                                hidden_dim=config.model_config.gnn_config.hidden_dims[0])
-        self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
-
-        
+        self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
+                                                 config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
         self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
