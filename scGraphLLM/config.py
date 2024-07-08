@@ -41,23 +41,28 @@ full_run_config = Config({
     "data_config":Config({
         "train": Config({
             "aracne_outdirs":[
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C164',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac7',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC19',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C124',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac15',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL19',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC17',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC15',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC07',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C130',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC22',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC20',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac10',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
+                                '/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/dendritic_cell',
+                                '/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/cd4-positive_alpha-beta_t_cell',
+                                '/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/b_cell',
+                                '/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/glial_cell',
+                                '/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/mast_cell',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C164',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac7',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC19',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C124',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac15',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL19',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC17',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC15',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC07',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C130',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC22',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC20',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac10',
+                                # '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
                             ],
-            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/mz2934/data", # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/cellxgene_gene2index.csv",
+            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         }),
         "val": Config({
             "aracne_outdirs":[

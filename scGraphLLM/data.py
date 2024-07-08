@@ -33,7 +33,7 @@ class AracneGraphWithRanksDataset(Dataset):
             assert aracne_out[-1] != "/", "aracne_out should not end with a /"
             network = pd.read_csv(aracne_out +"/aracne/consolidated-net_defaultid.tsv", sep = "\t")
             network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-            ranks = pd.read_csv(aracne_out + "/rank_raw.csv", index_col=0)[network_genes] # keep only genes in the network
+            ranks = pd.read_csv(aracne_out + "/rank_raw.csv", index_col=None)[network_genes] # keep only genes in the network
 
             for i in range(ranks.shape[0]):
                 if ncells % 25 ==0:
