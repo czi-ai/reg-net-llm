@@ -8,9 +8,71 @@ import os
 from typing import List
 import warnings
 from pathlib import Path
+from multiprocessing import Pool
+import argparse
+import lightning.pytorch as pl
+from torch_geometric.loader import DataLoader
+
+def transform_and_cache_aracane_graph_ranks( aracne_outdirs : List[str], gene_to_node_file:str, cache_dir:str, overwrite:bool=False):
+    global_gene_to_node = pd.read_csv(gene_to_node_file)
+    global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    skipped = 0
+    ncells = 0
+    for aracne_out in aracne_outdirs:
+        sample = aracne_out.split("/")[-1]
+        assert aracne_out[-1] != "/", "aracne_out should not end with a /"
+        network = pd.read_csv(aracne_out +"/aracne/consolidated-net_defaultid.tsv", sep = "\t")
+        network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
+        ranks = pd.read_csv(aracne_out + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
+        print(ranks.shape)
+        common_genes = list(set(network_genes).intersection(set(ranks.columns)))
+
+        ranks = ranks.loc[:,common_genes]
+        print(ranks.shape)
+        for i in range(ranks.shape[0]):
+            if ncells % 1000 ==0:
+                print(f"Processed {ncells} cells", end="\r")
+            cell_name = ranks.index[i]
+            outfile = f"{cache_dir}/{sample}_{cell_name}.pt"
+            if os.path.exists(outfile)&(not overwrite):
+                ncells+=1
+                continue
+            cell = ranks.iloc[i, :]
+            cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
+            ## nn.Embedding be used for both gene and rank embeddings
+            if cell.shape[0] < MIN_GENES_PER_GRAPH: ## reauire a minimum number of genes per cell 
+                skipped += 1
+                ncells+=1
+                continue
+
+            ## subset network to only include genes in the cell
+            network_cell = network[
+                network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
+            ]
+
+            local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+            ## each cell graph is disjoint from each other interms of the relative position of nodes and edges
+            ## so edge index is local to each graph for each cell. 
+            ## cell.index defines the order of the nodes in the graph
+            with warnings.catch_warnings(action="ignore") : ## suppress annoying pandas warnings
+                edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
+                edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
+                edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
+
+            edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
+            edge_weights = torch.tensor(np.array(edges['mi.values']))
+            node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene])for gene in cell.index]), dtype=torch.long)
+            data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
+            torch.save(data, outfile)
+            ncells += 1
+    print(f"\n**DONE**\n\Skipped {skipped} cells")
+    print(f"loaded {ncells} cells")
+    return 
+
 
 class AracneGraphWithRanksDataset(Dataset):
-    def __init__(self, aracne_outdirs : List[str], gene_to_node_file:str, cache_dir:str, debug:bool=False):
+    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
         """
 
         Args:
@@ -18,88 +80,69 @@ class AracneGraphWithRanksDataset(Dataset):
             global_gene_to_node_file (str): path to file that maps gene name to integer index 
             cache_dir (str): path to directory where the processed data will be stored
         """        
-        global_gene_to_node = pd.read_csv(gene_to_node_file)
-        global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
-        self.aracne_outdirs = aracne_outdirs
-        self.cache_dir = cache_dir
         self.debug = debug
-        Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
-        ## just do the processing here on init 
-        self.cached_files = []
-        skipped = 0
-        ncells = 0
-        for aracne_out in aracne_outdirs:
-            sample = aracne_out.split("/")[-1]
-            assert aracne_out[-1] != "/", "aracne_out should not end with a /"
-            network = pd.read_csv(aracne_out +"/aracne/consolidated-net_defaultid.tsv", sep = "\t")
-            network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-            ranks = pd.read_csv(aracne_out + "/rank_raw.csv", index_col=0)[network_genes] # keep only genes in the network
-
-            for i in range(ranks.shape[0]):
-                if ncells % 25 ==0:
-                    print(f"Processed {ncells} cells", end="\r")
-                cell_name = ranks.index[i]
-                outfile = f"{self.cache_dir}/{sample}_{cell_name}.pt"
-                if os.path.exists(outfile):
-                    self.cached_files.append(outfile)
-                    ncells+=1
-                    continue
-                cell = ranks.iloc[i, :]
-                cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
-                ## nn.Embedding be used for both gene and rank embeddings
-                if cell.shape[0] < MIN_GENES_PER_GRAPH: ## reauire a minimum number of genes per cell 
-                    skipped += 1
-                    ncells+=1
-                    continue
-
-                ## subset network to only include genes in the cell
-                network_cell = network[
-                    network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
-                ]
-
-                local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-                ## each cell graph is disjoint from each other interms of the relative position of nodes and edges
-                ## so edge index is local to each graph for each cell. 
-                ## cell.index defines the order of the nodes in the graph
-                with warnings.catch_warnings(action="ignore") : ## suppress annoying pandas warnings
-                    edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
-                    edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
-                    edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
-
-                edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
-                edge_weights = torch.tensor(np.array(edges['mi.values']))
-                node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene])for gene in cell.index]), dtype=torch.long)
-                data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
-                torch.save(data, outfile)
-                self.cached_files.append(outfile)
-                ncells += 1
-        print(f"\n**DONE**\n\nSkipped {skipped} cells")
-        print(f"loaded {len(self.cached_files)} cells")
-        super().__init__(None, None, None)#
+        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.dataset_name = dataset_name
+        super().__init__(None, None, None)
     def len(self):
         if self.debug:
             return 100
         return len(self.cached_files)
-    def get(self, idx):
-        ## generate random number between 1 and 100
-        return torch.load(self.cached_files[idx])
+    def get(self, idx, mask_fraction = 0.05):
+        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
+        data = torch.load(self.cached_files[idx])
+        node_indices = data.x
+        ## for each mask type, create boolean mask of the same shape as node_indices
+        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        node_indices[gene_mask, 0] = MASK_IDX
+        node_indices[rank_mask, 1] = MASK_IDX
+        node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
+        return Data(x = node_indices, edge_index = data.edge_index, edge_weight = data.edge_weight, gene_mask = gene_mask, rank_mask = rank_mask, both_mask = both_mask, dataset_name = self.dataset_name)
+
+class LitDataModule(pl.LightningDataModule):
+    def __init__(self, data_config):
+        super().__init__()
+        self.data_config = data_config
+        self.train_ds = AracneGraphWithRanksDataset(data_config.train.cache_dir, data_config.train.dataset_name)
+        self.val_ds = [AracneGraphWithRanksDataset(val.cache_dir, val.dataset_name) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [AracneGraphWithRanksDataset(test.cache_dir, test.dataset_name) for test in data_config.test]
+    def train_dataloader(self):
+        return DataLoader(self.train_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers)
+    def val_dataloader(self):
+        return [DataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
+
+
+if __name__ == "__main__":
+    ## This portion lets you generate the cache for the data outside of the model training loop - took about ~1 hour on 5 cores for the pilot data set
+    ## python scGraphLLM/data.py --aracane-outdir-file pilot_data_dirs.txt --gene-to-node-file /burg/pmg/collab/scGraphLLM/data/cellxgene_gene2index.csv --cache-dir /burg/pmg/collab/scGraphLLM/data/pilotdata_cache/ --num-proc 5
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--aracane-outdir-file", type=str, help="File containing a list of aracne outdirs; `ls path/to/aracaneOutdirs/* > <input>` ")
+    parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")
+    parser.add_argument("--cache-dir", type=str, help="Directory to store the processed data")
+    parser.add_argument("--num-proc", type=int, help="Number of processes to use", default=1)
+    parser.add_argument("--debug", action="store_true", default=False, help="Run in debug mode")
+    args = parser.parse_args()
+    debug = args.debug
+    num_proc = int(args.num_proc)
+    aracane_outdirs = np.array([line.strip() for line in open(args.aracane_outdir_file)])
+    sub_lists = np.array_split(aracane_outdirs, num_proc)
+    args = [(sub_list, args.gene_to_node_file, args.cache_dir) for sub_list in sub_lists]
+    
+    if debug:
+        print("DEBUG")
+        for arg in args:
+            transform_and_cache_aracane_graph_ranks(*arg)
+    else:
+        with Pool(num_proc) as p:
+            p.starmap(transform_and_cache_aracane_graph_ranks, args)
+
 #%%
-# ds = AracneGraphWithRanksDataset([
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C164',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac7',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC19',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C124',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac15',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL19',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC17',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC15',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC07',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C130',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC22',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC20',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac10',
-#                                 '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
-#                             ], "/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", "/burg/pmg/collab/scGraphLLM/data/modeldata/newgraphdata/")
+# ds = AracneGraphWithRanksDataset("/burg/pmg/collab/scGraphLLM/data/pilotdata_cache/")
 # # %%
-# ds[10]
-# %%
+# print(ds[10])
+# # %%

@@ -13,7 +13,7 @@ class LitScGraphLLM(pl.LightningModule):
         super().__init__()
         self.gnn_encoder = GNN(**config.model_config.gnn_config)
 
-        self.link_pred_decoder = LinkPredictor(in_dim=config.model_config.node_embedding_dim *2 ,
+        self.link_pred_decoder = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
                                                hidden_dim=config.model_config.gnn_config.hidden_dims[0])
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
 
@@ -31,10 +31,10 @@ class LitScGraphLLM(pl.LightningModule):
         ## L_dim = the dimension of the learned cell embeddings(r_dim + g_dim);
         ## e= the number of edges in a batch
         node_indices, edge_list,edge_weights = batch.x, batch.edge_index, batch.edge_weight
+        mask_locs = [batch.gene_mask_locs, batch.rank_mask_locs, batch.both_mask_locs]
         node_indices = node_indices.type(torch.long)
         ## Shapes: node_indices: n x g x 2, ; edge_list: 2xe; edge_weights: e; 
         node_embeddings = self.node_embedding(node_indices).flatten(1) ## maps n x g x 
-        node_embeddings, mask_locs = self.mask_nodes(node_embeddings) ## mask a fraction of the nodes
         
         ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
@@ -43,42 +43,41 @@ class LitScGraphLLM(pl.LightningModule):
         gene_ids = node_indices[ :, 0] ## n x r
         rank_ids = node_indices[ :, 1] 
         return node_embeddings,edge_list, gene_ids, rank_ids, mask_locs
-        
+    
+    def _step(self, batch, batch_idx):
+        learned_cell_embedding, edge_list,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
+        predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
+        predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)
+        gene_mask_locs, rank_mask_locs, both_mask_locs = mask_locs
+        ## technically we could run the only/both together in a single pass, but this way we can track each one separately
+        L_mlm_geneonly = self.mlm_loss(predicted_gene_id, target_gene_ids, gene_mask_locs)
+        L_mlm_geneboth = self.mlm_loss(predicted_gene_id, target_gene_ids, both_mask_locs)
+
+        target_rank_ids = target_rank_ids - NUM_GENES ## shift the rank indices to start from 0
+        L_mlm_rankonly = self.mlm_loss(predicted_rank_id, target_rank_ids, rank_mask_locs)
+        L_mlm_rankboth = self.mlm_loss(predicted_rank_id, target_rank_ids, both_mask_locs)
+        #L_g = self.link_pred_loss(learned_cell_embedding, mask_locs, target_gene_ids, target_rank_ids, edge_list)
+        loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth #+ L_g
+        gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, mask_locs)
+        rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, mask_locs)
+        subset = batch.dataset_name
+        self.log(f'{subset}_loss', loss)
+        self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly)
+        self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth)
+        self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly)
+        self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth)
+        #self.log('train_link_pred_loss', L_g)
+        self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1)
+        self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1)
+        return loss
         
     def training_step(self, batch, batch_idx):
-        learned_cell_embedding, edge_list,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
-        predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
-        predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)
-        L_mlm_gene = self.mlm_loss(predicted_gene_id, target_gene_ids, mask_locs)
-        target_rank_ids = target_rank_ids - NUM_GENES ## shift the rank indices to start from 0
-        L_mlm_rank = self.mlm_loss(predicted_rank_id, target_rank_ids, mask_locs)
-        #L_g = self.link_pred_loss(learned_cell_embedding, mask_locs, target_gene_ids, target_rank_ids, edge_list)
-        loss = L_mlm_gene + L_mlm_rank# + L_g
-        gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, mask_locs)
-        rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, mask_locs)
-        self.log('train_loss', loss)
-        self.log('train_MLM_loss', L_mlm_gene + L_mlm_rank )
-        #self.log('train_link_pred_loss', L_g)
-        self.log("train_gene_perplexity", gene_pp, batch_size=1)
-        self.log("train_rank_perplexity", rank_pp, batch_size=1)
+        loss = self._step(batch, batch_idx, subset="train")
         return loss
+        
 
     def validation_step(self, batch, batch_idx):
-        learned_cell_embedding, edge_list,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
-        predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
-        predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)
-        L_mlm_gene = self.mlm_loss(predicted_gene_id, target_gene_ids, mask_locs)
-        target_rank_ids = target_rank_ids - NUM_GENES ## shift the rank indices to start from 0
-        L_mlm_rank = self.mlm_loss(predicted_rank_id, target_rank_ids, mask_locs)
-        #L_g = self.link_pred_loss(learned_cell_embedding, mask_locs, target_gene_ids, target_rank_ids, edge_list)
-        loss = L_mlm_gene + L_mlm_rank #+ L_g
-        gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, mask_locs)
-        rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, mask_locs)
-        self.log('val_loss', loss)
-        self.log('val_MLM_loss', L_mlm_gene + L_mlm_rank )
-        #self.log('val_link_pred_loss', L_g)
-        self.log("val_gene_perplexity", gene_pp, batch_size=1)
-        self.log("val_rank_perplexity", rank_pp, batch_size=1)
+        loss = self._step(batch, batch_idx, subset="val")
         return loss
 
     def mask_nodes(self, tensor,mask_ratio=0.15):

@@ -1,5 +1,6 @@
 import models as models
 import torch 
+from _globals import *
 
 class Config(dict):
     def __getattr__(self, item):
@@ -28,8 +29,8 @@ gnn_config = Config({
 
 base_model_config = Config({
     "gnn_config" : gnn_config,
-    "num_ranks":5002, ## arbitary rn, but theoretically should be the cell with most genes 
-    "num_genes": 5003, 
+    "num_ranks":NUM_RANKS, ## arbitary rn, but theoretically should be the cell with most genes 
+    "num_genes": NUM_GENES, 
     "node_embedding_dim": 64
 })
 
@@ -38,44 +39,14 @@ full_run_config = Config({
     "model":models.LitScGraphLLM,
     "model_config": base_model_config,
     "data_config":Config({
-        "train": Config({
-            "aracne_outdirs":[
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C164',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac7',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC19',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C124',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac15',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL19',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC17',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC15',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC07',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/C130',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC22',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC20',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac10',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL01'
-                            ],
-            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
-        }),
-        "val": Config({
-            "aracne_outdirs":[
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC21',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC09',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/KUL30',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac12'
-                            ],
-            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", 
-        }),
-        "test": Config({
-            "aracne_outdirs":[
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/T_cac6',
-                                '/burg/pmg/collab/scGraphLLM//data/samples/geneset_hvg/SMC10'
-                            ],
-            "gene_to_node_file":"/burg/pmg/collab/scGraphLLM/data/example_gene2index.csv", 
-            "cache_dir":"/pmglocal/vss2134/scGraphLLM/data/modeldata/newgraphdata/", 
-        }),
+        "train": Config({"cache_dir":"/burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/burg/pmg/collab/scGraphLLM/data/pilotdata_valHOG_cache/", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
         "num_workers": 4,
         "batch_size": 16
     }),

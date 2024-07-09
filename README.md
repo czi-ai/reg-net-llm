@@ -11,6 +11,15 @@ We'll need write a data-processing pipeline that will convert the raw scRNA-seq 
 
 Once we get data preprocessed, we'll need to get the dataloading code written. 
 
+example code to generate cache for modeldata 
+
+```
+python scGraphLLM/data.py --aracane-outdir-file pilot_data_dirs.txt --gene-to-node-file /burg/pmg/collab/scGraphLLM/data/cellxgene_gene2index.csv --cache-dir /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/ --num-proc 5
+mkdir -p /burg/pmg/collab/scGraphLLM/data/pilotdata_valHOG_cache/ 
+mkdir -p /burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/ 
+mv /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/mast_cell* /burg/pmg/collab/scGraphLLM/data/pilotdata_valHOG_cache/
+find /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/ -type f | shuf -n 12800 | xargs -I {} mv {} /burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/
+```
 
 ## Model
 

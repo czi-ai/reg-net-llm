@@ -60,8 +60,8 @@ def main(args):
         print("***debug***")
         mconfig.trainer_config.max_epochs=2
         mconfig.data_config.train["debug"] = True
-        mconfig.data_config.val["debug"] = True
-        mconfig.data_config.test["debug"] = True
+        for i in range(len(mconfig.data_config.val)):
+            mconfig.data_config.val[i]["debug"] = True
         mconfig.data_config.num_workers=1
         mconfig['wandb_project']='debug'
         name = "debug"
@@ -95,30 +95,11 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a refulart dataloader
     print("loading data...")
-    data_conf=mconfig['data_config']
-    train_ds = AracneGraphWithRanksDataset(**data_conf['train'])
-    train_dl = DataLoader(train_ds, 
-                          batch_size = data_conf["batch_size"], 
-                          pin_memory = True, 
-                          shuffle = True, 
-                          num_workers = data_conf['num_workers'])
+    lit_data_module = LitDataModule(mconfig.data_config)
+    train_dl = lit_data_module.train_dataloader()
+    val_dl = lit_data_module.val_dataloader()
+    print("data loaded")
 
-    val_ds = AracneGraphWithRanksDataset(**data_conf['val'])
-    val_dl = DataLoader(val_ds, 
-                          batch_size = data_conf["batch_size"],
-                          pin_memory = True, 
-                          shuffle = False, 
-                          num_workers = data_conf['num_workers'],
-                          )
-
-    test_ds = AracneGraphWithRanksDataset(**data_conf['test'])
-    test_dl = DataLoader(test_ds, 
-                          batch_size = data_conf["batch_size"],
-                          pin_memory = True, 
-                          shuffle = False, 
-                          num_workers = data_conf['num_workers']
-                          )
-    
     #mconfig["model_config"]["node_embedding_size"] = len(train_ds.unique_genes)+1
     ##VS: ^ avoid dynamically changing model config within the code base itself - this should be done directly in the config or using one of the command line overrides
     ## its a little more clunky to use, but leads to better reproducibility and less bugs
