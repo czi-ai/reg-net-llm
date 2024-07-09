@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_geometric
 from torch_geometric.nn import GATConv
 from MLP_modules import AttentionMLP
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
@@ -21,10 +22,9 @@ class GNN(nn.Module):
     self.out_dim = out_dim
     self.f = activation
     self.dropout = nn.Dropout(dropout_rate)
-    self.PE = SPosPE(projection_dim=out_dim) # assume out dim = in dim. Project from num_nodes dim
 
     # GAT layers
-    self.layers = nn.ModuleList([GATConv(input_dim + out_dim, hidden_dims[0], heads=num_heads[0], 
+    self.layers = nn.ModuleList([GATConv(input_dim, hidden_dims[0], heads=num_heads[0], 
                                          concat=False, dropout=dropout_rate)]) # Because of PE 
     for i in range(1, len(hidden_dims)):
       self.layers.append(GATConv(hidden_dims[i - 1], hidden_dims[i], heads=num_heads[i], 
@@ -46,8 +46,8 @@ class GNN(nn.Module):
 
   def forward(self, X, edge_index, edge_weight):
     # positional embedding based on shortest path distance
-    pos_embedding = self.PE(edge_index, X.shape[0])
-    X = torch.cat([X, pos_embedding], dim=1)
+    # pos_embedding = self.PE(edge_index, X.shape[0])
+    # X = torch.cat([X, pos_embedding], dim=1)
 
     # Virutal node connected to every other nodes
     virtual_node = torch.mean(X, dim=0, keepdim=True)

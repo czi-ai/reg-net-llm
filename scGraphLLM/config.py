@@ -22,7 +22,7 @@ class Config(dict):
 gnn_config = Config({
     "input_dim": 128,
     "hidden_dims": [128, 128, 128],
-    "conv_dim": 256, 
+    "conv_dim": 128, 
     "num_heads": [2, 2, 2],
     "out_dim": 128
 })

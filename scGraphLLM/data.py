@@ -25,11 +25,9 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdirs : List[str], gene_to
         network = pd.read_csv(aracne_out +"/aracne/consolidated-net_defaultid.tsv", sep = "\t")
         network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
         ranks = pd.read_csv(aracne_out + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
-        print(ranks.shape)
         common_genes = list(set(network_genes).intersection(set(ranks.columns)))
 
         ranks = ranks.loc[:,common_genes]
-        print(ranks.shape)
         for i in range(ranks.shape[0]):
             if ncells % 1000 ==0:
                 print(f"Processed {ncells} cells", end="\r")
@@ -92,6 +90,9 @@ class AracneGraphWithRanksDataset(Dataset):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx])
         node_indices = data.x
+        # need the clones otherwise the original indices will be modified
+        orig_gene_indices = node_indices[:, 0].clone()
+        orig_rank_indices = node_indices[:, 1].clone()
         ## for each mask type, create boolean mask of the same shape as node_indices
         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
@@ -99,7 +100,7 @@ class AracneGraphWithRanksDataset(Dataset):
         node_indices[gene_mask, 0] = MASK_IDX
         node_indices[rank_mask, 1] = MASK_IDX
         node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
-        return Data(x = node_indices, edge_index = data.edge_index, edge_weight = data.edge_weight, gene_mask = gene_mask, rank_mask = rank_mask, both_mask = both_mask, dataset_name = self.dataset_name)
+        return Data(x = node_indices, edge_index = data.edge_index, edge_weight = data.edge_weight, gene_mask = gene_mask, rank_mask = rank_mask, both_mask = both_mask, orig_gene_id = orig_gene_indices, orig_rank_indices = orig_rank_indices, dataset_name = self.dataset_name)
 
 class LitDataModule(pl.LightningDataModule):
     def __init__(self, data_config):

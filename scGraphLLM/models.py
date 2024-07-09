@@ -30,17 +30,16 @@ class LitScGraphLLM(pl.LightningModule):
         ## L_dim = the dimension of the learned cell embeddings(r_dim + g_dim);
         ## e= the number of edges in a batch
         node_indices, edge_list,edge_weights = batch.x, batch.edge_index, batch.edge_weight
-        mask_locs = [batch.gene_mask_locs, batch.rank_mask_locs, batch.both_mask_locs]
+        mask_locs = [batch.gene_mask, batch.rank_mask, batch.both_mask]
         node_indices = node_indices.type(torch.long)
         ## Shapes: node_indices: n x g x 2, ; edge_list: 2xe; edge_weights: e; 
         node_embeddings = self.node_embedding(node_indices).flatten(1) ## maps n x g x 
         
         ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
-        gnn_out = node_embeddings
 
-        gene_ids = node_indices[ :, 0] ## n x r
-        rank_ids = node_indices[ :, 1] 
+        gene_ids = batch.orig_gene_id
+        rank_ids = batch.orig_rank_indices
         return node_embeddings,edge_list, gene_ids, rank_ids, mask_locs
     
     def _step(self, batch, batch_idx):
@@ -57,44 +56,28 @@ class LitScGraphLLM(pl.LightningModule):
         L_mlm_rankboth = self.mlm_loss(predicted_rank_id, target_rank_ids, both_mask_locs)
         #L_g = self.link_pred_loss(learned_cell_embedding, mask_locs, target_gene_ids, target_rank_ids, edge_list)
         loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth #+ L_g
-        gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, mask_locs)
-        rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, mask_locs)
-        subset = batch.dataset_name
+        gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
+        rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, rank_mask_locs | both_mask_locs)
+        subset = batch.dataset_name[0]
         self.log(f'{subset}_loss', loss)
-        self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly)
-        self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth)
-        self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly)
-        self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth)
+        self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly, batch_size=gene_mask_locs.sum())
+        self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum() )
+        self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly, batch_size=rank_mask_locs.sum())
+        self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth, batch_size=(rank_mask_locs|both_mask_locs).sum() )
         #self.log('train_link_pred_loss', L_g)
         self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1)
         self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1)
         return loss
         
     def training_step(self, batch, batch_idx):
-        loss = self._step(batch, batch_idx, subset="train")
+        loss = self._step(batch, batch_idx)
         return loss
         
 
-    def validation_step(self, batch, batch_idx):
-        loss = self._step(batch, batch_idx, subset="val")
+    def validation_step(self, batch, batch_idx, dataloader_idx):
+        loss = self._step(batch, batch_idx)
         return loss
 
-    def mask_nodes(self, tensor,mask_ratio=0.15):
-        """
-        Given a tensor, mask a ratio of the vectors in the tensor
-        This method of sampling allows for the same vector to be masked multiple times but also allows for the same vector to be masked multiple times
-        """
-        masked_tensor = tensor.clone()
-    
-        num_to_mask = int(tensor.size(0) * mask_ratio)
-        batch_indices = torch.randint(0, tensor.size(0), (num_to_mask,))
-        mask_value = torch.cat([
-            self.node_embedding(torch.tensor(MASK_IDX, device = tensor.device, dtype = torch.long)),
-            self.node_embedding(torch.tensor(MASK_IDX, device = tensor.device, dtype = torch.long))
-            ])
-        # for i in range(num_to_mask):
-        masked_tensor[batch_indices,  :] = mask_value
-        return masked_tensor, batch_indices
 
     def mlm_loss(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
         
