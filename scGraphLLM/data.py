@@ -64,7 +64,7 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdirs : List[str], gene_to
             data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
             torch.save(data, outfile)
             ncells += 1
-    print(f"\n**DONE**\n\Skipped {skipped} cells")
+    print(f"\n**DONE**\nSkipped {skipped} cells")
     print(f"loaded {ncells} cells")
     return 
 
@@ -72,7 +72,6 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdirs : List[str], gene_to
 class AracneGraphWithRanksDataset(Dataset):
     def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
         """
-
         Args:
             aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
             global_gene_to_node_file (str): path to file that maps gene name to integer index 
@@ -84,7 +83,7 @@ class AracneGraphWithRanksDataset(Dataset):
         super().__init__(None, None, None)
     def len(self):
         if self.debug:
-            return 100
+            return 1000
         return len(self.cached_files)
     def get(self, idx, mask_fraction = 0.05):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
@@ -106,10 +105,10 @@ class LitDataModule(pl.LightningDataModule):
     def __init__(self, data_config):
         super().__init__()
         self.data_config = data_config
-        self.train_ds = AracneGraphWithRanksDataset(data_config.train.cache_dir, data_config.train.dataset_name)
-        self.val_ds = [AracneGraphWithRanksDataset(val.cache_dir, val.dataset_name) for val in data_config.val]
+        self.train_ds = AracneGraphWithRanksDataset(**data_config.train)
+        self.val_ds = [AracneGraphWithRanksDataset(**val) for val in data_config.val]
         if data_config.run_test:
-            self.test_ds = [AracneGraphWithRanksDataset(test.cache_dir, test.dataset_name) for test in data_config.test]
+            self.test_ds = [AracneGraphWithRanksDataset(**test) for test in data_config.test]
     def train_dataloader(self):
         return DataLoader(self.train_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers)
     def val_dataloader(self):
@@ -139,6 +138,7 @@ if __name__ == "__main__":
         for arg in args:
             transform_and_cache_aracane_graph_ranks(*arg)
     else:
+        print("RUNNING MULTI-THREADED")
         with Pool(num_proc) as p:
             p.starmap(transform_and_cache_aracane_graph_ranks, args)
 

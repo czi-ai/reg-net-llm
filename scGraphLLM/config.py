@@ -19,36 +19,36 @@ class Config(dict):
 
 
 
-gnn_config = Config({
-    "input_dim": 128,
-    "hidden_dims": [128, 128, 128],
-    "conv_dim": 128, 
+base_gnn_config = Config({
+    "input_dim":  256,
+    "hidden_dims": [256, 256, 256],
+    "conv_dim": 256, 
     "num_heads": [2, 2, 2],
-    "out_dim": 128
+    "out_dim": 256
 })
 
 base_model_config = Config({
-    "gnn_config" : gnn_config,
+    "gnn_config" : base_gnn_config,
     "num_ranks":NUM_RANKS, ## arbitary rn, but theoretically should be the cell with most genes 
     "num_genes": NUM_GENES, 
-    "node_embedding_dim": 64
+    "node_embedding_dim": 128
 })
 
 
-full_run_config = Config({
+pilot_run_config = Config({
     "model":models.LitScGraphLLM,
     "model_config": base_model_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/pmglocal/scGraphLLM/modeldata/pilotdata_cache/pilotdata_train_cache", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/burg/pmg/collab/scGraphLLM/data/pilotdata_valHOG_cache/", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/pmglocal/scGraphLLM/modeldata/pilotdata_cache/pilotdata_train_cache", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/pmglocal/scGraphLLM/modeldata/pilotdata_cache/pilotdata_train_cache", "dataset_name":"valHOG"})
             ],
         "test": [
             ],
         "run_test":False, 
-        "num_workers": 4,
-        "batch_size": 16
+        "num_workers": 8,
+        "batch_size": 40
     }),
     "trainer_config":Config({
         "max_epochs" : 100,
@@ -56,7 +56,9 @@ full_run_config = Config({
         "devices" : 1,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
-        "log_every_n_steps" : 1
+        "log_every_n_steps" : 1,
+        "val_check_interval":0.25
+
     }),
     "loss_config":Config({
         "loss":"mlm"

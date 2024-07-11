@@ -40,10 +40,10 @@ class LitScGraphLLM(pl.LightningModule):
 
         gene_ids = batch.orig_gene_id
         rank_ids = batch.orig_rank_indices
-        return node_embeddings,edge_list, gene_ids, rank_ids, mask_locs
+        return node_embeddings, gene_ids, rank_ids, mask_locs
     
     def _step(self, batch, batch_idx):
-        learned_cell_embedding, edge_list,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
+        learned_cell_embedding,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
         predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
         predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)
         gene_mask_locs, rank_mask_locs, both_mask_locs = mask_locs
@@ -59,14 +59,14 @@ class LitScGraphLLM(pl.LightningModule):
         gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
         rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, rank_mask_locs | both_mask_locs)
         subset = batch.dataset_name[0]
-        self.log(f'{subset}_loss', loss)
-        self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly, batch_size=gene_mask_locs.sum())
-        self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum() )
-        self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly, batch_size=rank_mask_locs.sum())
-        self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth, batch_size=(rank_mask_locs|both_mask_locs).sum() )
+        self.log(f'{subset}_loss', loss, batch_size=1, add_dataloader_idx=False)
+        self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly, batch_size=gene_mask_locs.sum(), add_dataloader_idx=False)
+        self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False) 
+        self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly, batch_size=rank_mask_locs.sum(), add_dataloader_idx=False)
+        self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth, batch_size=(rank_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False )
         #self.log('train_link_pred_loss', L_g)
-        self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1)
-        self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1)
+        self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1, add_dataloader_idx=False)
+        self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1, add_dataloader_idx=False)
         return loss
         
     def training_step(self, batch, batch_idx):
@@ -147,7 +147,5 @@ class LitScGraphLLM(pl.LightningModule):
         optim_fn = self.optim_config["optimizer"]
         optimizer = optim_fn(self.parameters(), **self.optim_config.args)
         return optimizer
-
-
 
 

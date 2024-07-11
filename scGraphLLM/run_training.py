@@ -89,6 +89,7 @@ def main(args):
         raise NotImplementedError(f"run_dir {str(run_dir)} already exists, bad input ")
     run_dir.mkdir(exist_ok=True, parents=True)
 
+    mconfig["slurm_jobid"] = os.getenv("SLURM_JOBID")
     ## final version of non-python config, save to output directory
     with open(f"{str(run_dir)}/mconfig_used.json", 'wb+') as m_stream:
         pickle.dump(mconfig, m_stream)
@@ -101,9 +102,6 @@ def main(args):
     val_dl = lit_data_module.val_dataloader()
     print("data loaded")
 
-    #mconfig["model_config"]["node_embedding_size"] = len(train_ds.unique_genes)+1
-    ##VS: ^ avoid dynamically changing model config within the code base itself - this should be done directly in the config or using one of the command line overrides
-    ## its a little more clunky to use, but leads to better reproducibility and less bugs
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
@@ -171,7 +169,7 @@ def main(args):
 
     ##  copy checkpoints to shared dir and clean up only on 1 gpu 
 
-    if ((mconfig['trainer_config']['devices'] == 1) or (torch.distributed.get_rank() == 0)) and (mode != "test") :
+    if ((mconfig['trainer_config']['devices'] == 1) or (torch.distributed.get_rank() == 0)) and (mode != "debug") :
         if copy_checkpoints:
             time.sleep(30) ## potentially wait for other processes to finish writing to disk
             local_ckptdir = f"{str(outdir)}/{project}/{version}/checkpoints"
