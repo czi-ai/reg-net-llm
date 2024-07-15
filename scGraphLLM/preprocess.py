@@ -14,6 +14,8 @@ heart
 """
 from argparse import ArgumentParser
 import pyviper
+from pyviper._load._load_regulators import load_TFs, load_coTFs, load_sig, load_surf
+from pyviper._load._load_translate import load_human2mouse
 import scanpy as sc
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -25,7 +27,7 @@ import logging
 import sys
 import warnings
 import json
-from datetime import date
+from datetime import date, datetime
 import multiprocessing as mp
 from typing import List
 from os.path import join
@@ -268,17 +270,57 @@ def preprocess_data(
     return adata, qc_metrics_dict(adata)
 
 
-def make_aracne_counts(adata, min_n_sample=250, max_n_sample=500, min_perc_nz=0.001, aracne_dir=None):
+def get_regulators(types=["tf", "cotf"], name="ENSG"):
+    """
+    Return all regulators of provided types:
+        - tf
+        - cotf
+        - sig
+        - surf
+    """
+    regs = []
+    if "tf" in types:
+        regs += load_TFs(species="human")
+    elif "cotf" in types:
+        regs += load_coTFs(species="human")
+    elif "sig" in types:
+        regs += load_sig(species="human")
+    elif "surf" in types:
+        regs += load_surf(species="human")
+
+    if name == "ENSG":
+        symbol2ensembl = load_human2mouse().set_index("human_symbol")["human_ensembl"].to_dict()
+        regs = pd.Series([symbol2ensembl.get(reg) for reg in regs])
+        regs = regs.pipe(lambda x: x[~x.isna()])
+
+    return regs
+
+
+def make_aracne_counts(
+        adata, 
+        min_n_sample=250, 
+        max_n_sample=500, 
+        min_perc_nz=0.001,
+        top_n_hvg=None,
+        regulators=["tf", "cotf"],
+        aracne_dir=None
+    ):
     """Make counts ARACNe inference for each cluster
     """
+    regulators = get_regulators(types=regulators)
     clusters = dict()
     genes = set()
     for key in adata.obs["cluster"].unique():
         cluster = adata[adata.obs["cluster"] == key,:].copy()
         
-        # exclude genes not sufficiently represented
-        perc_nz = cluster.X.sum(axis=0) / cluster.shape[1]
-        cluster = cluster[:, perc_nz > min_perc_nz]
+        # enforce top_n_hvg
+        if top_n_hvg is not None:
+            hvg = sc.pp.highly_variable_genes(cluster, flavor="seurat", n_top_genes=top_n_hvg, inplace=False, subset=True)
+            hvg_union_regs = hvg_union_regs = set(hvg.index.to_list()).union(set(regulators))
+            cluster = cluster[:, cluster.var_names.isin(hvg_union_regs)]
+        else:
+            perc_nz = cluster.X.sum(axis=0) / cluster.shape[1]
+            cluster = cluster[:, perc_nz > min_perc_nz]
 
         # enforce sample bounds
         if cluster.shape[0] > max_n_sample:
@@ -359,9 +401,7 @@ def make_metacells(adata, target_depth, compression, target_sum, random_state, s
     return metacells_adata, qc_metrics_dict(metacells_adata)
 
 
-def rank(metacells, args, plot=False):
-    n_bins = args.n_bins
-
+def rank(metacells, n_bins, plot=False):
     df = metacells.to_df()
     rank_bins = np.zeros_like(df, dtype=np.int64)
     df = df.replace(0, np.nan) # Replace zeros with NaN so they are not considered in the ranking
@@ -420,70 +460,76 @@ def plot_gene_counts(df, save_to, upper_range=2500):
 def main(args):
     logger.info(f"Preprocessing cells on {date.today()} with the following configuration:")
     logger.info(json.dumps(args.__dict__, indent=4))
+    info = {"config": args.__dict__}
+
+    if "preprocess" in args.steps:
+        adata = load_data(args.data_path, var_index_name=args.var_index_name)
+        qc_initial = qc_metrics_dict(adata)
+        info["initial"] = qc_initial
+        logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
+        
+        # CellXGene specific processing
+        adata = adata[adata.obs["is_primary_data"],:]
+        adata.obs.reset_index(inplace=True)
+        adata.var.reset_index(inplace=True)
+        check_index(adata.var, "feature_id")
+
+        adata, qc_processed = preprocess_data(
+            adata=adata, 
+            mito_thres=args.mito_thres, 
+            umi_min=args.umi_min, 
+            umi_max=args.umi_max,
+            max_perc_umi_filtering=args.max_perc_umi_filtering,
+            target_sum=args.target_sum) 
+        info["preprocessed"] = qc_processed
+        logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
+
+        samples, qc_samples = get_samples(
+            adata=adata,
+            index_vars=args.sample_index_vars)
+        info["samples"] = qc_samples
+        logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
+
+        qc_cluster = get_clusters(
+            adata, 
+            random_state=args.random_state)
+        info["clusters"] = qc_cluster
+        logger.info(f"Detected {qc_cluster['count']} clusters")
+
+        metacells, qc_metacells = make_metacells(
+            adata=adata,
+            target_depth=args.metacells_target_depth,
+            compression=args.metacells_compression,
+            target_sum=args.target_sum,
+            save_path=(args.meta_path if args.save_metacells else None),
+            random_state=args.random_state)
+        info["metacells"] = qc_metacells
+        logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
+    else:
+        metacells = sc.read_h5ad(args.meta_path)
+        qc_metacells = qc_metrics_dict(metacells)
+        logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
+
+    if "rank" in args.steps:
+        ranks, qc_rank = rank(
+            metacells, 
+            n_bins=args.n_bins, 
+            plot=args.produce_figures) # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
+        info["ranks"] = qc_rank
     
-    adata = load_data(args.data_path, var_index_name=args.var_index_name)
-    qc_initial = qc_metrics_dict(adata)
-    logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
+    if "aracne" in args.steps:
+        qc_aracne = make_aracne_counts(
+            adata=metacells,
+            min_n_sample=args.aracne_min_n,
+            max_n_sample=args.aracne_max_n,
+            min_perc_nz=args.aracne_min_perc_nz,
+            top_n_hvg=args.aracne_top_n_hvg,
+            regulators=args.aracne_regulators,
+            aracne_dir=args.aracne_dir)
+        info["aracne"] = qc_aracne
+        logger.info(f"{qc_aracne['count']} clusters have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
 
-    # CellXGene specific processing
-    adata = adata[adata.obs["is_primary_data"],:]
-    adata.obs.reset_index(inplace=True)
-    adata.var.reset_index(inplace=True)
-    check_index(adata.var, "feature_id")
-
-    adata, qc_processed = preprocess_data(
-        adata=adata, 
-        mito_thres=args.mito_thres, 
-        umi_min=args.umi_min, 
-        umi_max=args.umi_max,
-        max_perc_umi_filtering=args.max_perc_umi_filtering,
-        target_sum=args.target_sum)
-    logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
-
-    samples, qc_samples = get_samples(
-        adata=adata,
-        index_vars=args.sample_index_vars)
-    logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
-
-    qc_cluster = get_clusters(
-        adata, 
-        random_state=args.random_state)
-    logger.info(f"Detected {qc_cluster['count']} clusters")
-
-    metacells, qc_metacells = make_metacells(
-        adata=adata,
-        target_depth=args.metacells_target_depth,
-        compression=args.metacells_compression,
-        target_sum=args.target_sum,
-        save_path=(args.meta_path if args.save_metacells else None),
-        random_state=args.random_state)
-    logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")
-
-    qc_aracne = make_aracne_counts(
-        adata=metacells,
-        min_n_sample=args.aracne_min_n,
-        max_n_sample=args.aracne_max_n,
-        min_perc_nz=args.aracne_min_perc_nz,
-        aracne_dir=args.aracne_dir)
-    logger.info(f"{qc_aracne['count']} clusters from {qc_cluster} with sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
-
-    # calculate/save ranks
-    ranks, rank_info = rank(metacells, args, plot=False) # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
-
-    # Save Statistics & config
-    info = {
-        "config": args.__dict__,
-        "stats": {
-            "initial": qc_initial,
-            "preprocessed": qc_processed,
-            "samples": qc_samples,
-            "clusters": qc_cluster,
-            "metacells": qc_metacells,
-            "aracne": qc_aracne,
-            "ranks": rank_info
-        },
-    }
-    with open(args.info_path, 'w') as file:
+    with open(args.info_path, "w") as file:
         json.dump(info, file, indent=4)
 
     if args.produce_figures:
@@ -503,6 +549,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--steps", nargs="+", default=["preprocess", "rank", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
@@ -517,7 +564,10 @@ if __name__ == "__main__":
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
-    parser.add_argument("--aracne_min_perc_nz", type=int, default=0.01)
+    parser.add_argument("--aracne_min_perc_nz", type=float, default=0.01)
+    parser.add_argument("--aracne_regulators", nargs="+", default=["tfs", "cotfs"])
+    parser.add_argument("--aracne_top_n_hvg", type=int, default=None)
+    parser.add_argument("--aracne_dirname", type=str, default="aracne")
     parser.add_argument("--n_bins", type=int, default=100)
     # figures
     parser.add_argument("--produce_figures", action="store_true")
@@ -530,12 +580,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # define paths 
-    args.counts_path = join(args.out_dir, "counts.csv")
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     args.ranks_path = join(args.out_dir, "rank_raw.csv")
     args.meta_path = join(args.out_dir, "metacells.h5ad")
-    args.info_path = join(args.out_dir, "info.json")
-    args.log_path = join(args.out_dir, "log.txt")
-    args.aracne_dir = join(args.out_dir, "aracne/counts")
+    args.info_path = join(args.out_dir, f"info_{timestamp}.json")
+    args.log_path = join(args.out_dir, f"log_{timestamp}.txt")
+    args.aracne_dir = join(args.out_dir, args.aracne_dirname, "counts")
     args.fig_dir = join(args.out_dir, "figure")
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.aracne_dir, exist_ok=True)
