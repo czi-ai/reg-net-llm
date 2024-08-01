@@ -11,7 +11,7 @@
 PREPROCESS=true
 RUN_ARACNE=true
 MIN_TOTAL_SUBNETS=50
-ARACNE_TOP_N_HVG=1024
+ARACNE_TOP_N_HVG=4096
 ARACNE_DIRNAME=aracne_$ARACNE_TOP_N_HVG
 N_THREADS=4
 
@@ -42,7 +42,7 @@ do
         python $preprocess_path\
             --data_path "${data_base_path}/${cell_type}/partitions" \
             --out_dir "${out_base_path}/${cell_type}" \
-            --steps aracne
+            --steps aracne \
             --save_metacells \
             --sample_index_vars dataset_id donor_id tissue \
             --aracne_min_n 250 \
