@@ -11,6 +11,7 @@ from data import AracneGraphWithRanksDataset
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from torch.nn.utils.rnn import pad_sequence
 from utils import update_mconfig_from_dict
 import argparse
 import random
@@ -22,6 +23,7 @@ import wandb
 import glob 
 from config import *
 from torch_geometric.loader import DataLoader
+
 def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
     return ''.join(random.choice(alphanumeric) for i in range(length))
@@ -49,6 +51,7 @@ args = parser.parse_args()
 def main(args):
     ## config is now a dict
     mconfig = args.config
+    print(mconfig)
     mode = args.mode
     name = args.name
     if (mode in {"train", "resume",}) and (name is None):
@@ -95,11 +98,30 @@ def main(args):
         pickle.dump(mconfig, m_stream)
 
     ### load data
-    # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a refulart dataloader
+    # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
     lit_data_module = LitDataModule(mconfig.data_config)
     train_dl = lit_data_module.train_dataloader()
     val_dl = lit_data_module.val_dataloader()
+
+    def collate_fn(batch):
+        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
+        
+        # Make a dictionary of lists from the list of dictionaries
+        for b in batch:
+            for key in data.keys():
+                data[key].append(b[key])
+
+        # Pad these dictionaries of lists
+        for key in data.keys():
+            if key != "dataset_name":
+                data[key] = pad_sequence(data[key], batch_first=True)
+
+        return data
+
+    transformer_data_module = TransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
+    train_transformer_dl = transformer_data_module.train_dataloader()
+    val_transformer_dl = transformer_data_module.val_dataloader()
     print("data loaded")
 
 
@@ -151,9 +173,10 @@ def main(args):
     
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
-        litmodel = model_fn(mconfig)
+        litmodel = model_fn(mconfig)                                                                # HERE
 
-        trainer.fit(litmodel, train_dataloaders = train_dl, val_dataloaders = val_dl)
+        # trainer.fit(litmodel, train_dataloaders = train_dl, val_dataloaders = val_dl)
+        trainer.fit(litmodel, train_dataloaders = train_transformer_dl, val_dataloaders = val_transformer_dl)
         # trainer.validate(model=litmodel, dataloaders=val_dl)
 
     elif mode == "resume":
@@ -183,7 +206,6 @@ def main(args):
 if __name__ == "__main__":
     mconfig_str = args.config
     mconfig = eval(mconfig_str)
-    
 
     ## update config with extras from commandline
     override_config = args.override_config
@@ -197,4 +219,3 @@ if __name__ == "__main__":
         mconfig = update_mconfig_from_dict(mconfig, params_to_update, set(['mconfig', 'project']) )
     args.config = mconfig
     main(args)
-# %%

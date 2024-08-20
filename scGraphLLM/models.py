@@ -21,6 +21,7 @@ class LitScGraphLLM(pl.LightningModule):
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
+        
     def forward(self, batch):
         ## adding in more explicit annotations of shapes and workflow
         ## some definitions: 
@@ -30,11 +31,12 @@ class LitScGraphLLM(pl.LightningModule):
         ## L_dim = the dimension of the learned cell embeddings(r_dim + g_dim);
         ## e= the number of edges in a batch
         node_indices, edge_list,edge_weights = batch.x, batch.edge_index, batch.edge_weight
+
         mask_locs = [batch.gene_mask, batch.rank_mask, batch.both_mask]
         node_indices = node_indices.type(torch.long)
         ## Shapes: node_indices: n x g x 2, ; edge_list: 2xe; edge_weights: e; 
-        node_embeddings = self.node_embedding(node_indices).flatten(1) ## maps n x g x 
-        
+        node_embeddings = self.node_embedding(node_indices)#.flatten(1) ## maps n x g x 
+
         ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
 
@@ -58,7 +60,11 @@ class LitScGraphLLM(pl.LightningModule):
         loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth #+ L_g
         gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
         rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, rank_mask_locs | both_mask_locs)
-        subset = batch.dataset_name[0]
+        if type(batch) == dict:
+            subset = batch["dataset_name"][0]
+        else:
+            subset = batch.dataset_name[0]
+
         self.log(f'{subset}_loss', loss, batch_size=1, add_dataloader_idx=False)
         self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly, batch_size=gene_mask_locs.sum(), add_dataloader_idx=False)
         self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False) 

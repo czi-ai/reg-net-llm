@@ -1,6 +1,8 @@
 #%%
 import torch
 from torch_geometric.data import Data, Dataset
+from torch.utils.data import Dataset as torchDataset
+from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
 from _globals import * ## imported global variables are all caps 
@@ -37,9 +39,9 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdirs : List[str], gene_to
                 ncells+=1
                 continue
             cell = ranks.iloc[i, :]
-            cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
-            ## nn.Embedding be used for both gene and rank embeddings
-            if cell.shape[0] < MIN_GENES_PER_GRAPH: ## reauire a minimum number of genes per cell 
+            cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes - this lets the same nn.Embedding be used for both gene and rank embeddings
+
+            if cell.shape[0] < MIN_GENES_PER_GRAPH: ## require a minimum number of genes per cell 
                 skipped += 1
                 ncells+=1
                 continue
@@ -76,7 +78,8 @@ class AracneGraphWithRanksDataset(Dataset):
             aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
             global_gene_to_node_file (str): path to file that maps gene name to integer index 
             cache_dir (str): path to directory where the processed data will be stored
-        """        
+        """   
+        print(cache_dir)     
         self.debug = debug
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
@@ -84,6 +87,7 @@ class AracneGraphWithRanksDataset(Dataset):
     def len(self):
         if self.debug:
             return 1000
+        print(len(self.cached_files))
         return len(self.cached_files)
     def get(self, idx, mask_fraction = 0.05):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
@@ -115,6 +119,62 @@ class LitDataModule(pl.LightningDataModule):
         return [DataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for val_ds in self.val_ds]
     def test_dataloader(self):
         return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
+
+class TransformerDataset(torchDataset):
+    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
+        """
+        Args:
+            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
+            global_gene_to_node_file (str): path to file that maps gene name to integer index 
+            cache_dir (str): path to directory where the processed data will be stored
+        """   
+        print(cache_dir)     
+        self.debug = debug
+        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.dataset_name = dataset_name
+
+    def __len__(self):
+        if self.debug:
+            return 1000
+        print(len(self.cached_files))
+        return len(self.cached_files)
+
+    def __getitem__(self, idx, mask_fraction = 0.05):
+        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
+        data = torch.load(self.cached_files[idx])
+        node_indices = data.x
+        orig_gene_indices = node_indices[:, 0].clone()
+        orig_rank_indices = node_indices[:, 1].clone()
+        ## for each mask type, create boolean mask of the same shape as node_indices
+        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+
+        return {
+                "orig_gene_id" : orig_gene_indices, 
+                "orig_rank_indices" : orig_rank_indices, 
+                "gene_mask" : gene_mask, 
+                "rank_mask" : rank_mask, 
+                "both_mask" : both_mask, 
+                "dataset_name" : self.dataset_name
+                }
+
+class TransformerDataModule(pl.LightningDataModule):
+    def __init__(self, data_config, collate_fn=None):
+        super().__init__()
+        self.data_config = data_config
+        self.collate_fn = collate_fn
+        self.train_ds = TransformerDataset(**data_config.train)
+        self.val_ds = [TransformerDataset(**val) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [TransformerDataset(**test) for test in data_config.test]
+    
+    def train_dataloader(self):
+        return torchDataLoader(self.train_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers, collate_fn=self.collate_fn)
+    def val_dataloader(self):
+        return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
 
 
 if __name__ == "__main__":
