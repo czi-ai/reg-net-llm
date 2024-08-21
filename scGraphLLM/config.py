@@ -1,6 +1,7 @@
 import models as models
 import torch 
 from _globals import *
+from copy import deepcopy
 
 class Config(dict):
     def __getattr__(self, item):
@@ -35,6 +36,7 @@ base_model_config = Config({
 })
 
 
+
 pilot_run_config = Config({
     "model":models.LitScGraphLLM,
     "model_config": base_model_config,
@@ -48,16 +50,17 @@ pilot_run_config = Config({
             ],
         "run_test":False, 
         "num_workers": 8,
-        "batch_size": 40
+        "batch_size": 64
     }),
     "trainer_config":Config({
         "max_epochs" : 100,
         "accelerator" : "gpu",
+        "max_time": "01:00:00:00",
         "devices" : 1,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 1,
-        "val_check_interval":0.25
+        "val_check_interval":0.1
 
     }),
     "loss_config":Config({
@@ -75,4 +78,50 @@ pilot_run_config = Config({
     "wandb_project":"scGraphLLM",
 })
 
-        
+dataconfig_1024 =  Config({
+        "train": Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_1024/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_1024/valHG", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
+        "num_workers": 8,
+        "batch_size": 64
+    })
+
+dataconfig_2048 =  Config({
+        "train": Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_2048/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_2048/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_2048/valSG", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
+        "num_workers": 8,
+        "batch_size": 64
+    })
+
+dataconfig_4096 =  Config({
+        "train": Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_4096/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_4096/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_4096/valSG", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
+        "num_workers": 8,
+        "batch_size": 64
+    })
+
+prc_gs_1024 = deepcopy(pilot_run_config)
+prc_gs_1024["data_config"] = dataconfig_1024
+
+prc_gs_2048 = deepcopy(pilot_run_config)
+prc_gs_2048["data_config"] = dataconfig_2048
+
+prc_gs_4096 = deepcopy(pilot_run_config)
+prc_gs_4096["data_config"] = dataconfig_4096
