@@ -1,5 +1,7 @@
 import models as models
-import torch 
+import flash_transformer as flash_transformer
+import torch
+import torch.nn as nn
 from _globals import *
 from copy import deepcopy
 
@@ -18,8 +20,6 @@ class Config(dict):
             raise AttributeError(f"Attribute {item} not found")
 
 
-
-
 base_gnn_config = Config({
     "input_dim":  256,
     "hidden_dims": [256, 256, 256],
@@ -35,16 +35,28 @@ base_model_config = Config({
     "node_embedding_dim": 128
 })
 
+base_transformer_config = Config({
+    "input_dim":  2*base_model_config.node_embedding_dim,
+    "feed_dim": 256,
+    "hidden_dims": [256, 256, 256],
+    "conv_dim": 256, 
+    "num_heads": 2,
+    "out_dim": base_gnn_config.out_dim,
+    "activation": "gelu",
+    "dropout": 0.1,
+    "batch_first": True
+})
 
 
 pilot_run_config = Config({
-    "model":models.LitScGraphLLM,
+    "model": flash_transformer.FlashTRAN, # models.LitScGraphLLM,#
     "model_config": base_model_config,
+    "transformer_config": base_transformer_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/pmglocal/scGraphLLM/modeldata/pilotdata_cache/pilotdata_train_cache", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_train_cache", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/pmglocal/scGraphLLM/modeldata/pilotdata_cache/pilotdata_train_cache", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/pmglocal/scGraphLLM/modeldata/pilotdata_cache/pilotdata_train_cache", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_valSG_cache", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_valHOG_cache", "dataset_name":"valHOG"})
             ],
         "test": [
             ],

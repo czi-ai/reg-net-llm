@@ -1,0 +1,5 @@
+/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/dendritic_cell
+/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/cd4-positive_alpha-beta_t_cell
+/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/b_cell
+/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/glial_cell
+/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_005/mast_cell
