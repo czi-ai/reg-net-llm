@@ -329,22 +329,29 @@ def make_metacells(adata, target_depth, compression, target_sum, random_state, s
     metacells = {}
     for name in clusters.index:
         cluster = adata[adata.obs["cluster"] == name].copy()
-        sc.pp.scale(cluster)
-        pyviper.pp.repr_metacells(
-            cluster, 
-            counts=None,
-            pca_slot="X_pca", 
-            dist_slot="corr_dist", 
-            size=int(clusters[name] * compression), 
-            min_median_depth=target_depth, 
-            clusters_slot=None,
-            key_added=f"metacells",
-            seed=random_state,
-            verbose=False
-        )
-        metacells[name] = cluster.uns["metacells"]
-        metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
-        del cluster
+        try:
+            sc.pp.scale(cluster)
+            pyviper.pp.repr_metacells(
+                cluster, 
+                counts=None,
+                pca_slot="X_pca", 
+                dist_slot="corr_dist", 
+                size=int(clusters[name] * compression), 
+                min_median_depth=target_depth, 
+                clusters_slot=None,
+                key_added=f"metacells",
+                seed=random_state,
+                verbose=False
+            )
+
+            metacells[name] = cluster.uns["metacells"]
+            metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
+        except:
+            logger.info(f"(!) ----> Cluster {name} metacell processing FAILED!")
+        else:
+            logger.info(f"Cluster {name} metacell processing succeeded!")
+        finally:
+            del cluster
     
     metacells_array = pd.concat([metacells.get(name) for name in sorted(metacells.keys())]).to_numpy()
     metacells_clusters = sum([[name] * metacells.get(name).shape[0] for name in sorted(metacells.keys())], [])
@@ -427,76 +434,79 @@ def main(args):
 
     # CellXGene specific processing
     adata = adata[adata.obs["is_primary_data"],:]
-    adata.obs.reset_index(inplace=True)
-    adata.var.reset_index(inplace=True)
-    check_index(adata.var, "feature_id")
+    if adata.shape[0] == 0:
+        logger.info(f"No 'primary data' is contained in this cell-type data: adata has no rows/cells")
+    else:
+        adata.obs.reset_index(inplace=True)
+        adata.var.reset_index(inplace=True)
+        check_index(adata.var, "feature_id")
 
-    adata, qc_processed = preprocess_data(
-        adata=adata, 
-        mito_thres=args.mito_thres, 
-        umi_min=args.umi_min, 
-        umi_max=args.umi_max,
-        max_perc_umi_filtering=args.max_perc_umi_filtering,
-        target_sum=args.target_sum)
-    logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
+        adata, qc_processed = preprocess_data(
+            adata=adata, 
+            mito_thres=args.mito_thres, 
+            umi_min=args.umi_min, 
+            umi_max=args.umi_max,
+            max_perc_umi_filtering=args.max_perc_umi_filtering,
+            target_sum=args.target_sum)
+        logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
 
-    samples, qc_samples = get_samples(
-        adata=adata,
-        index_vars=args.sample_index_vars)
-    logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
-
-    qc_cluster = get_clusters(
-        adata, 
-        random_state=args.random_state)
-    logger.info(f"Detected {qc_cluster['count']} clusters")
-
-    metacells, qc_metacells = make_metacells(
-        adata=adata,
-        target_depth=args.metacells_target_depth,
-        compression=args.metacells_compression,
-        target_sum=args.target_sum,
-        save_path=(args.meta_path if args.save_metacells else None),
-        random_state=args.random_state)
-    logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")
-
-    qc_aracne = make_aracne_counts(
-        adata=metacells,
-        min_n_sample=args.aracne_min_n,
-        max_n_sample=args.aracne_max_n,
-        min_perc_nz=args.aracne_min_perc_nz,
-        aracne_dir=args.aracne_dir)
-    logger.info(f"{qc_aracne['count']} clusters from {qc_cluster} with sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
-
-    # calculate/save ranks
-    ranks, rank_info = rank(metacells, args, plot=False) # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
-
-    # Save Statistics & config
-    info = {
-        "config": args.__dict__,
-        "stats": {
-            "initial": qc_initial,
-            "preprocessed": qc_processed,
-            "samples": qc_samples,
-            "clusters": qc_cluster,
-            "metacells": qc_metacells,
-            "aracne": qc_aracne,
-            "ranks": rank_info
-        },
-    }
-    with open(args.info_path, 'w') as file:
-        json.dump(info, file, indent=4)
-
-    if args.produce_figures:
-        plot_dim_reduction_by_sample_cluster(
+        samples, qc_samples = get_samples(
             adata=adata,
-            title="UMAP Plots by Cluster and Sample",
-            fig_path=join(args.fig_dir, "umap.png")
-        )
-        plot_qc_figures(
-            adata=metacells, 
-            title="QC Figures for Metacells", 
-            fig_path=join(args.fig_dir, "qc_metacells.png")
-        )
+            index_vars=args.sample_index_vars)
+        logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
+
+        qc_cluster = get_clusters(
+            adata, 
+            random_state=args.random_state)
+        logger.info(f"Detected {qc_cluster['count']} clusters")
+
+        metacells, qc_metacells = make_metacells(
+            adata=adata,
+            target_depth=args.metacells_target_depth,
+            compression=args.metacells_compression,
+            target_sum=args.target_sum,
+            save_path=(args.meta_path if args.save_metacells else None),
+            random_state=args.random_state)
+        logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")
+
+        qc_aracne = make_aracne_counts(
+            adata=metacells,
+            min_n_sample=args.aracne_min_n,
+            max_n_sample=args.aracne_max_n,
+            min_perc_nz=args.aracne_min_perc_nz,
+            aracne_dir=args.aracne_dir)
+        logger.info(f"{qc_aracne['count']} clusters from {qc_cluster} with sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
+
+        # calculate/save ranks
+        ranks, rank_info = rank(metacells, args, plot=False) # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
+
+        # Save Statistics & config
+        info = {
+            "config": args.__dict__,
+            "stats": {
+                "initial": qc_initial,
+                "preprocessed": qc_processed,
+                "samples": qc_samples,
+                "clusters": qc_cluster,
+                "metacells": qc_metacells,
+                "aracne": qc_aracne,
+                "ranks": rank_info
+            },
+        }
+        with open(args.info_path, 'w') as file:
+            json.dump(info, file, indent=4)
+
+        if args.produce_figures:
+            plot_dim_reduction_by_sample_cluster(
+                adata=adata,
+                title="UMAP Plots by Cluster and Sample",
+                fig_path=join(args.fig_dir, "umap.png")
+            )
+            plot_qc_figures(
+                adata=metacells, 
+                title="QC Figures for Metacells", 
+                fig_path=join(args.fig_dir, "qc_metacells.png")
+            )
     
 
 if __name__ == "__main__":

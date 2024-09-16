@@ -11,8 +11,6 @@ class FlashTRAN(LitScGraphLLM):
 
         self.transformer_encoder = FlashTransformerEncoderLayer(tconfig.input_dim, tconfig.num_heads, tconfig.feed_dim, tconfig.dropout, tconfig.activation, tconfig.batch_first)
 
-        # YOU LEFT OFF HERE - CONFIG VARIABLES MIGHT BE OFF
-        # YOU PROBABLY HAVE TO REPLACE "model_config" BELOW WITH "gnn_config"!!!!
         self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
                                                hidden_dim=config.model_config.gnn_config.hidden_dims[0])
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 

@@ -1,66 +1,58 @@
 #!/bin/bash 
-#SBATCH --time=48:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem-per-cpu=5G
-#SBATCH --nodelist=m011
-#SBATCH --account pmg
 
-CELL_TYPE=$1
+# DIRECTORY="/burg/pmg/users/rc3686/data/cellxgene/data/cell_type_all"
+# CELL_TYPE="a2_amacrine_cell"
 
-PREPROCESS=false
+DIRECTORY=$1
+CELL_TYPE=$2
+
+PREPROCESS=true
 RUN_ARACNE=true
 MIN_TOTAL_SUBNETS=50
 
 # activate virtual environment
 source activate /pmglocal/$USER/mambaforge/envs/scllm
 
-# Define the list of cell types
-cell_types=("${CELL_TYPE}")
-# cell_types=("elicited_macrophage" "mast_cell" "glial_cell" "b_cell" "cd4-positive_alpha-beta_t_cell" "dendritic_cell")
-#cell_types=("mast_cell")
-
 # Base paths
-data_base_path="/burg/pmg/collab/scGraphLLM/data/cellxgene/cell_type_0005/cell_type_005"
-out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/cell_type_0005"
-regulators_path="/burg/pmg/users/$USER/data/regulators.txt"
-preprocess_path="/burg/pmg/users/$USER/scGraphLLM/scGraphLLM/preprocess.py"
-aracne="/burg/pmg/users/$USER/ARACNe3/build/src/app/ARACNe3_app_release"
+data_base_path=$DIRECTORY
+out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/complete_data"
+regulators_path="/burg/pmg/users/rc3686/data/regulators.txt" # 
+preprocess_path="/burg/pmg/users/$USER/scGraphLLM/scGraphLLM/preprocess.py" #
+aracne="/burg/pmg/users/rc3686/ARACNe3/build/src/app/ARACNe3_app_release" #
 
-# Iterate through each cell type
-for cell_type in "${cell_types[@]}"
-do  
-    echo "Processing ${cell_type}..."
-    start_time=$(date +%s)
+# Preprocess cell-type
+echo "Processing ${CELL_TYPE}..."
 
-    if $PREPROCESS; then
-        python $preprocess_path\
-            --data_path "${data_base_path}/${cell_type}/partitions" \
-            --out_dir "${out_base_path}/${cell_type}" \
-            --save_metacells \
-            --sample_index_vars dataset_id donor_id tissue \
-            --aracne_min_n 250 \
-            --n_bins 100
+start_time=$(date +%s)
 
-        # Check if the command succeeded
-        if [ $? -eq 0 ]; then
-            echo "Successfully preprocessed ${cell_type}"
-        else
-            echo "Failed to preprocess ${cell_type}"
-            continue
-        fi
+if $PREPROCESS; then
+    python $preprocess_path\
+        --data_path "${data_base_path}/${CELL_TYPE}/partitions" \
+        --out_dir "${out_base_path}/${CELL_TYPE}" \
+        --save_metacells \
+        --sample_index_vars dataset_id donor_id tissue \
+        --aracne_min_n 250 \
+        --n_bins 250
+
+    # Check if the command succeeded
+    if [ $? -eq 0 ]; then
+        echo "Finished preprocessing ${CELL_TYPE}"
+    else
+        echo "Failed to preprocess ${CELL_TYPE}"
     fi
-    
-    if $RUN_ARACNE; then
-        # Generate ARACNe subnetworks for each cluster
-        counts_files=($(find "$out_base_path/$cell_type/aracne/counts/" -name "counts_*.tsv" | sort))
-        n_clusters=${#counts_files[@]}
+fi
 
-        if [ $n_clusters -eq 0 ]; then
-            echo "No clusters detected for ${cell_type}. Skipping ARACNe step."
-            continue
-        fi
+echo -e "\n"
 
-        n_subnets_per_cluster=$(((MIN_TOTAL_SUBNETS + n_clusters) / n_clusters))
+if $RUN_ARACNE; then
+    # Generate ARACNe subnetworks for each cluster
+    counts_files=($(find "$out_base_path/$CELL_TYPE/aracne/counts/" -name "counts_*.tsv" | sort))
+    n_clusters=${#counts_files[@]}
+
+    if [ $n_clusters -eq 0 ]; then
+        echo "No clusters detected for ${CELL_TYPE}. ARACNe step incomplete."
+    else
+        n_subnets_per_cluster=$(((MIN_TOTAL_SUBNETS + $n_clusters) / $n_clusters))
         n_total_subnets=$((n_clusters * n_subnets_per_cluster)) # make this ~50-100
         echo "Generating ${n_subnets_per_cluster} ARACNe subnetworks for ${n_clusters} clusters...${n_total_subnets} total subnetworks..."
         for file_path in "${counts_files[@]}"
@@ -71,7 +63,7 @@ do
             $aracne \
                 -e $file_path \
                 -r $regulators_path \
-                -o $out_base_path/$cell_type/aracne \
+                -o $out_base_path/$CELL_TYPE/aracne \
                 -x $n_subnets_per_cluster \
                 -FDR \
                 --runid $index \
@@ -81,11 +73,11 @@ do
                 --threads 4
         done
 
-        echo "Consolidating ARACNe subnetworks for ${n_clusters} clusters of cell type: ${cell_type} "
+        echo "Consolidating ARACNe subnetworks for ${n_clusters} clusters of cell type: ${CELL_TYPE} "
         $aracne \
-            -e $out_base_path/$cell_type/aracne/counts/counts.tsv \
+            -e $out_base_path/$CELL_TYPE/aracne/counts/counts.tsv \
             -r $regulators_path \
-            -o $out_base_path/$cell_type/aracne \
+            -o $out_base_path/$CELL_TYPE/aracne \
             -x $n_total_subnets \
             -FDR \
             --subsample 1.00 \
@@ -96,14 +88,15 @@ do
 
         # Check if the ARACNe command succeeded
         if [ $? -eq 0 ]; then
-            echo "Successfully ran ARACNe for ${cell_type}"
+            echo "Successfully ran ARACNe for ${CELL_TYPE}"
         else
-            echo "Failed to run ARACNe for ${cell_type}"
-            continue
+            echo "Failed to run ARACNe for ${CELL_TYPE}"
         fi
     fi
-    
-    end_time=$(date +%s)
-    elapsed_time=$((end_time - start_time))
-    echo "Time taken to process ${cell_type}: ${elapsed_time} seconds"
-done
+fi
+
+end_time=$(date +%s)
+elapsed_time=$((end_time - start_time))
+echo "Time taken to process ${CELL_TYPE}: ${elapsed_time} seconds"
+
+conda deactivate
