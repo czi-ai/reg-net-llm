@@ -30,20 +30,20 @@ base_gnn_config = Config({
 
 base_model_config = Config({
     "gnn_config" : base_gnn_config,
-    "num_ranks":NUM_RANKS, ## arbitary rn, but theoretically should be the cell with most genes 
+    "num_ranks": NUM_RANKS, ## arbitary rn, but theoretically should be the cell with most genes 
     "num_genes": NUM_GENES, 
-    "node_embedding_dim": 128
+    "node_embedding_dim": 512
 })
 
 base_transformer_config = Config({
-    "input_dim":  2*base_model_config.node_embedding_dim,
-    "feed_dim": 256,
-    "hidden_dims": [256, 256, 256],
-    "conv_dim": 256, 
-    "num_heads": 2,
+    "input_dim": 2*base_model_config.node_embedding_dim,
+    "feed_dim": 512,
+    "hidden_dims": [512, 512, 512],
+    "conv_dim": 512,
+    "num_heads": 8,
     "out_dim": base_gnn_config.out_dim,
     "activation": "gelu",
-    "dropout": 0.1,
+    "dropout": 0.3,
     "batch_first": True
 })
 

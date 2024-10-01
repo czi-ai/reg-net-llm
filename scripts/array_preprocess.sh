@@ -3,7 +3,7 @@
 #SBATCH --ntasks-per-node=10
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=5G
-#SBATCH --nodelist=m004,m005,m006,m007,m008,m010
+#SBATCH --exclude=m001,m002,m003,m009,m011,m012,m013
 #SBATCH --account=pmg
 #SBATCH --output=./slurm_out/array_job_%A_%a.out
 #SBATCH -p cpu
