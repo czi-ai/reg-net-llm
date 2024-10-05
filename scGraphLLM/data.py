@@ -208,7 +208,7 @@ class TransformerDataModule(pl.LightningDataModule):
 
 if __name__ == "__main__":
     ## This portion lets you generate the cache for the data outside of the model training loop - took about ~1 hour on 5 cores for the pilot data set
-    ## python scGraphLLM/data.py --aracane-outdir-md  pilotdata_aracne_1024_outdirs.csv --gene-to-node-file /burg/pmg/collab/scGraphLLM/data/cellxgene_gene2index.csv --cache-dir /burg/pmg/collab/scGraphLLM/data/pilotdata_1024/ --num-proc 4
+    ## python scGraphLLM/data.py --aracane-outdir-md  /hpc/projects/group.califano/GLM/data/aracne_outdir.csv --gene-to-node-file /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv --cache-dir /hpc/projects/group.califano/GLM/data/pilotdata_1024 --num-proc 4
     parser = argparse.ArgumentParser()
     parser.add_argument("--aracane-outdir-md", type=str, help="File containing a list of aracne outdirs; `ls path/to/aracaneOutdirs/* > <input>` ")
     parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")

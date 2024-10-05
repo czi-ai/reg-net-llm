@@ -11,14 +11,14 @@ RUN_ARACNE=true
 MIN_TOTAL_SUBNETS=50
 
 # activate virtual environment
-source activate /pmglocal/$USER/mambaforge/envs/scllm
+mamba activate scllm
 
 # Base paths
 data_base_path=$DIRECTORY
-out_base_path="/burg/pmg/users/$USER/data/cellxgene/data/complete_data"
-regulators_path="/burg/pmg/users/rc3686/data/regulators.txt" # 
-preprocess_path="/burg/pmg/users/$USER/scGraphLLM/scGraphLLM/preprocess.py" #
-aracne="/burg/pmg/users/rc3686/ARACNe3/build/src/app/ARACNe3_app_release" #
+out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data"
+regulators_path="/hpc/projects/group.califano/GLM/data/regulators.txt"
+preprocess_path="/hpc/projects/group.califano/GLM/scGraphLLM/scGraphLLM/preprocess.py"
+aracne="/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release"
 
 # Preprocess cell-type
 echo "Processing ${CELL_TYPE}..."
@@ -99,4 +99,4 @@ end_time=$(date +%s)
 elapsed_time=$((end_time - start_time))
 echo "Time taken to process ${CELL_TYPE}: ${elapsed_time} seconds"
 
-conda deactivate
+mamba deactivate

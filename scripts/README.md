@@ -8,7 +8,7 @@ _Example Command:_ `source start_slurm_preprocess.sh "initial"`
 
 _Example Command:_ `source start_slurm_preprocess.sh "run_timed_out" "786994"`
 
-The **RUN_TYPE** argument lets the script run the pipeline from scratch or on specific cell-types that weren't successfully processed _(options: initial, run_env_fail, run_timed_out, run_failed, and run_unaccounted)_. For any non-"initial" runs, you must also include the **JOB_ID** from which you've identified the cell-types you would like to re-run. These specific cell-types are identified from the job .out files and are parsed & organized by the `./check_out.py` script: `python check_out.py`.
+The **RUN_TYPE** argument lets the script run the pipeline from scratch or on specific cell-types that weren't successfully processed _(options: initial, run_env_fail, run_timed_out, run_failed, and run_unaccounted)_. For any non-"initial" runs, you must also include the **JOB_ID** from which you've identified the cell-types you would like to re-run. These specific cell-types are identified from the job .out files and are parsed & organized by the `./checkout.py` script: `python checkout.py`.
 
 ## array_preprocess.sh
 

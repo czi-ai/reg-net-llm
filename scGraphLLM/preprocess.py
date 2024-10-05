@@ -381,6 +381,8 @@ def rank(metacells, args, plot=False):
         row = df_ranked.iloc[i].to_numpy(dtype=int)
         non_zero = row.nonzero()
         if len(row[non_zero]) != 0: # Make sure row is not all zeros/nans (expressionless)
+            if len(row[non_zero]) < n_bins-1:
+                n_bins = len(row[non_zero])+1
             bins = np.quantile(row[non_zero], np.linspace(0, 1, n_bins-1))
             bindices = np.digitize(row[non_zero], bins)
             rank_bins[i, non_zero] = bindices
