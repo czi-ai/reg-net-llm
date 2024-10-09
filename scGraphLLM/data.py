@@ -16,6 +16,7 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle 
+from torch_geometric.utils import get_laplacian, to_dense_adj
 
 rng = default_rng(42)
 def save(obj, file):
@@ -97,7 +98,49 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdir_info : List[List[str]
     print(f"loaded {ncells} cells")
     return 
 
+############# Graph embeddings ######################
 
+# obtain laplacian of a graph from edge index
+def laplacian_normalized(edge_index, edge_weights, num_nodes):
+    laplacian_ind, laplacian_weight = get_laplacian(edge_index, edge_weight=edge_weights, 
+                                                 normalization='sym', num_nodes=num_nodes)
+    L = to_dense_adj(laplacian_ind, edge_attr=laplacian_weight)
+    return L
+
+# spectral positional embedding
+def spectral_PE(edge_index, edge_weights, num_nodes, k):
+    L = laplacian_normalized(edge_index, edge_weights, num_nodes)
+    eigenvalues, eigenvectors = torch.linalg.eigh(L)
+    N = num_nodes
+    assert k < N, "k must be less than the number of nodes"
+    pe = eigenvectors[:, 1:k+1]
+    assert pe.shape == (N, k), f"Expected shape ({N}, {k}), got {pe.shape}"
+    # Normalize embeddings
+    pe = (pe - pe.mean(dim=0)) / (pe.std(dim=0) + 1e-8)
+    return pe
+
+# Graph diffusion kernel
+def graph_diffusion_kernel_eig(edge_index, edge_weights, num_nodes, diffusion_rate):
+    L = laplacian_normalized(edge_index, edge_weights, num_nodes)
+    sigma, U = torch.linalg.eigh(L) # L = UAU^T
+    diag_vals = torch.exp(-diffusion_rate * sigma)
+    K = U @ torch.diag(diag_vals) @ U.T
+    return K
+
+def graph_diffusion_kernel_taylor(edge_index, edge_weights, num_nodes, diffusion_rate, n_terms=10):
+    L = laplacian_normalized(edge_index, edge_weights, num_nodes)
+    K = torch.zeros_like(L)
+    L_power = torch.eye(L.shape[0], device=L.device)
+    factorial = 1
+    for n in range(n_terms):
+        term = ((-diffusion_rate) ** n) / factorial * L_power
+        K += term
+        L_power = L_power @ L # increase power by 1
+        factorial *= n + 1 
+    return K
+
+#########################################################
+    
 class AracneGraphWithRanksDataset(Dataset):
     def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
         """

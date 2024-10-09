@@ -32,6 +32,7 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
+from fa2_custom_mask import flash_attention_custom_mask
 
 
 def rotate_half(x):
@@ -115,6 +116,8 @@ class RotaryEmbeddingESM(torch.nn.Module):
             apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached, seq_dimension),
         )
 
+
+
 #@torch.jit.script  # would require setting shape to static (or finite number of shapes)
 
 ## Keeping these just in case
@@ -171,7 +174,7 @@ class SwiGLU(nn.Module):
 ## Removing factory kwargs
 
 class FusedWQKV(nn.Module):
-    def __init__(self, d_model,nhead,use_flash_attn, init_scheme = "kaiming_uniform", lora_qv_rank = None,bias=False, device=None, dtype=None  ):
+    def __init__(self, d_model,nhead,use_flash_attn, init_scheme = "kaiming_uniform", lora_qv_rank = None,bias=False, device=None, dtype=None):
         super(FusedWQKV, self).__init__()
         factory_kwargs = {'device': device, 'dtype': dtype}
         if lora_qv_rank is not None:
@@ -196,6 +199,39 @@ class FusedWQKV(nn.Module):
                             three=3, h=self.nhead)
         return q,k,v
 
+
+### fuse in positional embedding to q, k ,v #####
+class FusedWQKVwithPE(nn.Module):
+    def __init__(self, d_model, d_emb, nhead, use_flash_attn, init_scheme = "kaiming_uniform", lora_qv_rank = None,bias=False, device=None, dtype=None):
+        super(FusedWQKVwithPE, self).__init__()
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        if lora_qv_rank is not None:
+            self.Wqkv = lora.MergedLinear(d_model, 3*d_model, r=lora_qv_rank,
+                                            enable_lora=[True, False, True])
+        else:
+            self.Wqkv = nn.Linear(d_model, 3 * d_model, bias=bias, **factory_kwargs)
+        self.Wp = nn.Linear(d_emb, d_model, bias=False, **factory_kwargs)
+        self.nhead = nhead
+        self.use_flash_attn = use_flash_attn
+        if init_scheme == "xavier_uniform":
+            nn.init.xavier_uniform_(self.Wqkv.weight)
+            nn.init.xavier_uniform_(self.Wp.weight)
+        elif init_scheme == "xavier_normal":
+            nn.init.xavier_normal_(self.Wqkv.weight)
+            nn.init.xavier_normal_(self.Wp.weight)
+        elif init_scheme == "xn_dim":
+            nn.init.xavier_normal_(self.Wqkv.weight, gain = 2/math.sqrt(d_model))
+            nn.init.xavier_normal_(self.Wp.weight, gain = 2/math.sqrt(d_emb))
+    def forward(self, x, p):
+        p = self.Wp(p)
+        h = x + p
+        qkv = self.Wqkv(h)
+        if self.use_flash_attn:
+            q, k, v = rearrange(qkv, 'b s (three h d) -> three b s h d', three=3, h=self.nhead)
+        else:
+            q, k, v = rearrange(qkv, 'b s (three h d) -> three b h s d',
+                            three=3, h=self.nhead)
+        return q,k,v
 
 class WQKV(nn.Module):
     
@@ -246,7 +282,8 @@ class WQKV(nn.Module):
 
 
 class FlashMHASelfMaskKV(nn.Module):
-    def __init__(self, d_model, num_heads, batch_first, attention_dropout,mode="self", bias=True, causal=False, use_rotary_emb=None, device = None, dtype = None) -> None:
+    def __init__(self, d_model, num_heads, batch_first, attention_dropout,mode="self", bias=True, causal=False, 
+                 use_rotary_emb=None, device = None, dtype = None) -> None:
         super(FlashMHASelfMaskKV, self).__init__()
         assert batch_first
         factory_kwargs = {'device': device, 'dtype': dtype}
@@ -381,13 +418,56 @@ class CustomTorchMHASelf(nn.Module):
                             b=b_size, h=self.num_heads)
         return self.out_proj(context)
 
+# Allows custom masking at a batch level. Mask shape is (1, H, L, L) where H is num heads, L is seq length
+class FlashMHACustomMasking(nn.Module):
+    def __init__(self, d_model, num_heads, batch_first, attention_dropout, bias=True, device = None, dtype = None) -> None:
+        super(FlashMHACustomMasking, self).__init__()
+        assert batch_first
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        self.d_model = d_model
+        self.dropout_p = attention_dropout
+
+        self.num_heads = num_heads
+        assert self.d_model % num_heads == 0, f"emb {self.d_model} must be divisible by num_heads {num_heads}"
+        self.head_dim = self.d_model // num_heads
+        # assert self.head_dim in [16, 32, 64, 128], "Only support head_dim == 16, 32, 64, or 128"
+        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
+        self.scaling = self.head_dim ** -0.5        
+
+        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
+
+    def forward(self, q,k,v, attention_mask=None):
+        """
+        q, k, v: (batch, heads, seqlen, model dim)
+        attention mask: (1, heads, seqlen, seqlen)
+        package used: https://github.com/alexzhang13/flashattention2-custom-mask/blob/main/fa2_custom_mask/fa2_custom_mask.py
+        ONLY COMPATIABLE WITH AMPERE DEVICE AND UP. V100 DOES NOT WORK.
+        """
+        dtype = q.dtype
+        q = rearrange(q.type(dtype), 'b s h d -> b h s d', h=self.num_heads)
+        k = rearrange(k.type(dtype), 'b s h d -> b h s d', h=self.num_heads)
+        v = rearrange(k.type(dtype), 'b s h d -> b h s d', h=self.num_heads)
+        batch_size, seq_len, _, _ = q.shape
+        attention_mask = torch.broadcast_to(attention_mask, (batch_size, self.num_heads, seq_len, seq_len))
+        context = flash_attention_custom_mask(
+            q,
+            k,
+            v,
+            mask=attention_mask, # (B, H, L, L)å
+            sm_scale=self.scaling
+        )
+        context = rearrange(context, '(b s) h d -> b s (h d)', b=q.shape[0], h=self.num_heads)
+        return self.out_proj(context)
+
 class FlashTransformerEncoderLayer(nn.Module):
     """ 
     We assume transformer encoder layer is for the same sequence
     so use the FusedWqkv 
     """
     def __init__(self, d_model, nhead, dim_feedforward, dropout ,
-                 activation,batch_first,use_flash_attn = True, layer_norm_eps = 1e-5, norm_first = False,lora_qv_rank = None, use_rotary_emb = False, init_scheme = "kaiming_uniform"
+                 activation,batch_first,use_flash_attn = True, use_attn_mask = False, use_PE=False,
+                 layer_norm_eps = 1e-5, norm_first = False,lora_qv_rank = None, use_rotary_emb = False, 
+                 init_scheme = "kaiming_uniform"
                  ):
         super(FlashTransformerEncoderLayer, self).__init__()
         if activation == 'esm-gelu':
@@ -401,17 +481,26 @@ class FlashTransformerEncoderLayer(nn.Module):
         else:
             raise ValueError(f'TransformerLayer {activation} not implemented')
         ## MHA
+        self.use_attn_mask = use_attn_mask
         if use_flash_attn:
             self.self_attention = FlashMHASelfMaskKV(
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
+            if use_attn_mask:
+                self.self_attention = FlashMHACustomMasking(
+                    d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout
+                )
         else:
             self.self_attention = CustomTorchMHASelf(
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
     
         ## Wqkv:
-        self.wqkv = FusedWQKV(d_model,nhead,use_flash_attn, lora_qv_rank = lora_qv_rank, init_scheme = init_scheme, bias=True)
+        self.use_PE = use_PE
+        if use_PE:
+            self.wqkv = FusedWQKVwithPE(d_model,nhead,use_flash_attn, lora_qv_rank = lora_qv_rank, init_scheme = init_scheme, bias=True)
+        else:
+            self.wqkv = FusedWQKV(d_model,nhead,use_flash_attn, lora_qv_rank = lora_qv_rank, init_scheme = init_scheme, bias=True)
         ## feedforward projection
         if activation.startswith('SwiGLU'):
             self.ff = eval(activation)(d_model, dim_feedforward)
@@ -425,17 +514,43 @@ class FlashTransformerEncoderLayer(nn.Module):
         self.norm_first = norm_first
         self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-    def forward(self, qkv, key_padding_mask = None):
+    def forward(self, qkv, p=None, key_padding_mask = None, attn_mask = None):
         x = qkv
+        if self.use_PE:
+            assert p != None
+        
+        if self.use_attn_mask:
+            assert attn_mask != None
+            
         if self.norm_first:
             x = self.ln1(x)
-            q,k,v = self.wqkv(x)
-            x = x + self.self_attention(q,k,v,key_padding_mask)
+            # infusing PE or not
+            if self.use_PE:
+                q,k,v = self.wqkv(x, p)
+            else:
+                q,k,v = self.wqkv(x)
+            
+            # mask attention weights or not
+            if self.use_attn_mask:
+                x = x + self.self_attention(q,k,v,attn_mask)
+            else:
+                x = x + self.self_attention(q,k,v,key_padding_mask)
+            
+            # layer norm -> linear network
             x = self.ln2(x)
             x = x + self.dropout_ff(self.ff(x))
         else:
-            q,k,v = self.wqkv(x)
-            x = x + self.self_attention(q,k,v,key_padding_mask)
+            if self.use_PE:
+                q,k,v = self.wqkv(x, p)
+            else:
+                q,k,v = self.wqkv(x)
+            
+            if self.use_attn_mask:
+                x = x + self.self_attention(q,k,v,attn_mask)
+            else:
+                x = x + self.self_attention(q,k,v,key_padding_mask)
+
+            # linear network -> layer norm
             x = self.ln1(x)
             x = x + self.dropout_ff(self.ff(x))
             x = self.ln2(x)
