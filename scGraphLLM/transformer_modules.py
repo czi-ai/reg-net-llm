@@ -202,7 +202,7 @@ class FusedWQKV(nn.Module):
 
 ### fuse in positional embedding to q, k ,v #####
 class FusedWQKVwithPE(nn.Module):
-    def __init__(self, d_model, d_emb, nhead, use_flash_attn, init_scheme = "kaiming_uniform", lora_qv_rank = None,bias=False, device=None, dtype=None):
+    def __init__(self, d_model, nhead, use_flash_attn, init_scheme = "kaiming_uniform", lora_qv_rank = None,bias=False, device=None, dtype=None):
         super(FusedWQKVwithPE, self).__init__()
         factory_kwargs = {'device': device, 'dtype': dtype}
         if lora_qv_rank is not None:
@@ -210,7 +210,7 @@ class FusedWQKVwithPE(nn.Module):
                                             enable_lora=[True, False, True])
         else:
             self.Wqkv = nn.Linear(d_model, 3 * d_model, bias=bias, **factory_kwargs)
-        self.Wp = nn.Linear(d_emb, d_model, bias=False, **factory_kwargs)
+        self.Wp = None  # Initialize Wp as None
         self.nhead = nhead
         self.use_flash_attn = use_flash_attn
         if init_scheme == "xavier_uniform":
@@ -223,6 +223,8 @@ class FusedWQKVwithPE(nn.Module):
             nn.init.xavier_normal_(self.Wqkv.weight, gain = 2/math.sqrt(d_model))
             nn.init.xavier_normal_(self.Wp.weight, gain = 2/math.sqrt(d_emb))
     def forward(self, x, p):
+        if self.Wp is None:
+            self.Wp = nn.Linear(p.size(-1), x.size(-1), bias=False).to(p.device)
         p = self.Wp(p)
         h = x + p
         qkv = self.Wqkv(h)
@@ -459,13 +461,67 @@ class FlashMHACustomMasking(nn.Module):
         context = rearrange(context, '(b s) h d -> b s (h d)', b=q.shape[0], h=self.num_heads)
         return self.out_proj(context)
 
+# Torch version of the above
+class TorchMHAMasking(nn.Module):
+
+    def __init__(self, d_model, num_heads, bias=True, batch_first=True, attention_dropout=0.0,
+                 causal=False, use_rotary_emb=None, mask_mode=None, mask_weight=1.0, device=None, dtype=None) -> None:
+        assert batch_first
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super(CustomTorchMHASelf, self).__init__()
+        self.d_model = d_model
+        self.causal = causal
+        self.dropout_p = attention_dropout
+
+        self.num_heads = num_heads
+        assert self.d_model % num_heads == 0, "self.kdim must be divisible by num_heads"
+        self.head_dim = self.d_model // num_heads
+        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
+        self.scaling = self.head_dim ** -0.5
+
+        self.use_rotary_emb = use_rotary_emb
+        if use_rotary_emb:
+            self.rot_emb = RotaryEmbeddingESM(self.head_dim)
+
+        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
+        self.mask_mode = mask_mode
+        self.mask_weight = mask_weight
+
+    def forward(self, q, k, v, key_padding_mask=None, attention_mask=None):
+        """
+        x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
+        key_padding_mask: bool tensor of shape (batch, seqlen)
+        attention_mask: tensor of shape (1, num_heads, seqlen, seqlen)
+        """
+        b_size, _, s_size, _ = q.shape
+
+        if self.use_rotary_emb:
+            q, k = self.rot_emb(q, k, seq_dimension=-2)
+
+        if key_padding_mask is not None:
+            key_padding_mask = rearrange(~key_padding_mask, 'b s -> b 1 1 s')
+
+        attn_output_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
+        if attention_mask is not None:
+            attention_mask = torch.broadcast_to(attention_mask, (b_size, self.num_heads, s_size, s_size))
+            if self.mask_mode == 'mask':
+                attn_output_weights = attn_output_weights * attention_mask
+            elif self.mask_mode == 'bias':
+                attn_output_weights = attn_output_weights + self.mask_weight * attention_mask
+        attn_output_weights = F.softmax(attn_output_weights, dim=-1)
+        if self.dropout_p > 0.0:
+            attn_output_weights = F.dropout(attn_output_weights, p=self.dropout_p, training=self.training)
+        context = torch.matmul(attn_output_weights, v)
+        context = rearrange(context, 'b h s d -> b s (h d)', b=b_size, h=self.num_heads)
+        return self.out_proj(context)
+
 class FlashTransformerEncoderLayer(nn.Module):
     """ 
     We assume transformer encoder layer is for the same sequence
     so use the FusedWqkv 
     """
     def __init__(self, d_model, nhead, dim_feedforward, dropout ,
-                 activation,batch_first,use_flash_attn = True, use_attn_mask = False, use_PE=False,
+                 activation,batch_first, use_flash_attn = True, use_attn_mask = False, use_PE=False,
                  layer_norm_eps = 1e-5, norm_first = False,lora_qv_rank = None, use_rotary_emb = False, 
                  init_scheme = "kaiming_uniform"
                  ):
@@ -484,7 +540,8 @@ class FlashTransformerEncoderLayer(nn.Module):
         self.use_attn_mask = use_attn_mask
         if use_flash_attn:
             self.self_attention = FlashMHASelfMaskKV(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
+                d_model=d_model, num_heads = nhead, batch_first = batch_first, 
+                attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
             if use_attn_mask:
                 self.self_attention = FlashMHACustomMasking(
@@ -494,6 +551,11 @@ class FlashTransformerEncoderLayer(nn.Module):
             self.self_attention = CustomTorchMHASelf(
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
+            if use_attn_mask:
+                self.self_attention = TorchMHAMasking(
+                    d_model=d_model, num_heads = nhead, batch_first = batch_first, 
+                    attention_dropout=dropout, mask_mode='mask', mask_weight=1e-2, use_rotary_emb=use_rotary_emb
+                )
     
         ## Wqkv:
         self.use_PE = use_PE
@@ -514,41 +576,41 @@ class FlashTransformerEncoderLayer(nn.Module):
         self.norm_first = norm_first
         self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-    def forward(self, qkv, p=None, key_padding_mask = None, attn_mask = None):
+    def forward(self, qkv, p=None, key_padding_mask=None, attn_mask=None):
         x = qkv
         if self.use_PE:
-            assert p != None
+            assert p is not None, "Positional encoding tensor must be provided when use_PE is True."
         
         if self.use_attn_mask:
-            assert attn_mask != None
+            assert attn_mask is not None, "Attention mask must be provided when use_attn_mask is True."
             
         if self.norm_first:
             x = self.ln1(x)
             # infusing PE or not
             if self.use_PE:
-                q,k,v = self.wqkv(x, p)
+                q, k, v = self.wqkv(x, p)
             else:
-                q,k,v = self.wqkv(x)
+                q, k, v = self.wqkv(x)
             
             # mask attention weights or not
             if self.use_attn_mask:
-                x = x + self.self_attention(q,k,v,attn_mask)
+                x = x + self.self_attention(q, k, v, attention_mask=attn_mask)
             else:
-                x = x + self.self_attention(q,k,v,key_padding_mask)
+                x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
             
             # layer norm -> linear network
             x = self.ln2(x)
             x = x + self.dropout_ff(self.ff(x))
         else:
             if self.use_PE:
-                q,k,v = self.wqkv(x, p)
+                q, k, v = self.wqkv(x, p)
             else:
-                q,k,v = self.wqkv(x)
+                q, k, v = self.wqkv(x)
             
             if self.use_attn_mask:
-                x = x + self.self_attention(q,k,v,attn_mask)
+                x = x + self.self_attention(q, k, v, attention_mask=attn_mask)
             else:
-                x = x + self.self_attention(q,k,v,key_padding_mask)
+                x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
 
             # linear network -> layer norm
             x = self.ln1(x)

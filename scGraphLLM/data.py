@@ -108,13 +108,16 @@ def laplacian_normalized(edge_index, edge_weights, num_nodes):
     return L
 
 # spectral positional embedding
-def spectral_PE(edge_index, edge_weights, num_nodes, k):
+def spectral_PE(edge_index, edge_weights, num_nodes):
     L = laplacian_normalized(edge_index, edge_weights, num_nodes)
     eigenvalues, eigenvectors = torch.linalg.eigh(L)
-    N = num_nodes
-    assert k < N, "k must be less than the number of nodes"
-    pe = eigenvectors[:, 1:k+1]
-    assert pe.shape == (N, k), f"Expected shape ({N}, {k}), got {pe.shape}"
+    # Detect zero eigenvalues (within a tolerance)
+    zero_eigenvalue_mask = torch.isclose(eigenvalues, torch.zeros_like(eigenvalues), atol=1e-8)
+    num_zero_eigenvalues = zero_eigenvalue_mask.sum().item()
+    # Exclude the zero eigenvectors
+    pe = eigenvectors[:, ~zero_eigenvalue_mask]
+    N, k = pe.shape
+    assert k == num_nodes - num_zero_eigenvalues, f"Expected {num_nodes - num_zero_eigenvalues} non-zero eigenvectors, got {k}"
     # Normalize embeddings
     pe = (pe - pe.mean(dim=0)) / (pe.std(dim=0) + 1e-8)
     return pe
@@ -127,6 +130,7 @@ def graph_diffusion_kernel_eig(edge_index, edge_weights, num_nodes, diffusion_ra
     K = U @ torch.diag(diag_vals) @ U.T
     return K
 
+# Taylor expansion approximation of the graph diffusion kernel
 def graph_diffusion_kernel_taylor(edge_index, edge_weights, num_nodes, diffusion_rate, n_terms=10):
     L = laplacian_normalized(edge_index, edge_weights, num_nodes)
     K = torch.zeros_like(L)
@@ -135,7 +139,7 @@ def graph_diffusion_kernel_taylor(edge_index, edge_weights, num_nodes, diffusion
     for n in range(n_terms):
         term = ((-diffusion_rate) ** n) / factorial * L_power
         K += term
-        L_power = L_power @ L # increase power by 1
+        L_power = L_power @ L
         factorial *= n + 1 
     return K
 
@@ -154,11 +158,13 @@ class AracneGraphWithRanksDataset(Dataset):
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
         super().__init__(None, None, None)
+    
     def len(self):
         if self.debug:
             return 1000
         print(len(self.cached_files))
         return len(self.cached_files)
+    
     def get(self, idx, mask_fraction = 0.05):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data_dict = load(self.cached_files[idx])
@@ -175,7 +181,30 @@ class AracneGraphWithRanksDataset(Dataset):
         node_indices[gene_mask, 0] = MASK_IDX
         node_indices[rank_mask, 1] = MASK_IDX
         node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
-        return Data(x = node_indices, edge_index = data.edge_index, edge_weight = data.edge_weight, gene_mask = gene_mask, rank_mask = rank_mask, both_mask = both_mask, orig_gene_id = orig_gene_indices, orig_rank_indices = orig_rank_indices, dataset_name = self.dataset_name)
+        
+        # Compute graph diffusion kernel matrix
+        diffusion_kernel = graph_diffusion_kernel_eig(data.edge_index, data.edge_weight, node_indices.shape[0], diffusion_rate=0.1)
+        
+        # Compute spectral positional embedding
+        spectral_pe = spectral_PE(data.edge_index, data.edge_weight, node_indices.shape[0], k=10)
+        
+        # Compute graph laplacian
+        L = laplacian_normalized(data.edge_index, data.edge_weight, node_indices.shape[0])
+        
+        return Data(
+            x=node_indices, 
+            edge_index=data.edge_index, 
+            edge_weight=data.edge_weight, 
+            gene_mask=gene_mask, 
+            rank_mask=rank_mask, 
+            both_mask=both_mask, 
+            orig_gene_id=orig_gene_indices, 
+            orig_rank_indices=orig_rank_indices, 
+            dataset_name=self.dataset_name,
+            diffusion_kernel=diffusion_kernel,
+            pe=spectral_pe,
+            laplacian=L
+        )
 
 class LitDataModule(pl.LightningDataModule):
     def __init__(self, data_config):
