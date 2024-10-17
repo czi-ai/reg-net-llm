@@ -4,7 +4,7 @@ def extract_cell_type(file):
     return file[0][:-4].split()[-1]
 
 # CHANGE TO YOUR DIRECTORY !
-PATH = "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/slurm_out"
+PATH = "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out"
 dirs = os.listdir(PATH)
 
 job = None
@@ -27,18 +27,18 @@ if job == None:
 
 print(f"Checking {job}...")
 
-
-
 # Run check script
 runs = { "env_fail": [], "timed_out": [], "failed_unknown": [], "slurm_sync_failed": [], "no_primary_data": [], "clusterless": [], "success": [], "unaccounted": []}
 summary = {"env_fail": [], "timed_out": [], "failed_unknown": [], "slurm_sync_failed": [], "no_primary_data": [], "clusterless": [], "success": [], "unaccounted": []}
 
 print("\nAnalyzing log output files...\n")
-for filename in dirs:
-    if job not in filename: # Not the right job
-        continue
+directories = os.listdir(f"{PATH}/{job}")
 
-    path = f"{PATH}/{filename}"
+for filename in directories:
+    if filename == "check_out":
+        continue
+    
+    path = f"{PATH}/{job}/{filename}"
     f = open(path, "r")
     file = [line for line in f]
     file_str = "".join(file)
@@ -91,7 +91,7 @@ print(f"# >> unaccounted-error: {len(runs['unaccounted'])} \t\t -> Please Invest
 
 print("\nGenerating survey files...")
 
-check_out_dir = f"{PATH}/../check_out_{job[10:]}"
+check_out_dir = f"{PATH}/{job}/check_out"
 if not os.path.exists(check_out_dir):
     os.makedirs(check_out_dir) # Create the directory
 
@@ -120,9 +120,9 @@ for key in summary.keys():
     
 out = summary["slurm_sync_failed"] + summary["failed_unknown"]
 out.sort()
-sum_out_file.write(f"\nfailed_to_rerun: {out}\n")
+sum_out_file.write(f"\noverall_failed: {out}\n")
     
 out_file.close()
 
 print(f"\nFiles were succesfully generated!")
-print(f"Find them at: {PATH[:-10]}/\n")
+print(f"Find them at: {PATH[:-10]}/slurm_out/{job}/check_out\n")

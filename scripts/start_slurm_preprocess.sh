@@ -1,7 +1,8 @@
 #!/bin/bash
 
 RUN_TYPE=$1
-JOB_ID=$2
+N_TOP_HVG=$2
+JOB_ID=$3
 
 cd /hpc/projects/group.califano/GLM/scGraphLLM/scripts
 
@@ -23,18 +24,18 @@ if [ $RUN_TYPE == "initial" ]; then
     FILE_COUNT=$(ls -1 "$DIRECTORY" | wc -l)
 
 elif [ $RUN_TYPE == "run_env_fail" ]; then
-    FILE_COUNT=$(wc -l < "$dir/check_out_$JOB_ID/env_fail.txt")
+    FILE_COUNT=$(wc -l < "$dir/slurm_out_$JOB_ID/check_out/env_fail.txt")
 
 elif [ $RUN_TYPE == "run_timed_out" ]; then
-    FILE_COUNT=$(wc -l < "$dir/check_out_$JOB_ID/timed_out.txt")
+    FILE_COUNT=$(wc -l < "$dir/slurm_out_$JOB_ID/check_out/timed_out.txt")
 
 elif [ $RUN_TYPE == "run_failed" ]; then
-    FILE_COUNT=$(wc -l < "$dir/check_out_$JOB_ID/failed.txt")
+    FILE_COUNT=$(wc -l < "$dir/slurm_out_$JOB_ID/check_out/failed.txt")
 
 elif [ $RUN_TYPE == "run_unaccounted" ]; then
-    FILE_COUNT=$(wc -l < "$dir/check_out_$JOB_ID/unaccounted.txt")
+    FILE_COUNT=$(wc -l < "$dir/slurm_out_$JOB_ID/check_out/unaccounted.txt")
 fi
 
 # Start the job and parallelize by the number of cell-types
-sbatch --array=1-${FILE_COUNT} /hpc/projects/group.califano/GLM/scGraphLLM/scripts/array_preprocess.sh "$DIRECTORY" "$RUN_TYPE" "$dir" "$JOB_ID"
+sbatch --array=1-${FILE_COUNT} /hpc/projects/group.califano/GLM/scGraphLLM/scripts/array_preprocess.sh "$DIRECTORY" "$RUN_TYPE" "$dir" "$N_TOP_HVG" "$JOB_ID"
 cd ..

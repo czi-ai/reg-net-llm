@@ -53,10 +53,10 @@ pilot_run_config = Config({
     "model_config": base_model_config,
     "transformer_config": base_transformer_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_train_cache", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_valSG_cache", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_valHOG_cache", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/valHG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],
@@ -89,6 +89,12 @@ pilot_run_config = Config({
     "wandb_user":"aqlab",
     "wandb_project":"scGraphLLM",
 })
+
+
+
+
+
+
 
 dataconfig_1024 =  Config({
         "train": Config({"cache_dir":"/pmglocal/vss2134/scGraphLLM/modeldata/pilotdata_cache/pilotdata_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
