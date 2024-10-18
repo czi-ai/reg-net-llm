@@ -44,7 +44,7 @@ class LitScGraphLLM(pl.LightningModule):
         rank_ids = batch.orig_rank_indices
         return node_embeddings, gene_ids, rank_ids, mask_locs
     
-    def _step(self, batch, batch_idx):
+    def _step(self, batch, batch_idx):        
         learned_cell_embedding,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
         predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
         predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)

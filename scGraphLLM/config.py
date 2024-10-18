@@ -53,10 +53,15 @@ pilot_run_config = Config({
     "model_config": base_model_config,
     "transformer_config": base_transformer_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        # "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024_filtered/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        # "val": [
+        #     Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024_filtered/valSG", "dataset_name":"valSG"}),
+        #     Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024_filtered/valHG", "dataset_name":"valHOG"})
+        #     ],
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/valHG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/valHOG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],

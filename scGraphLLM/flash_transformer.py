@@ -11,10 +11,8 @@ class FlashTRAN(LitScGraphLLM):
         super().__init__(config)
         tconfig = config.transformer_config
 
-        print(tconfig.input_dim)
-
         self.transformer_encoder1 = FlashTransformerEncoderLayer(tconfig.input_dim, tconfig.num_heads, tconfig.feed_dim, tconfig.dropout, tconfig.activation, tconfig.batch_first)
-        self.transformer_encoder2 = FlashTransformerEncoderLayer(tconfig.input_dim, tconfig.num_heads, tconfig.feed_dim, tconfig.dropout, tconfig.activation, tconfig.batch_first)
+        # self.transformer_encoder2 = FlashTransformerEncoderLayer(tconfig.input_dim, tconfig.num_heads, tconfig.feed_dim, tconfig.dropout, tconfig.activation, tconfig.batch_first)
 
         self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
                                                hidden_dim=config.model_config.gnn_config.hidden_dims[0])
@@ -43,8 +41,7 @@ class FlashTRAN(LitScGraphLLM):
         node_indices = torch.stack([orig_gene_id, orig_rank_id]).permute(1, 2, 0)
         node_indices = node_indices.type(torch.long)
 
-        # Shapes: node_indices: n x g x 2
-        node_embeddings = self.node_embedding(node_indices).flatten(2) ## maps n x g x embed_dim
+        node_embeddings = self.node_embedding(node_indices).flatten(2) # maps n x g x embed_dim
 
         # Positional encoding
         # if pos_emb:
@@ -52,7 +49,7 @@ class FlashTRAN(LitScGraphLLM):
         
         # take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.transformer_encoder1(node_embeddings) # no shape changes, just updates inputs.
-        node_embeddings = self.transformer_encoder2(node_embeddings) # no shape changes, just updates inputs.
+        # node_embeddings = self.transformer_encoder2(node_embeddings) # no shape changes, just updates inputs.
 
         return node_embeddings, orig_gene_id, orig_rank_id, mask_locs
 

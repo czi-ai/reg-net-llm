@@ -1,4 +1,3 @@
-#%%
 import torch
 from torch_geometric.data import Data, Dataset
 from torch.utils.data import Dataset as torchDataset
@@ -107,7 +106,6 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
                 data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
                 torch.save(data, outfile)
                 ncells += 1
-            exit()
 
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")

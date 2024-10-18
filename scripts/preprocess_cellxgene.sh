@@ -20,7 +20,7 @@ mamba activate scllm
 
 # Base paths
 data_base_path=$DIRECTORY
-out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data"
+out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/single_data"
 regulators_path="/hpc/projects/group.califano/GLM/data/regulators.txt"
 preprocess_path="/hpc/projects/group.califano/GLM/scGraphLLM/scGraphLLM/preprocess.py"
 aracne="/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release"
