@@ -67,7 +67,7 @@ pilot_run_config = Config({
             ],
         "run_test":False, 
         "num_workers": 8,
-        "batch_size": 64
+        "batch_size": 32
     }),
     "trainer_config":Config({
         "max_epochs" : 100,
