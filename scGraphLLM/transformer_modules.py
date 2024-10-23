@@ -515,6 +515,147 @@ class TorchMHAMasking(nn.Module):
         context = rearrange(context, 'b h s d -> b s (h d)', b=b_size, h=self.num_heads)
         return self.out_proj(context)
 
+def _transform_embedding_chunks(E, W, chunk_size, alpha_w):
+    """
+    Transform embedding with a square matrix W.
+    E shape: (batch, heads, seq_len, d_model)
+    W shape: (batch, heads, seq_len, seq_len)
+    """
+    W *= alpha_w # controls strength of transformation
+    b, h, s, d = E.shape
+    k = s // chunk_size # number of equal-sized chunks
+    last_chunk_size = s % chunk_size # size of last chunk
+    K = k + 1 if last_chunk_size > 0 else k # total number of chunks
+    WE_chunks = []
+    
+    for i in range(K):
+        chunk_len_row = chunk_size if i < k else last_chunk_size
+        WE_chunk = torch.zeros((b, h, chunk_len_row, d), device=E.device, dtype=E.dtype)
+        
+        for j in range(K):
+            chunk_len_col = chunk_size if j < k else last_chunk_size
+            row_ind = slice(i * chunk_size, i  * chunk_size + chunk_len_row) # sliced row index
+            col_ind = slice(j * chunk_size, j * chunk_size + chunk_len_col) # sliced column index
+            
+            # build a chunk of W as square matrix with shape (b, h, chunk_size, chunk_size)
+            W_ij = W[..., row_ind, col_ind]
+            
+            # build a chunk of E as matrix with shape (b, h, chunk_size, d_model)
+            E_j = E[..., col_ind, :] 
+            
+            # Compute linear transformation
+            WE_chunk += torch.matmul(W_ij, E_j)
+        
+        # collect all chunks
+        WE_chunks.append(WE_chunk)
+        
+    return WE_chunks
+
+def _attn_chunked(
+    q: torch.Tensor, 
+    k: torch.Tensor, 
+    v: torch.Tensor, 
+    w: torch.Tensor,
+    alpha_w: float, 
+    q_chunk_size: int, 
+    kv_chunk_size: int,
+):  
+    """
+    Compute attention with memory-efficient chunking.
+    q, k, v: (batch, heads, seq_len, d_model)
+    w: (batch, heads, seq_len, seq_len)
+    """
+    no_kv = k.shape[-2]
+    o = []
+    
+    # get a list of q chunks that are transformed by w
+    q_chunks = _transform_embedding_chunks(q, w, q_chunk_size, alpha_w)
+    for q_chunk in q_chunks:
+        maxes = []
+        weights = []
+        values = []
+        
+        # for each key-value pair, chunk k and v and compute lazy softmax with LogSumExp trick
+        for kv_s in range(0, no_kv, kv_chunk_size):
+            k_chunk = k[..., kv_s: kv_s + kv_chunk_size, :]
+            v_chunk = v[..., kv_s: kv_s + kv_chunk_size, :]
+            a = torch.einsum(
+                "...hqd,...hkd->...hqk", q_chunk, k_chunk,
+            ) 
+            max_a = torch.max(a, dim=-1, keepdim=True)[0]
+            exp_a = torch.exp(a - max_a)
+            exp_v = torch.einsum("...hvf,...hqv->...hqf", v_chunk, exp_a)
+ 
+            maxes.append(max_a.detach().squeeze(-1))
+            weights.append(torch.sum(exp_a, dim=-1))
+            values.append(exp_v)
+
+        chunk_max = torch.stack(maxes, dim=-3)
+        chunk_weights = torch.stack(weights, dim=-3)
+        chunk_values = torch.stack(values, dim=-4)
+
+        global_max = torch.max(chunk_max, dim=-3, keepdim=True)[0]
+        max_diffs = torch.exp(chunk_max - global_max)
+        chunk_values = chunk_values * max_diffs.unsqueeze(-1)
+        chunk_weights = chunk_weights * max_diffs
+
+        all_values = torch.sum(chunk_values, dim=-4)
+        all_weights = torch.sum(chunk_weights.unsqueeze(-1), dim=-4)
+        q_chunk_out = all_values / all_weights
+        o.append(q_chunk_out)
+
+    return torch.cat(o, dim=2)
+
+# low memory attention with query embedding diffused by graph kernel
+class TorchMHADiffusionLM(nn.Module):
+
+    def __init__(self, d_model, num_heads, bias=True, batch_first=True, attention_dropout=0.0,
+                 use_rotary_emb=False, mask_weight=1.0, device=None, dtype=None) -> None:
+        assert batch_first
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super(CustomTorchMHASelf, self).__init__()
+        self.d_model = d_model
+        self.dropout_p = attention_dropout
+
+        self.num_heads = num_heads
+        assert self.d_model % num_heads == 0, "self.kdim must be divisible by num_heads"
+        self.head_dim = self.d_model // num_heads
+        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
+        self.scaling = self.head_dim ** -0.5
+
+        self.use_rotary_emb = use_rotary_emb
+        if use_rotary_emb:
+            self.rot_emb = RotaryEmbeddingESM(self.head_dim)
+
+        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
+        self.mask_weight = mask_weight
+
+    def forward(self, q, k, v, key_padding_mask=None, attention_mask=None):
+        """
+        x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
+        key_padding_mask: bool tensor of shape (batch, seqlen)
+        attention_mask: tensor of shape (1, num_heads, seqlen, seqlen)
+        """
+        b_size, _, s_size, _ = q.shape
+
+        if self.use_rotary_emb:
+            q, k = self.rot_emb(q, k, seq_dimension=-2)
+
+        if key_padding_mask is not None:
+            key_padding_mask = rearrange(~key_padding_mask, 'b s -> b 1 1 s')
+
+        # here attention mask is the graph kernel
+        if attention_mask is not None:
+            attention_mask = torch.broadcast_to(attention_mask, (b_size, self.num_heads, s_size, s_size))
+            attn_output_weights = _attn_chunked(q, k, v, attention_mask, alpha_w=self.mask_weight) * self.scaling
+        attn_output_weights = F.softmax(attn_output_weights, dim=-1)
+        if self.dropout_p > 0.0:
+            attn_output_weights = F.dropout(attn_output_weights, p=self.dropout_p, training=self.training)
+        context = torch.matmul(attn_output_weights, v)
+        context = rearrange(context, 'b h s d -> b s (h d)', b=b_size, h=self.num_heads)
+        return self.out_proj(context)
+
+
 class FlashTransformerEncoderLayer(nn.Module):
     """ 
     We assume transformer encoder layer is for the same sequence
@@ -552,9 +693,9 @@ class FlashTransformerEncoderLayer(nn.Module):
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
             if use_attn_mask:
-                self.self_attention = TorchMHAMasking(
+                self.self_attention = TorchMHADiffusionLM(
                     d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                    attention_dropout=dropout, mask_mode='mask', mask_weight=1e-2, use_rotary_emb=use_rotary_emb
+                    attention_dropout=dropout, mask_weight=1e-2, use_rotary_emb=use_rotary_emb
                 )
     
         ## Wqkv:
