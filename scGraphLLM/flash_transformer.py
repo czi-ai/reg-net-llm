@@ -23,28 +23,22 @@ class FlashTRAN(LitScGraphLLM):
         self.loss_config = config.loss_config
 
     def forward(self, batch):
-        ## adding in more explicit annotations of shapes and workflow
-        ## some definitions: 
-        ## n = the number of cells in a batch; 
-        ## G = the total number of unique genes across the whole dataset; g = the number of unique genes in a batch ; g_dim = the dimension of the gene embeddings;
-        ## R= the total number of unique  *expressed genes* across the whole dataset; r_dim = the dimension of the rank embeddings; 
-        ## L_dim = the dimension of the learned cell embeddings(r_dim + g_dim);
-        ## e= the number of edges in a batch
-
+        
         orig_gene_id = batch["orig_gene_id"]
         orig_rank_id = batch["orig_rank_indices"]
         mask_locs = [batch["gene_mask"], batch["rank_mask"], batch["both_mask"]]
-
-        node_indices = torch.stack([orig_gene_id, orig_rank_id]).permute(1, 2, 0)
-        node_indices = node_indices.type(torch.long)
-
-        ## Shapes: node_indices: n x g x 2
-        node_embeddings = self.node_embedding(node_indices).flatten(2) ## maps n x g x embed_dim
         
-        ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
-        node_embeddings = self.transformer_encoder(node_embeddings) ## no shape changes, just updates inputs.
+        node_embedding = self.node_embedding(orig_gene_id)
+        rank_embedding = self.node_embedding(orig_rank_id)
+        
+        combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
+        
+        
+        # take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
+        combined_embedding = self.transformer_encoder(combined_embedding) # no shape changes, just updates inputs.
+        # node_embeddings = self.transformer_encoder2(node_embeddings) # no shape changes, just updates inputs.
 
-        return node_embeddings, orig_gene_id, orig_rank_id, mask_locs
+        return combined_embedding, orig_gene_id, orig_rank_id, mask_locs
 
 
 class GraphTransformer(LitScGraphLLM):
@@ -70,14 +64,6 @@ class GraphTransformer(LitScGraphLLM):
         self.use_PE = tconfig.use_pe
 
     def forward(self, batch):
-        ## adding in more explicit annotations of shapes and workflow
-        ## some definitions: 
-        ## n = the number of cells in a batch; 
-        ## G = the total number of unique genes across the whole dataset; g = the number of unique genes in a batch ; g_dim = the dimension of the gene embeddings;
-        ## R= the total number of unique  *expressed genes* across the whole dataset; r_dim = the dimension of the rank embeddings; 
-        ## L_dim = the dimension of the learned cell embeddings(r_dim + g_dim);
-        ## e= the number of edges in a batch
-
         orig_gene_id = batch.orig_gene_id
         orig_rank_id = batch.orig_rank_indices
         pe = batch.pe if self.use_PE else None
@@ -99,12 +85,8 @@ class GraphTransformer(LitScGraphLLM):
             attn_mask[:, half_heads:, :, :] = L.unsqueeze(0).expand(half_heads, -1, -1)
             
         mask_locs = [batch.gene_mask, batch.rank_mask, batch.both_mask]
-        node_indices = torch.stack([orig_gene_id, orig_rank_id]).permute(1, 2, 0)
-        node_indices = node_indices.type(torch.long)
-
-        ## Shapes: node_indices: n x g x 2
-        node_embeddings = self.node_embedding(node_indices).flatten(2) ## maps n x g x embed_dim     
-        ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
-        node_embeddings = self.transformer_encoder(node_embeddings, p=pe, attn_mask=attn_mask)
-
-        return node_embeddings, orig_gene_id, orig_rank_id, mask_locs
+        node_embedding = self.node_embedding(orig_gene_id)
+        rank_embedding = self.node_embedding(orig_rank_id)
+        
+        combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
+        return combined_embedding, orig_gene_id, orig_rank_id, mask_locs

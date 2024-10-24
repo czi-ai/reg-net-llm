@@ -1,7 +1,3 @@
-#%%
-### This script is used to train model via pytorch lightning logging to wandb 
-### It must be called from the modelling repo, which is set in the config  
-
 from models import LitScGraphLLM
 from data import *
 from pathlib import Path
@@ -29,9 +25,9 @@ def generate_random_string(length):
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
-filesystem = os.environ["WHEREAMI"]
+# filesystem = os.environ["WHEREAMI"]
 user = os.environ["USER"]
-filesystem = f"/manitou/pmg/users/{user}"
+filesystem = f"/hpc/mydata/{user}"
 ## ^This makes it easier to switch between different machines;  WHEREAMI is set in the .bashrc file and is the location of where we store repos; 
 ## on manitou its /manitou/pmg/users/vss2134, exxmini its /data/vss2134, aws its /data and so on 
 
@@ -127,7 +123,7 @@ def main(args):
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
-    outdir = Path(f"/pmglocal/{user}/model_out/")
+    outdir = Path(f"/hpc/mydata/{user}/GLM/model_out/")
     outdir.mkdir(exist_ok=True)
     trainer_conf = mconfig['trainer_config']
     copy_checkpoints = True

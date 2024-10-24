@@ -32,7 +32,6 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
-from fa2_custom_mask import flash_attention_custom_mask
 
 
 def rotate_half(x):
@@ -215,13 +214,10 @@ class FusedWQKVwithPE(nn.Module):
         self.use_flash_attn = use_flash_attn
         if init_scheme == "xavier_uniform":
             nn.init.xavier_uniform_(self.Wqkv.weight)
-            nn.init.xavier_uniform_(self.Wp.weight)
         elif init_scheme == "xavier_normal":
             nn.init.xavier_normal_(self.Wqkv.weight)
-            nn.init.xavier_normal_(self.Wp.weight)
         elif init_scheme == "xn_dim":
             nn.init.xavier_normal_(self.Wqkv.weight, gain = 2/math.sqrt(d_model))
-            nn.init.xavier_normal_(self.Wp.weight, gain = 2/math.sqrt(d_emb))
     def forward(self, x, p):
         if self.Wp is None:
             self.Wp = nn.Linear(p.size(-1), x.size(-1), bias=False).to(p.device)
@@ -420,47 +416,6 @@ class CustomTorchMHASelf(nn.Module):
                             b=b_size, h=self.num_heads)
         return self.out_proj(context)
 
-# Allows custom masking at a batch level. Mask shape is (1, H, L, L) where H is num heads, L is seq length
-class FlashMHACustomMasking(nn.Module):
-    def __init__(self, d_model, num_heads, batch_first, attention_dropout, bias=True, device = None, dtype = None) -> None:
-        super(FlashMHACustomMasking, self).__init__()
-        assert batch_first
-        factory_kwargs = {'device': device, 'dtype': dtype}
-        self.d_model = d_model
-        self.dropout_p = attention_dropout
-
-        self.num_heads = num_heads
-        assert self.d_model % num_heads == 0, f"emb {self.d_model} must be divisible by num_heads {num_heads}"
-        self.head_dim = self.d_model // num_heads
-        # assert self.head_dim in [16, 32, 64, 128], "Only support head_dim == 16, 32, 64, or 128"
-        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
-        self.scaling = self.head_dim ** -0.5        
-
-        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
-
-    def forward(self, q,k,v, attention_mask=None):
-        """
-        q, k, v: (batch, heads, seqlen, model dim)
-        attention mask: (1, heads, seqlen, seqlen)
-        package used: https://github.com/alexzhang13/flashattention2-custom-mask/blob/main/fa2_custom_mask/fa2_custom_mask.py
-        ONLY COMPATIABLE WITH AMPERE DEVICE AND UP. V100 DOES NOT WORK.
-        """
-        dtype = q.dtype
-        q = rearrange(q.type(dtype), 'b s h d -> b h s d', h=self.num_heads)
-        k = rearrange(k.type(dtype), 'b s h d -> b h s d', h=self.num_heads)
-        v = rearrange(k.type(dtype), 'b s h d -> b h s d', h=self.num_heads)
-        batch_size, seq_len, _, _ = q.shape
-        attention_mask = torch.broadcast_to(attention_mask, (batch_size, self.num_heads, seq_len, seq_len))
-        context = flash_attention_custom_mask(
-            q,
-            k,
-            v,
-            mask=attention_mask, # (B, H, L, L)å
-            sm_scale=self.scaling
-        )
-        context = rearrange(context, '(b s) h d -> b s (h d)', b=q.shape[0], h=self.num_heads)
-        return self.out_proj(context)
-
 # Torch version of the above
 class TorchMHAMasking(nn.Module):
 
@@ -551,6 +506,8 @@ def _transform_embedding_chunks(E, W, chunk_size, alpha_w):
         
     return WE_chunks
 
+
+# Modified from: https://github.com/aqlaboratory/openfold/blob/6f63267114435f94ac0604b6d89e82ef45d94484/openfold/model/primitives.py#L705
 def _attn_chunked(
     q: torch.Tensor, 
     k: torch.Tensor, 
@@ -575,7 +532,7 @@ def _attn_chunked(
         weights = []
         values = []
         
-        # for each key-value pair, chunk k and v and compute lazy softmax with LogSumExp trick
+        # for each key-value pair, chunk k and v and compute lazy softmax with LogSumExp trick on each chunk
         for kv_s in range(0, no_kv, kv_chunk_size):
             k_chunk = k[..., kv_s: kv_s + kv_chunk_size, :]
             v_chunk = v[..., kv_s: kv_s + kv_chunk_size, :]
@@ -684,13 +641,10 @@ class FlashTransformerEncoderLayer(nn.Module):
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, 
                 attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
-            if use_attn_mask:
-                self.self_attention = FlashMHACustomMasking(
-                    d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout
-                )
         else:
             self.self_attention = CustomTorchMHASelf(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
+                d_model=d_model, num_heads = nhead, batch_first = batch_first, 
+                attention_dropout=dropout, use_rotary_emb=use_rotary_emb
             )
             if use_attn_mask:
                 self.self_attention = TorchMHADiffusionLM(
@@ -701,9 +655,11 @@ class FlashTransformerEncoderLayer(nn.Module):
         ## Wqkv:
         self.use_PE = use_PE
         if use_PE:
-            self.wqkv = FusedWQKVwithPE(d_model,nhead,use_flash_attn, lora_qv_rank = lora_qv_rank, init_scheme = init_scheme, bias=True)
+            self.wqkv = FusedWQKVwithPE(d_model,nhead,use_flash_attn, lora_qv_rank = lora_qv_rank, 
+                                        init_scheme = init_scheme, bias=True)
         else:
-            self.wqkv = FusedWQKV(d_model,nhead,use_flash_attn, lora_qv_rank = lora_qv_rank, init_scheme = init_scheme, bias=True)
+            self.wqkv = FusedWQKV(d_model,nhead,use_flash_attn, 
+                                  lora_qv_rank = lora_qv_rank, init_scheme = init_scheme, bias=True)
         ## feedforward projection
         if activation.startswith('SwiGLU'):
             self.ff = eval(activation)(d_model, dim_feedforward)
@@ -717,6 +673,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         self.norm_first = norm_first
         self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
+        
     def forward(self, qkv, p=None, key_padding_mask=None, attn_mask=None):
         x = qkv
         if self.use_PE:
