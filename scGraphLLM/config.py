@@ -44,25 +44,27 @@ base_transformer_config = Config({
     "out_dim": base_gnn_config.out_dim,
     "activation": "gelu",
     "dropout": 0.1,
-    "batch_first": True
+    "batch_first": True,
+    "use_pe": False,
+    "use_attn_mask": False,
+    "use_flash_attn": True
 })
 
 
 graph_transformer_config = Config({
     "input_dim":  2*base_model_config.node_embedding_dim,
-    "feed_dim": 512,
-    "hidden_dims": [512, 512, 512],
-    "conv_dim": 512, 
-    "num_heads": 8,
+    "feed_dim": 256,
+    "hidden_dims": [256, 256, 256],
+    "conv_dim": 256, 
+    "num_heads": 2,
     "out_dim": base_gnn_config.out_dim,
     "activation": "gelu",
     "dropout": 0.1,
     "batch_first": True,
-    "use_pe": False,
+    "use_pe": True,
     "use_attn_mask": False,
-    "use_flash_attn": False
+    "use_flash_attn": True
 })
-
 
 pilot_run_config = Config({
     "model": flash_transformer.FlashTRAN, # models.LitScGraphLLM,#
@@ -77,7 +79,7 @@ pilot_run_config = Config({
         "test": [
             ],
         "run_test":False, 
-        "num_workers": 8,
+        "num_workers": 1,
         "batch_size": 32
     }),
     "trainer_config":Config({
@@ -105,6 +107,53 @@ pilot_run_config = Config({
     "wandb_user":"mingxuan-zhang",
     "wandb_project":"scGraphLLM",
 })
+
+pilot_graph_pe_run_config = Config({
+    "model": flash_transformer.GraphTransformer, # models.LitScGraphLLM,#
+    "model_config": base_model_config,
+    "transformer_config": graph_transformer_config,
+    "data_config":Config({
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/valHOG", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
+        "num_workers": 1,
+        "batch_size": 32
+    }),
+    "trainer_config":Config({
+        "max_epochs" : 100,
+        "accelerator" : "gpu",
+        "max_time": "01:00:00:00",
+        "devices" : 1,
+        "precision":"bf16",
+        "num_sanity_val_steps" : 0,
+        "log_every_n_steps" : 1,
+        "val_check_interval":0.1
+
+    }),
+    "loss_config":Config({
+        "loss":"mlm"
+    }),
+    "optim_config":Config({
+        "optimizer": torch.optim.Adam,
+        "args":{
+            "lr": 0.0001,
+            "betas": [0.9, 0.999]
+         }
+    }),
+    "repo_name":"scGraphLLM",
+    "wandb_user":"mingxuan-zhang",
+    "wandb_project":"scGraphLLM",
+})
+
+
+
+
+
 
 
 dataconfig_1024 =  Config({

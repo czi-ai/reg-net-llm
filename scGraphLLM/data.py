@@ -16,7 +16,7 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle 
-from torch_geometric.utils import get_laplacian, to_dense_adj
+from torch_geometric.utils import get_laplacian, to_dense_adj, to_torch_coo_tensor, scatter, remove_self_loops
 
 rng = default_rng(42)
 def save(obj, file):
@@ -99,33 +99,69 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdir_info : List[List[str]
     return 
 
 ############# Graph embeddings ######################
+def eigenval_bound_condition(tensor):
+    assert torch.all(tensor > -1), "Contain eigenvalues less then -1"
+    assert torch.all(tensor < 1), "Contain eigenvalues greater than 1"
 
 # obtain laplacian of a graph from edge index
 def laplacian_normalized(edge_index, edge_weights, num_nodes):
     laplacian_ind, laplacian_weight = get_laplacian(edge_index, edge_weight=edge_weights, 
                                                  normalization='sym', num_nodes=num_nodes)
-    L = to_dense_adj(laplacian_ind, edge_attr=laplacian_weight)
+    L = to_dense_adj(laplacian_ind, edge_attr=laplacian_weight).squeeze()
     return L
 
-# spectral positional embedding
-def spectral_PE(edge_index, edge_weights, num_nodes):
-    L = laplacian_normalized(edge_index, edge_weights, num_nodes)
-    eigenvalues, eigenvectors = torch.linalg.eigh(L)
-    # Detect zero eigenvalues (within a tolerance)
-    zero_eigenvalue_mask = torch.isclose(eigenvalues, torch.zeros_like(eigenvalues), atol=1e-8)
-    num_zero_eigenvalues = zero_eigenvalue_mask.sum().item()
-    # Exclude the zero eigenvectors
-    pe = eigenvectors[:, ~zero_eigenvalue_mask]
-    N, k = pe.shape
-    assert k == num_nodes - num_zero_eigenvalues, f"Expected {num_nodes - num_zero_eigenvalues} non-zero eigenvectors, got {k}"
-    # Normalize embeddings
-    pe = (pe - pe.mean(dim=0)) / (pe.std(dim=0) + 1e-8)
-    return pe
+def spectral_PE_chebyshev(edge_index, num_nodes, k=128, edge_weight=None):
+    """
+    Compute spectral positional embeddings using Chebyshev polynomials from graphs.
+    edge_index: edge_index of the input graph
+    num_nodes: number of nodes in the graph
+    k: order of Chebyshev polynomials
+    edg_weight: edge weights of the input graph(MUST BE POSITIVE)
+    """
+    # Get normalized adj
+    edge_index, edge_weight = remove_self_loops(edge_index, edge_weight) 
+    row, col = edge_index[0], edge_index[1]
+    deg = scatter(edge_weight, row, 0, dim_size=num_nodes, reduce='sum') # D
+    deg = deg.clamp(min=1e-8)
+    assert not torch.isnan(edge_weight).any(), "NaN values in edge_weight"
+    assert not torch.isnan(deg).any(), "NaN values in degree"
+    deg_inv_sqrt = deg.pow_(-0.5)
+    deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0)
+    deg_inv_sqrt.masked_fill_(deg_inv_sqrt.isnan(), 0)
+    edge_weight = deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col] # D^(-1/2) * A * D^(-1/2)
+    assert not torch.isnan(edge_weight).any(), "NaN values in edge_weight after normalization"
+    L_rescaled = torch.sparse_coo_tensor(edge_index, -edge_weight, (num_nodes, num_nodes))
+    
+    # Initialize Chebyshev polynomials
+    x0 = torch.ones(num_nodes, 1, dtype=edge_weight.dtype, device=edge_index.device)
+    x_list = [x0]
+    
+    # T_1 = L_rescaled * x0
+    x1 = torch.sparse.mm(L_rescaled, x0)
+    x_list.append(x1)
+    
+    # Chebyshev polynomials up to order k
+    for _ in range(2, k + 1):
+        x2 = 2 * torch.sparse.mm(L_rescaled, x1) - x0
+        assert torch.norm(x2, p=2) > 0, "Zero vector encountered"
+        x2 = x2 / torch.norm(x2, p=2)
+        x_list.append(x2)
+        x0, x1 = x1, x2
+    pe = torch.cat(x_list, dim=1)  
+    pe = pe[:, 1:] # first column is all 1
+    assert not torch.isnan(pe).any(), "NaN values occurred in positional embedding"
+    pe_min = pe.min(dim=0, keepdim=True)[0]
+    pe_max = pe.max(dim=0, keepdim=True)[0]
+    pe_standardized = (pe - pe_min) / (pe_max - pe_min + 1e-8)
+    
+    return pe_standardized
 
 # Graph diffusion kernel
 def graph_diffusion_kernel_eig(edge_index, edge_weights, num_nodes, diffusion_rate):
     L = laplacian_normalized(edge_index, edge_weights, num_nodes)
     sigma, U = torch.linalg.eigh(L) # L = UAU^T
+    U = U.squeeze(0)
+    sigma = sigma.squeeze()
     diag_vals = torch.exp(-diffusion_rate * sigma)
     K = U @ torch.diag(diag_vals) @ U.T
     return K
@@ -167,8 +203,8 @@ class AracneGraphWithRanksDataset(Dataset):
     
     def get(self, idx, mask_fraction = 0.05):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
-        data_dict = load(self.cached_files[idx])
-        data = Data(**data_dict)
+        data = torch.load(self.cached_files[idx], weights_only=False)
+        #data = Data(**data_dict)
 
         node_indices = data.x
         # need the clones otherwise the original indices will be modified
@@ -182,15 +218,6 @@ class AracneGraphWithRanksDataset(Dataset):
         node_indices[rank_mask, 1] = MASK_IDX
         node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
         
-        # Compute graph diffusion kernel matrix
-        diffusion_kernel = graph_diffusion_kernel_eig(data.edge_index, data.edge_weight, node_indices.shape[0], diffusion_rate=0.1)
-        
-        # Compute spectral positional embedding
-        spectral_pe = spectral_PE(data.edge_index, data.edge_weight, node_indices.shape[0], k=10)
-        
-        # Compute graph laplacian
-        L = laplacian_normalized(data.edge_index, data.edge_weight, node_indices.shape[0])
-        
         return Data(
             x=node_indices, 
             edge_index=data.edge_index, 
@@ -201,9 +228,6 @@ class AracneGraphWithRanksDataset(Dataset):
             orig_gene_id=orig_gene_indices, 
             orig_rank_indices=orig_rank_indices, 
             dataset_name=self.dataset_name,
-            diffusion_kernel=diffusion_kernel,
-            pe=spectral_pe,
-            laplacian=L
         )
 
 class LitDataModule(pl.LightningDataModule):
@@ -242,7 +266,7 @@ class TransformerDataset(torchDataset):
 
     def __getitem__(self, idx, mask_fraction = 0.05):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
-        data = torch.load(self.cached_files[idx])
+        data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
@@ -250,6 +274,8 @@ class TransformerDataset(torchDataset):
         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        
+        
 
         return {
                 "orig_gene_id" : orig_gene_indices, 
@@ -259,6 +285,8 @@ class TransformerDataset(torchDataset):
                 "both_mask" : both_mask, 
                 "dataset_name" : self.dataset_name
                 }
+
+
 
 class TransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
@@ -276,6 +304,76 @@ class TransformerDataModule(pl.LightningDataModule):
         return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
     def test_dataloader(self):
         return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
+
+class GraphTransformerDataset(torchDataset):
+    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
+        """
+        Args:
+            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
+            global_gene_to_node_file (str): path to file that maps gene name to integer index 
+            cache_dir (str): path to directory where the processed data will be stored
+        """   
+        print(cache_dir)     
+        self.debug = debug
+        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.dataset_name = dataset_name
+
+    def __len__(self):
+        if self.debug:
+            return 1000
+        print(len(self.cached_files))
+        return len(self.cached_files)
+
+    def __getitem__(self, idx, mask_fraction = 0.05):
+        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
+        data = torch.load(self.cached_files[idx], weights_only=False)
+        node_indices = data.x
+        orig_gene_indices = node_indices[:, 0].clone()
+        orig_rank_indices = node_indices[:, 1].clone()
+        ## for each mask type, create boolean mask of the same shape as node_indices
+        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        
+        # graph features
+        spectral_pe = spectral_PE_chebyshev(edge_index=data.edge_index, num_nodes=node_indices.shape[0], 
+                                            k=64, edge_weight=data.edge_weight)
+        return {
+                "orig_gene_id" : orig_gene_indices, 
+                "orig_rank_indices" : orig_rank_indices, 
+                "gene_mask" : gene_mask, 
+                "rank_mask" : rank_mask, 
+                "both_mask" : both_mask,
+                "spectral_pe": spectral_pe,
+                "dataset_name" : self.dataset_name
+                }
+
+class GraphTransformerDataModule(pl.LightningDataModule):
+    def __init__(self, data_config, collate_fn=None):
+        super().__init__()
+        self.data_config = data_config
+        self.collate_fn = collate_fn
+        self.train_ds = GraphTransformerDataset(**data_config.train)
+        self.val_ds = [GraphTransformerDataset(**val) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [GraphTransformerDataset(**test) for test in data_config.test]
+    
+    def train_dataloader(self):
+        return torchDataLoader(self.train_ds, batch_size = self.data_config.batch_size, 
+                               num_workers = self.data_config.num_workers, collate_fn=self.collate_fn)
+    def val_dataloader(self):
+        return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, 
+                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
+                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

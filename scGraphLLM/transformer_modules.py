@@ -210,6 +210,7 @@ class FusedWQKVwithPE(nn.Module):
         else:
             self.Wqkv = nn.Linear(d_model, 3 * d_model, bias=bias, **factory_kwargs)
         self.Wp = None  # Initialize Wp as None
+        self.bias = bias
         self.nhead = nhead
         self.use_flash_attn = use_flash_attn
         if init_scheme == "xavier_uniform":
@@ -220,7 +221,7 @@ class FusedWQKVwithPE(nn.Module):
             nn.init.xavier_normal_(self.Wqkv.weight, gain = 2/math.sqrt(d_model))
     def forward(self, x, p):
         if self.Wp is None:
-            self.Wp = nn.Linear(p.size(-1), x.size(-1), bias=False).to(p.device)
+            self.Wp = nn.Linear(p.size(-1), x.size(-1), bias=self.bias).to(x.device)
         p = self.Wp(p)
         h = x + p
         qkv = self.Wqkv(h)

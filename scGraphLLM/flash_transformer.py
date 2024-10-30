@@ -10,12 +10,11 @@ class FlashTRAN(LitScGraphLLM):
         tconfig = config.transformer_config
 
         self.transformer_encoder = FlashTransformerEncoderLayer(tconfig.input_dim, tconfig.num_heads, tconfig.feed_dim, tconfig.dropout, tconfig.activation, tconfig.batch_first)
-
-        # YOU LEFT OFF HERE - CONFIG VARIABLES MIGHT BE OFF
-        # YOU PROBABLY HAVE TO REPLACE "model_config" BELOW WITH "gnn_config"!!!!
-        self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
-                                               hidden_dim=config.model_config.gnn_config.hidden_dims[0])
-        self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
+        #self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
+                                               #hidden_dim=config.model_config.gnn_config.hidden_dims[0])
+        self.node_embedding_gene_id = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
+                                                 config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
+        self.node_embedding_rank = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
                                                  config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
         self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
@@ -28,11 +27,10 @@ class FlashTRAN(LitScGraphLLM):
         orig_rank_id = batch["orig_rank_indices"]
         mask_locs = [batch["gene_mask"], batch["rank_mask"], batch["both_mask"]]
         
-        node_embedding = self.node_embedding(orig_gene_id)
+        node_embedding = self.node_embedding(orig_gene_id) 
         rank_embedding = self.node_embedding(orig_rank_id)
         
         combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
-        
         
         # take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         combined_embedding = self.transformer_encoder(combined_embedding) # no shape changes, just updates inputs.
@@ -44,7 +42,7 @@ class FlashTRAN(LitScGraphLLM):
 class GraphTransformer(LitScGraphLLM):
     def __init__(self, config):
         super().__init__(config)
-        tconfig = config.graph_transformer_config
+        tconfig = config.transformer_config
         self.transformer_encoder = FlashTransformerEncoderLayer(tconfig.input_dim, 
                                                                 tconfig.num_heads, 
                                                                 tconfig.feed_dim, 
@@ -64,17 +62,19 @@ class GraphTransformer(LitScGraphLLM):
         self.use_PE = tconfig.use_pe
 
     def forward(self, batch):
-        orig_gene_id = batch.orig_gene_id
-        orig_rank_id = batch.orig_rank_indices
-        pe = batch.pe if self.use_PE else None
-        K = batch.diffusion_kernel if self.use_attn_mask else None
-        L = batch.laplacian if self.use_attn_mask else None
+        orig_gene_id = batch["orig_gene_id"]
+        orig_rank_id = batch["orig_rank_indices"]
+        pe =batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
+        #K = batch.diffusion_kernel if self.use_attn_mask else None
+        #L = batch.laplacian if self.use_attn_mask else None
         
         # shape assertions for graph features
         if self.use_PE:
-            assert pe.shape[0] == batch.x.shape[0], f"Expect number of token to be {batch.x.shape[0]}, Got {pe.shape[0]}"
+            assert pe.shape[1] == orig_gene_id.shape[1], f"Expect seqlen to be {orig_gene_id.shape[1]}, Got {pe.shape[1]}"
         
         # stack different masks for different heads
+        
+        """
         if self.use_attn_mask:
             assert K.shape == (batch.x.shape[0], batch.x.shape[0]), f"Expect shape of K to be {(batch.x.shape[0], batch.x.shape[0])}, Got {K.shape}"
             assert L.shape == (batch.x.shape[0], batch.x.shape[0]), f"Expect shape of L to be {(batch.x.shape[0], batch.x.shape[0])}, Got {L.shape}"
@@ -83,10 +83,13 @@ class GraphTransformer(LitScGraphLLM):
             attn_mask = torch.zeros((1, num_heads, K.shape[0], K.shape[1]), device=K.device)
             attn_mask[:, :half_heads, :, :] = K.unsqueeze(0).expand(half_heads, -1, -1)
             attn_mask[:, half_heads:, :, :] = L.unsqueeze(0).expand(half_heads, -1, -1)
+        """
             
-        mask_locs = [batch.gene_mask, batch.rank_mask, batch.both_mask]
-        node_embedding = self.node_embedding(orig_gene_id)
+        mask_locs = [batch["gene_mask"], batch["rank_mask"], batch["both_mask"]]
+        
+        node_embedding = self.node_embedding(orig_gene_id) 
         rank_embedding = self.node_embedding(orig_rank_id)
         
         combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
+        combined_embedding = self.transformer_encoder(combined_embedding, p=pe)  
         return combined_embedding, orig_gene_id, orig_rank_id, mask_locs

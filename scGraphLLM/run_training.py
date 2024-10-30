@@ -96,12 +96,13 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
-    lit_data_module = LitDataModule(mconfig.data_config)
-    train_dl = lit_data_module.train_dataloader()
-    val_dl = lit_data_module.val_dataloader()
-
+    #lit_data_module = LitDataModule(mconfig.data_config)
+    #train_dl = lit_data_module.train_dataloader()
+    #val_dl = lit_data_module.val_dataloader()
+    
     def collate_fn(batch):
-        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
+        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
+                "rank_mask" : [], "both_mask" : [], "spectral_pe" : [], "dataset_name" : [] }
         
         # Make a dictionary of lists from the list of dictionaries
         for b in batch:
@@ -115,15 +116,20 @@ def main(args):
 
         return data
 
-    transformer_data_module = TransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
+    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
+    
+    #transformer_data_module = LitDataModule(mconfig.data_config)
+    #train_transformer_dl = transformer_data_module.train_dataloader()
+    #val_transformer_dl = transformer_data_module.val_dataloader()
+    
     print("data loaded")
 
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
-    outdir = Path(f"/hpc/mydata/{user}/GLM/model_out/")
+    outdir = Path(f"/hpc/mydata/{user}")
     outdir.mkdir(exist_ok=True)
     trainer_conf = mconfig['trainer_config']
     copy_checkpoints = True
