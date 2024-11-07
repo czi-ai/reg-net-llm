@@ -16,6 +16,7 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle 
+from torch.nn.utils.rnn import pad_sequence
 from torch_geometric.utils import get_laplacian, to_dense_adj, to_torch_coo_tensor, scatter, remove_self_loops
 
 rng = default_rng(42)
@@ -77,14 +78,17 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdir_info : List[List[str]
                 network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
             ]
 
-            local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+            #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+            
             ## each cell graph is disjoint from each other interms of the relative position of nodes and edges
             ## so edge index is local to each graph for each cell. 
             ## cell.index defines the order of the nodes in the graph
+            
+            ## REPLACED THIS TO USE GLOBAL INDEX IN THE EDGE LIST
             with warnings.catch_warnings(action="ignore") : ## suppress annoying pandas warnings
                 edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
-                edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
-                edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
+                edges['regulator.values'] = edges['regulator.values'].map(global_gene_to_node)
+                edges['target.values'] = edges['target.values'].map(global_gene_to_node)
 
             edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
             edge_weights = torch.tensor(np.array(edges['mi.values']))
@@ -98,30 +102,28 @@ def transform_and_cache_aracane_graph_ranks( aracne_outdir_info : List[List[str]
     print(f"loaded {ncells} cells")
     return 
 
-############# Graph embeddings ######################
-def eigenval_bound_condition(tensor):
-    assert torch.all(tensor > -1), "Contain eigenvalues less then -1"
-    assert torch.all(tensor < 1), "Contain eigenvalues greater than 1"
+############# Graph features ######################
 
-# obtain laplacian of a graph from edge index
-def laplacian_normalized(edge_index, edge_weights, num_nodes):
-    laplacian_ind, laplacian_weight = get_laplacian(edge_index, edge_weight=edge_weights, 
-                                                 normalization='sym', num_nodes=num_nodes)
-    L = to_dense_adj(laplacian_ind, edge_attr=laplacian_weight).squeeze()
-    return L
+def _identity(x):
+    return x
 
-def spectral_PE_chebyshev(edge_index, num_nodes, k=128, edge_weight=None):
+def _exp_kernel(x, beta):
+    return torch.exp(-beta * (x + 1))
+
+def _cosine_kernel(x):
+    PI = torch.acos(torch.Tensor([-1]))
+    return torch.cos(PI * x / 2)
+
+def _rescaled_L(edge_index, num_nodes, edge_weight=None):
     """
-    Compute spectral positional embeddings using Chebyshev polynomials from graphs.
-    edge_index: edge_index of the input graph
-    num_nodes: number of nodes in the graph
-    k: order of Chebyshev polynomials
-    edg_weight: edge weights of the input graph(MUST BE POSITIVE)
+    Rescale the Laplacian matrix to have eigenvalues in [-1, 1]
+    Math: L_rescaled = -D^(-1/2) * A * D^(-1/2), assume lambda_max = 2
     """
-    # Get normalized adj
     edge_index, edge_weight = remove_self_loops(edge_index, edge_weight) 
+    if edge_weight is None:
+        edge_weight = torch.ones(edge_index.size(1), dtype=torch.float32, device=edge_index.device)
     row, col = edge_index[0], edge_index[1]
-    deg = scatter(edge_weight, row, 0, dim_size=num_nodes, reduce='sum') # D
+    deg = scatter(edge_weight, row, 0, dim_size=num_nodes, reduce='sum')
     deg = deg.clamp(min=1e-8)
     assert not torch.isnan(edge_weight).any(), "NaN values in edge_weight"
     assert not torch.isnan(deg).any(), "NaN values in degree"
@@ -131,6 +133,116 @@ def spectral_PE_chebyshev(edge_index, num_nodes, k=128, edge_weight=None):
     edge_weight = deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col] # D^(-1/2) * A * D^(-1/2)
     assert not torch.isnan(edge_weight).any(), "NaN values in edge_weight after normalization"
     L_rescaled = torch.sparse_coo_tensor(edge_index, -edge_weight, (num_nodes, num_nodes))
+    return L_rescaled
+
+def _chebyshev_coeff(L_rescaled, K, func, N=100):
+    # Gauss-Chebyshev quadrature
+    ind = torch.arange(0, K+1, dtype=torch.float32, device=L_rescaled.device) # index
+    ratio = torch.pi * (torch.arange(1, N+1, dtype=torch.float32, device=L_rescaled.device) - 0.5) / N
+    x = torch.cos(ratio) # quadrature points
+    T_kx = torch.cos(ind.view(-1, 1) * ratio) 
+    w = torch.ones(N, device=L_rescaled.device) * (torch.pi / N)
+    f_x = func(x)
+    c_k = (2 / torch.pi) * torch.matmul(T_kx, w * f_x)
+    return c_k
+
+def _chebyshev_vec(L_rescaled, K, func, num_nodes):
+    c_k = _chebyshev_coeff(L_rescaled, K, func)
+    # Initialize Chebyshev polynomials
+    x0 = torch.ones(num_nodes, 1, dtype=L_rescaled.dtype, device=L_rescaled.device)
+    T_k_x0 = [x0]  # T_0 x0
+    if K == 0:
+        return c_k[0] * x0
+    x1 = torch.sparse.mm(L_rescaled, x0)  # T_1 x0
+    T_k_x0.append(x1)
+    for _ in range(2, K+1):
+        x2 = 2 * torch.sparse.mm(L_rescaled, T_k_x0[-1]) - T_k_x0[-2]
+        T_k_x0.append(x2)
+    
+    y = c_k[0] * T_k_x0[0]
+    for k in range(1, K+1):
+        y += c_k[k] * T_k_x0[k]
+    return y
+
+@torch.amp.autocast(enabled=False, device_type='cuda')
+def _chebyshev_diffusion_per_sample(edge_index, num_nodes, E, k=128, edge_weight=None, beta=0.5):
+    """
+    E: (S, H, d)
+    """
+    L_rescaled = _rescaled_L(edge_index, num_nodes, edge_weight)
+    c_k = _chebyshev_coeff(L_rescaled, k, lambda x: _exp_kernel(x, beta))
+    E = E.to(torch.float32)
+    s, h, d = E.size()
+    assert s == num_nodes, f"Expect {num_nodes} nodes, Got {s}"
+    E_reshaped = E.reshape(num_nodes, h * d)
+    c_k = c_k.to(torch.float32)
+    T_0 = E_reshaped
+    T_1 = torch.sparse.mm(L_rescaled, E_reshaped)
+    y = c_k[0] * T_0 + c_k[1] * T_1
+    
+    # start recursion
+    T_k_prev = T_1
+    T_k_prev_prev = T_0
+    for k in range(2, k + 1):
+        T_k = 2 * torch.sparse.mm(L_rescaled, T_k_prev) - T_k_prev_prev
+        y += c_k[k] * T_k
+        
+        # shift index
+        T_k_prev_prev = T_k_prev 
+        T_k_prev = T_k
+    final_emb = y.reshape(num_nodes, h, d)
+    final_emb = final_emb.bfloat16()
+    return final_emb
+
+def _chebyshev_diffusion(edge_index_list, num_nodes_list, E, k=64, beta=0.5):
+    """
+    edge index list: list of edge index, length B
+    E: (B, S, H, d)
+    """
+    B, S, H, D = E.size()
+    final_emb = []
+    
+    for i in range(B):
+        E_i = E[i, :num_nodes_list[i], ...]
+        edge_index = edge_index_list[i]
+        sample_emb = _chebyshev_diffusion_per_sample(edge_index, num_nodes_list[i], E_i, k=k, beta=beta)
+        
+        # pad zero at the right end
+        pad_size = S - sample_emb.size(0)
+        if pad_size > 0:
+            zero_pad_right = torch.zeros(pad_size, H, D, device=E.device, dtype=E.dtype)
+            sample_emb = torch.cat([sample_emb, zero_pad_right], dim=0)
+        final_emb.append(sample_emb)
+    fe = torch.stack(final_emb, dim=0)
+    assert fe.size() == E.size(), f"Expect {E.size()}, Got {fe.size()}"
+    return fe
+
+def spectral_PE(edge_index, num_nodes, k=128, edge_weight=None):
+    """
+    Compute spectral positional embeddings using Chebyshev polynomials from graphs.
+    edge_index: edge_index of the input graph
+    num_nodes: number of nodes in the graph
+    k: order of Chebyshev polynomials
+    edge_weight: edge weights of the input graph(MUST BE POSITIVE)
+    """
+    L_rescaled = _rescaled_L(edge_index, num_nodes, edge_weight)
+    pe = _chebyshev_vec(L_rescaled, k, _identity, num_nodes)
+    pe = pe[:, 1:] # first column is all 1
+    pe_min = pe.min(dim=0, keepdim=True)[0]
+    pe_max = pe.max(dim=0, keepdim=True)[0]
+    pe_standardized = (pe - pe_min) / (pe_max - pe_min + 1e-8)
+    
+    return pe_standardized
+
+def spectral_PE_chebyshev(edge_index, num_nodes, k=128, edge_weight=None):
+    """
+    Compute spectral positional embeddings using Chebyshev polynomials from graphs.
+    edge_index: edge_index of the input graph
+    num_nodes: number of nodes in the graph
+    k: order of Chebyshev polynomials
+    edge_weight: edge weights of the input graph(MUST BE POSITIVE)
+    """
+    L_rescaled = _rescaled_L(edge_index, num_nodes, edge_weight)
     
     # Initialize Chebyshev polynomials
     x0 = torch.ones(num_nodes, 1, dtype=edge_weight.dtype, device=edge_index.device)
@@ -155,29 +267,6 @@ def spectral_PE_chebyshev(edge_index, num_nodes, k=128, edge_weight=None):
     pe_standardized = (pe - pe_min) / (pe_max - pe_min + 1e-8)
     
     return pe_standardized
-
-# Graph diffusion kernel
-def graph_diffusion_kernel_eig(edge_index, edge_weights, num_nodes, diffusion_rate):
-    L = laplacian_normalized(edge_index, edge_weights, num_nodes)
-    sigma, U = torch.linalg.eigh(L) # L = UAU^T
-    U = U.squeeze(0)
-    sigma = sigma.squeeze()
-    diag_vals = torch.exp(-diffusion_rate * sigma)
-    K = U @ torch.diag(diag_vals) @ U.T
-    return K
-
-# Taylor expansion approximation of the graph diffusion kernel
-def graph_diffusion_kernel_taylor(edge_index, edge_weights, num_nodes, diffusion_rate, n_terms=10):
-    L = laplacian_normalized(edge_index, edge_weights, num_nodes)
-    K = torch.zeros_like(L)
-    L_power = torch.eye(L.shape[0], device=L.device)
-    factorial = 1
-    for n in range(n_terms):
-        term = ((-diffusion_rate) ** n) / factorial * L_power
-        K += term
-        L_power = L_power @ L
-        factorial *= n + 1 
-    return K
 
 #########################################################
     
@@ -330,20 +419,23 @@ class GraphTransformerDataset(torchDataset):
         node_indices = data.x
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
+        num_nodes = node_indices.shape[0]
         ## for each mask type, create boolean mask of the same shape as node_indices
         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         
-        # graph features
-        spectral_pe = spectral_PE_chebyshev(edge_index=data.edge_index, num_nodes=node_indices.shape[0], 
-                                            k=64, edge_weight=data.edge_weight)
+        # graph positional encoding
+        spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
+        
         return {
                 "orig_gene_id" : orig_gene_indices, 
                 "orig_rank_indices" : orig_rank_indices, 
                 "gene_mask" : gene_mask, 
                 "rank_mask" : rank_mask, 
                 "both_mask" : both_mask,
+                "edge_index": data.edge_index,
+                "num_nodes": num_nodes,
                 "spectral_pe": spectral_pe,
                 "dataset_name" : self.dataset_name
                 }
@@ -367,13 +459,6 @@ class GraphTransformerDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
                                 num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
-
-
-
-
-
-
-
 
 
 if __name__ == "__main__":

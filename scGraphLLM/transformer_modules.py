@@ -32,6 +32,7 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
+from data import _chebyshev_diffusion
 
 
 def rotate_half(x):
@@ -281,13 +282,15 @@ class WQKV(nn.Module):
 
 
 class FlashMHASelfMaskKV(nn.Module):
-    def __init__(self, d_model, num_heads, batch_first, attention_dropout,mode="self", bias=True, causal=False, 
+    def __init__(self, d_model, num_heads, batch_first, attention_dropout,mode="self", 
+                 bias=True, causal=False, kernel_attn=False,
                  use_rotary_emb=None, device = None, dtype = None) -> None:
         super(FlashMHASelfMaskKV, self).__init__()
         assert batch_first
         factory_kwargs = {'device': device, 'dtype': dtype}
         self.d_model = d_model
         self.causal = causal
+        self.kernel_attn = kernel_attn
         self.dropout_p = attention_dropout
         self.mode = mode 
 
@@ -306,7 +309,7 @@ class FlashMHASelfMaskKV(nn.Module):
 
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
 
-    def forward(self, q,k,v, key_padding_mask=None):
+    def forward(self, q, k,v, key_padding_mask=None, edge_index_list=None, num_nodes_list=None):
         """x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
         key_padding_mask: bool tensor of shape (batch, seqlen)
         Credit: some elements adopted from OpenFold:
@@ -321,6 +324,11 @@ class FlashMHASelfMaskKV(nn.Module):
 
         if self.use_rotary_emb:
             q, k = self.rot_emb(q, k, seq_dimension=-3)
+            
+        if self.kernel_attn:
+            q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5)
+            q = q.bfloat16()
+            
         q = rearrange(q.type(dtype), 'b s h d -> (b s) h d',
                         h=self.num_heads)
         q = q * self.scaling
@@ -640,7 +648,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         if use_flash_attn:
             self.self_attention = FlashMHASelfMaskKV(
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                attention_dropout=dropout, use_rotary_emb=use_rotary_emb
+                attention_dropout=dropout, use_rotary_emb=use_rotary_emb, kernel_attn=use_attn_mask
             )
         else:
             self.self_attention = CustomTorchMHASelf(
@@ -675,13 +683,14 @@ class FlashTransformerEncoderLayer(nn.Module):
         self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         
-    def forward(self, qkv, p=None, key_padding_mask=None, attn_mask=None):
+    def forward(self, qkv, p=None, key_padding_mask=None, edge_index_list=None, num_nodes_list=None, attn_mask=None):
         x = qkv
         if self.use_PE:
             assert p is not None, "Positional encoding tensor must be provided when use_PE is True."
         
         if self.use_attn_mask:
-            assert attn_mask is not None, "Attention mask must be provided when use_attn_mask is True."
+            assert edge_index_list is not None, "Graph must be provided if using kernelized attention"
+            assert num_nodes_list is not None, "Number of nodes must be provided if using kernelized attention"
             
         if self.norm_first:
             x = self.ln1(x)
@@ -693,7 +702,7 @@ class FlashTransformerEncoderLayer(nn.Module):
             
             # mask attention weights or not
             if self.use_attn_mask:
-                x = x + self.self_attention(q, k, v, attention_mask=attn_mask)
+                x = x + self.self_attention(q, k, v, edge_index_list=edge_index_list, num_nodes_list=num_nodes_list)
             else:
                 x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
             
@@ -707,7 +716,7 @@ class FlashTransformerEncoderLayer(nn.Module):
                 q, k, v = self.wqkv(x)
             
             if self.use_attn_mask:
-                x = x + self.self_attention(q, k, v, attention_mask=attn_mask)
+                x = x + self.self_attention(q, k, v, edge_index_list=edge_index_list, num_nodes_list=num_nodes_list)
             else:
                 x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
 

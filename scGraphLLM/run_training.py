@@ -102,7 +102,8 @@ def main(args):
     
     def collate_fn(batch):
         data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
-                "rank_mask" : [], "both_mask" : [], "spectral_pe" : [], "dataset_name" : [] }
+                "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
+                "spectral_pe" : [], "dataset_name" : [] }
         
         # Make a dictionary of lists from the list of dictionaries
         for b in batch:
@@ -111,7 +112,7 @@ def main(args):
 
         # Pad these dictionaries of lists
         for key in data.keys():
-            if key != "dataset_name":
+            if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
                 data[key] = pad_sequence(data[key], batch_first=True)
 
         return data
