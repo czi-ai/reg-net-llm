@@ -305,8 +305,6 @@ class FlashMHASelfMaskKV(nn.Module):
         if use_rotary_emb:
             self.rot_emb = RotaryEmbeddingESM(self.head_dim)
 
-        
-
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
 
     def forward(self, q, k,v, key_padding_mask=None, edge_index_list=None, num_nodes_list=None):

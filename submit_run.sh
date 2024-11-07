@@ -17,8 +17,9 @@ echo "My hostname is: $(hostname -s)"
 echo
 
 RUN_NAME=$1
+CONFIG_NAME=$2
 
 module load mamba
 mamba activate scllm_2
 
-python /home/mingxuan.zhang/scGraphLLM/scGraphLLM/run_training.py --config="pilot_graph_pe_run_config" --mode="train" --name="$RUN_NAME"
+python /home/mingxuan.zhang/scGraphLLM/scGraphLLM/run_training.py --config="$CONFIG_NAME" --mode="train" --name="$RUN_NAME"

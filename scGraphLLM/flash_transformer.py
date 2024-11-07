@@ -65,8 +65,8 @@ class GraphTransformer(LitScGraphLLM):
         orig_gene_id = batch["orig_gene_id"]
         orig_rank_id = batch["orig_rank_indices"]
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
-        edge_index_list = batch["edge_index"] if self.use_attn_mask else None
-        num_nodes_list = batch["num_nodes"] if self.use_attn_mask else None
+        edge_index_list = batch["edge_index"]
+        num_nodes_list = batch["num_nodes"]
         
         # shape assertions for graph features
         if self.use_PE:
