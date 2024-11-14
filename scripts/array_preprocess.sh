@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --time=12:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=5G
+#SBATCH --mem=512G
 #SBATCH --output=./slurm_out_%A/array_job_%A_%a.out
 #SBATCH -p cpu
 

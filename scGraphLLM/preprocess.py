@@ -407,16 +407,24 @@ def make_metacells(adata, target_depth, compression, target_sum, random_state, s
         metacells_adata.write_h5ad(save_path)
 
     return metacells_adata, qc_metrics_dict(metacells_adata)
-
-
-def rank(metacells, n_bins, plot=False):
-    df = metacells.to_df()
-    rank_bins = np.zeros_like(df, dtype=np.int64)
-    df = df.replace(0, np.nan) # Replace zeros with NaN so they are not considered in the ranking
-
-    if plot:
-        plot_gene_counts(df, save_to=args.out_dir)
     
+
+def rank(metacells, n_bins, rank_by_z_score=False):    
+    # Get the z-score test statistic   
+    df = metacells.to_df()
+    
+    if rank_by_z_score == True:
+        mean_expr = df.mean(axis=0) # Get the mean of each gene
+        std_expr = df.std()
+        df_z_score = (df - mean_expr)/std_expr # Calculate simple z-score
+        df_z_score = df_z_score.replace(0, np.nan) # Replace any zeros with NaN so they are not considered in the ranking
+        df = df_z_score # Update the initial df variable for following steps
+    
+    # Create a dataframe of the same size as df with all zeros
+    rank_bins = np.zeros_like(df, dtype=np.int64)
+    
+    # Rank the z-scores into separate "expression bins" that represent the expression of each gene 
+    # relative to itself across this set of cells
     df_ranked = df.rank(axis=1, method="first", ascending=False).replace(np.nan, 0)
     for i in range(df_ranked.shape[0]): # Iterate through rows (single cells)
         row = df_ranked.iloc[i].to_numpy(dtype=int)
@@ -424,14 +432,17 @@ def rank(metacells, n_bins, plot=False):
         if len(row[non_zero]) != 0: # Make sure row is not all zeros/nans (expressionless)
             if len(row[non_zero]) < n_bins-1:
                 n_bins = len(row[non_zero])+1
+            # "Binnify" the rankings
             bins = np.quantile(row[non_zero], np.linspace(0, 1, n_bins-1))
             bindices = np.digitize(row[non_zero], bins)
             rank_bins[i, non_zero] = bindices
 
+    # Convert the binned ranks to a pandas dataframe
     ranks = pd.DataFrame(rank_bins, columns=df.columns)
-    ranks.to_csv(f"{args.ranks_path}", index=False, header=True) # Save ranks_raw.csv file to cell-type-specific directory
+    # Save ranks_raw.csv file to cell-type-specific directory
+    ranks.to_csv(f"{args.ranks_path}", index=False, header=True)
 
-    # Info
+    # Save the ranking info
     df_info = df.count(axis=1)
     rank_info = {
         "n_bins": n_bins,
@@ -443,28 +454,6 @@ def rank(metacells, n_bins, plot=False):
     }
 
     return ranks, rank_info
-
-def plot_gene_counts(df, save_to, upper_range=2500):
-    dfmax = df.count(axis=1)
-    counts = []
-    for i in range(df.shape[1]):
-        mask = (dfmax == i)
-        indices = df.index[mask]
-        s0 = pd.Series(indices)
-        counts.append(s0.shape[0])
-
-    # Create the bar plot
-    plt.figure(figsize=(10, 6)) 
-    plt.bar(range(upper_range), counts[:upper_range])
-
-    # Customize the plot
-    cell_type = save_to.split("/")[-1]
-    plt.title(f'Gene Expression Distribution ({cell_type})')
-    plt.xlabel('# Expressed Genes per Metacell')
-    plt.ylabel('# Metacells')
-
-    plt.savefig(f"{save_to}/gene_counts_distribution.png")
-    plt.close()
 
 
 def main(args):
@@ -521,10 +510,11 @@ def main(args):
         logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
 
     if "rank" in args.steps:
+        # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
         ranks, qc_rank = rank(
             metacells, 
             n_bins=args.n_bins, 
-            plot=args.produce_figures) # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
+            rank_by_z_score=args.rank_by_z_score)
         info["ranks"] = qc_rank
     
     if "aracne" in args.steps:
@@ -578,7 +568,8 @@ if __name__ == "__main__":
     parser.add_argument("--aracne_regulators", nargs="+", default=["tfs", "cotfs"])
     parser.add_argument("--aracne_top_n_hvg", type=int, default=None)
     parser.add_argument("--aracne_dirname", type=str, default="aracne")
-    parser.add_argument("--n_bins", type=int, default=100)
+    parser.add_argument("--n_bins", type=int, default=250)
+    parser.add_argument("--rank_by_z_score", type=bool, default=False)
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")

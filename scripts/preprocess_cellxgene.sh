@@ -7,8 +7,10 @@ DIRECTORY=$1
 CELL_TYPE=$2
 ARACNE_TOP_N_HVG=$3
 
+# CHANGE TO YOUR SPECIFICATIONS
 PREPROCESS=true
 RUN_ARACNE=true
+RANK_BY_Z_SCORE=false #true
 MIN_TOTAL_SUBNETS=50
 ARACNE_DIRNAME=aracne_$ARACNE_TOP_N_HVG
 N_THREADS=4
@@ -20,7 +22,7 @@ mamba activate scllm
 
 # Base paths
 data_base_path=$DIRECTORY
-out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/single_data"
+out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_raw"
 regulators_path="/hpc/projects/group.califano/GLM/data/regulators.txt"
 preprocess_path="/hpc/projects/group.califano/GLM/scGraphLLM/scGraphLLM/preprocess.py"
 aracne="/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release"
@@ -36,9 +38,10 @@ if $PREPROCESS; then
         --save_metacells \
         --sample_index_vars dataset_id donor_id tissue \
         --aracne_min_n 250 \
-        --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
         --aracne_dirname $ARACNE_DIRNAME \
-        --n_bins 250
+        --n_bins 250 \
+        --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
+        --rank_by_z_score $RANK_BY_Z_SCORE
 
     # Check if the command succeeded
     if [ $? -eq 0 ]; then

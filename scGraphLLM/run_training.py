@@ -7,7 +7,7 @@ from data import *
 from pathlib import Path
 import json 
 import os
-from data import AracneGraphWithRanksDataset
+# from data import AracneGraphWithRanksDataset
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -100,9 +100,9 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
-    lit_data_module = LitDataModule(mconfig.data_config)
-    train_dl = lit_data_module.train_dataloader()
-    val_dl = lit_data_module.val_dataloader()
+    # lit_data_module = LitDataModule(mconfig.data_config)
+    # train_dl = lit_data_module.train_dataloader()
+    # val_dl = lit_data_module.val_dataloader()
 
     def collate_fn(batch):
         data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }

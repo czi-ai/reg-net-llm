@@ -42,36 +42,9 @@ class FlashTRAN(LitScGraphLLM):
         node_indices = node_indices.type(torch.long)
 
         node_embeddings = self.node_embedding(node_indices).flatten(2) # maps n x g x embed_dim
-
-        # Positional encoding
-        # if pos_emb:
-        #   pass
         
         # take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
         node_embeddings = self.transformer_encoder1(node_embeddings) # no shape changes, just updates inputs.
         # node_embeddings = self.transformer_encoder2(node_embeddings) # no shape changes, just updates inputs.
 
         return node_embeddings, orig_gene_id, orig_rank_id, mask_locs
-
-
-
-# class PositionalEncoding(nn.Module):
-
-#     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
-#         super().__init__()
-#         self.dropout = nn.Dropout(p=dropout)
-
-#         position = torch.arange(max_len).unsqueeze(1)
-#         div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-#         pe = torch.zeros(max_len, 1, d_model)
-#         pe[:, 0, 0::2] = torch.sin(position * div_term)
-#         pe[:, 0, 1::2] = torch.cos(position * div_term)
-#         self.register_buffer('pe', pe)
-
-#     def forward(self, x: Tensor) -> Tensor:
-        # """
-        # Arguments:
-        #     x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
-        # """
-        # x = x + self.pe[:x.size(0)]
-        # return self.dropout(x)
