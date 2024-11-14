@@ -1,4 +1,4 @@
-import os
+import os 
 
 def extract_cell_type(file):
     return file[0][:-4].split()[-1]
