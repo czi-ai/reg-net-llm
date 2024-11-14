@@ -15,7 +15,6 @@ MIN_TOTAL_SUBNETS=50
 ARACNE_DIRNAME=aracne_$ARACNE_TOP_N_HVG
 N_THREADS=4
 
-
 # activate virtual environment
 module load mamba
 mamba activate scllm
