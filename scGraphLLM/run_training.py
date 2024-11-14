@@ -1,7 +1,3 @@
-#%%
-### This script is used to train model via pytorch lightning logging to wandb 
-### It must be called from the modelling repo, which is set in the config  
-
 from models import LitScGraphLLM
 from data import *
 from pathlib import Path
@@ -29,9 +25,9 @@ def generate_random_string(length):
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
-filesystem = os.environ["WHEREAMI"]
+# filesystem = os.environ["WHEREAMI"]
 user = os.environ["USER"]
-filesystem = f"/manitou/pmg/users/{user}"
+filesystem = f"/hpc/mydata/{user}"
 ## ^This makes it easier to switch between different machines;  WHEREAMI is set in the .bashrc file and is the location of where we store repos; 
 ## on manitou its /manitou/pmg/users/vss2134, exxmini its /data/vss2134, aws its /data and so on 
 
@@ -100,12 +96,14 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
-    lit_data_module = LitDataModule(mconfig.data_config)
-    train_dl = lit_data_module.train_dataloader()
-    val_dl = lit_data_module.val_dataloader()
-
+    #lit_data_module = LitDataModule(mconfig.data_config)
+    #train_dl = lit_data_module.train_dataloader()
+    #val_dl = lit_data_module.val_dataloader()
+    
     def collate_fn(batch):
-        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
+        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
+                "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
+                "spectral_pe" : [], "dataset_name" : [] }
         
         # Make a dictionary of lists from the list of dictionaries
         for b in batch:
@@ -114,20 +112,25 @@ def main(args):
 
         # Pad these dictionaries of lists
         for key in data.keys():
-            if key != "dataset_name":
+            if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
                 data[key] = pad_sequence(data[key], batch_first=True)
 
         return data
 
-    transformer_data_module = TransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
+    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
+    
+    #transformer_data_module = LitDataModule(mconfig.data_config)
+    #train_transformer_dl = transformer_data_module.train_dataloader()
+    #val_transformer_dl = transformer_data_module.val_dataloader()
+    
     print("data loaded")
 
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
-    outdir = Path(f"/pmglocal/{user}/model_out/")
+    outdir = Path(f"/hpc/mydata/{user}")
     outdir.mkdir(exist_ok=True)
     trainer_conf = mconfig['trainer_config']
     copy_checkpoints = True

@@ -11,10 +11,9 @@ from torch_geometric.utils import negative_sampling
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
-        self.gnn_encoder = GNN(**config.model_config.gnn_config)
+        #self.gnn_encoder = GNN(**config.model_config.gnn_config)
 
-        self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
-                                               hidden_dim=config.model_config.gnn_config.hidden_dims[0])
+        self.link_prediction_head = LinkPredictHead(config.model_config.node_embedding_dim * 2, 1)
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
                                                  config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
         self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
@@ -23,29 +22,10 @@ class LitScGraphLLM(pl.LightningModule):
         self.loss_config = config.loss_config
         
     def forward(self, batch):
-        ## adding in more explicit annotations of shapes and workflow
-        ## some definitions: 
-        ## n = the number of cells in a batch; 
-        ## G = the total number of unique genes across the whole dataset; g = the number of unique genes in a batch ; g_dim = the dimension of the gene embeddings;
-        ## R= the total number of unique  *expressed genes* across the whole dataset; r_dim = the dimension of the rank embeddings; 
-        ## L_dim = the dimension of the learned cell embeddings(r_dim + g_dim);
-        ## e= the number of edges in a batch
-        node_indices, edge_list,edge_weights = batch.x, batch.edge_index, batch.edge_weight
-
-        mask_locs = [batch.gene_mask, batch.rank_mask, batch.both_mask]
-        node_indices = node_indices.type(torch.long)
-        ## Shapes: node_indices: n x g x 2, ; edge_list: 2xe; edge_weights: e; 
-        node_embeddings = self.node_embedding(node_indices)#.flatten(1) ## maps n x g x 
-
-        ## take in node embeddings with shape nodes x edim and return the same sized, updated node embeddings
-        node_embeddings = self.gnn_encoder(node_embeddings, edge_list, edge_weights) ## no shape changes, just updates inputs.
-
-        gene_ids = batch.orig_gene_id
-        rank_ids = batch.orig_rank_indices
-        return node_embeddings, gene_ids, rank_ids, mask_locs
+        pass
     
     def _step(self, batch, batch_idx):
-        learned_cell_embedding,  target_gene_ids, target_rank_ids, mask_locs = self(batch)
+        learned_cell_embedding,  target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
         predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
         predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)
         gene_mask_locs, rank_mask_locs, both_mask_locs = mask_locs
@@ -56,8 +36,8 @@ class LitScGraphLLM(pl.LightningModule):
         target_rank_ids = target_rank_ids - NUM_GENES ## shift the rank indices to start from 0
         L_mlm_rankonly = self.mlm_loss(predicted_rank_id, target_rank_ids, rank_mask_locs)
         L_mlm_rankboth = self.mlm_loss(predicted_rank_id, target_rank_ids, both_mask_locs)
-        #L_g = self.link_pred_loss(learned_cell_embedding, mask_locs, target_gene_ids, target_rank_ids, edge_list)
-        loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth #+ L_g
+        L_g = self.link_pred_loss(learned_cell_embedding, mask_locs[0], edge_index_list) # only for gene masks
+        loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth + L_g
         gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
         rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, rank_mask_locs | both_mask_locs)
         if type(batch) == dict:
@@ -70,9 +50,9 @@ class LitScGraphLLM(pl.LightningModule):
         self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False) 
         self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly, batch_size=rank_mask_locs.sum(), add_dataloader_idx=False)
         self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth, batch_size=(rank_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False )
-        #self.log('train_link_pred_loss', L_g)
         self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1, add_dataloader_idx=False)
         self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1, add_dataloader_idx=False)
+        self.log(f"{subset}_link_pred_loss", L_g, batch_size=(rank_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False)
         return loss
         
     def training_step(self, batch, batch_idx):
@@ -86,49 +66,65 @@ class LitScGraphLLM(pl.LightningModule):
 
 
     def mlm_loss(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
-        
         masked_predictions = predicted_gene_id[mask_locs, :] ## because we record the location of the masked tokens, we cna retrieve just the masked tokens, and collapse the first dimension, ie mapping from n x r x G to m x G where m is the number of masked tokens
         labels = rank_global_gene_indices[mask_locs]
         loss = F.cross_entropy(masked_predictions,labels)
         return loss
 
-    # pass in adj    
-    def link_pred_loss(self, node_embedding, mask_locs, global_gene_index, local_gene_index, edge_index):
+    def link_pred_loss(self, node_embedding, mask_locs, edge_index_list):
         pos_out = []
         neg_out = []
-        batch_indices, seq_indices=mask_locs
-        predictor = self.link_pred_decoder
-        node_embeddings = node_embedding
-        global_masked_nodes = global_gene_index[batch_indices, seq_indices]
-        #local_masked_nodes = local_gene_index[batch_indices, seq_indices]
-        #map_dict = dict(zip(global_masked_nodes.detach().cpu().numpy(), local_masked_nodes.detach().cpu().numpy()))
-        #for global_m, local_m in zip(global_masked_nodes, local_masked_nodes):
-        for global_m in global_masked_nodes:
+        
+        batch_size, num_nodes, embed_dim = node_embedding.shape
+        predictor = self.link_prediction_head
+        device = node_embedding.device
 
-            # Positive examples
-            pos_neighbors = edge_index[1, edge_index[0] == global_m]
-            #pos_neighbors = torch.tensor(list(set(pos_neighbors).intersection(list(global_masked_nodes.detach().cpu().numpy()))))
-            # skip if no connections
-            if len(pos_neighbors) == 0:
+        for batch in range(batch_size):
+            masked_nodes = torch.where(mask_locs[batch])[0]
+            if masked_nodes.numel() == 0:
+                continue
+            masked_nodes = masked_nodes.to(device)
+            edge_index = edge_index_list[batch].to(device)
+            masked_nodes_bool = torch.zeros(num_nodes, dtype=torch.bool, device=device)
+            masked_nodes_bool[masked_nodes] = True
+            src_nodes = edge_index[0]
+            dst_nodes = edge_index[1]
+            edge_mask = masked_nodes_bool[src_nodes] & masked_nodes_bool[dst_nodes]
+            pos_edge_index = edge_index[:, edge_mask]
+            if pos_edge_index.size(1) == 0:
                 continue
 
-            #local_ids = [map_dict[n.item()] for n in pos_neighbors]
-            pos_scores = predictor(node_embeddings[global_m, :].repeat(len(pos_neighbors), 1), node_embeddings[pos_neighbors, :])
+            num_neg_samples = pos_edge_index.size(1)
+            neg_edge_index = negative_sampling(
+                edge_index=edge_index,
+                num_nodes=num_nodes,
+                num_neg_samples=num_neg_samples,
+                method='sparse'
+            ).to(device)
+
+            src_emb_pos = node_embedding[batch, pos_edge_index[0]]
+            dst_emb_pos = node_embedding[batch, pos_edge_index[1]]
+
+            pos_scores = predictor(src_emb_pos, dst_emb_pos) 
             pos_out.append(pos_scores)
 
-            # Negative examples - sampled randomly
-            neg_neighbors = negative_sampling(edge_index, num_nodes=node_embeddings.size(0), num_neg_samples=pos_neighbors.size(0)).view(-1)
-            #local_neg_ids = [map_dict[n] for n in neg_neighbors]
-            neg_scores = predictor(node_embeddings[global_m, :].repeat(len(neg_neighbors), 1), node_embeddings[neg_neighbors, :])
+            src_emb_neg = node_embedding[batch, neg_edge_index[0]]
+            dst_emb_neg = node_embedding[batch, neg_edge_index[1]]
+
+            neg_scores = predictor(src_emb_neg, dst_emb_neg)
             neg_out.append(neg_scores)
 
-        pos_out = torch.cat(pos_out, dim=0)
-        neg_out = torch.cat(neg_out, dim=0)
-    
-        # Loss calculation
-        pos_loss = -torch.log(pos_out + 1e-10).mean()
-        neg_loss = -torch.log(1 - neg_out + 1e-10).mean()
-        return pos_loss + neg_loss
+        if pos_out:
+            pos_out = torch.cat(pos_out, dim=0)
+            neg_out = torch.cat(neg_out, dim=0)
+
+            # Loss calculation
+            pos_loss = -torch.log(pos_out + 1e-10).mean()
+            neg_loss = -torch.log(1 - neg_out + 1e-10).mean()
+            return pos_loss + neg_loss
+        else:
+            # Return zero loss if there are no valid masked nodes
+            return torch.tensor(0.0, device=device)
 
     def alignment_loss():
         pass
