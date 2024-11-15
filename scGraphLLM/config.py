@@ -31,7 +31,7 @@ base_gnn_config = Config({
 
 base_model_config = Config({
     "gnn_config" : base_gnn_config,
-    "num_ranks": NUM_RANKS, # arbitary rn, but theoretically should be the cell with most genes 
+    "num_ranks":NUM_RANKS, ## arbitary rn, but theoretically should be the cell with most genes 
     "num_genes": NUM_GENES, 
     "node_embedding_dim": 512
 })
@@ -47,29 +47,20 @@ base_transformer_config = Config({
     "feed_dim": 256,
     "dropout": 0.3,
     "activation": "gelu",
-    "batch_first": True,
-})
-
-linear_config = Config({
-    "num_ranks": NUM_RANKS,
-    "num_genes": NUM_GENES, 
-    "node_embedding_dim": 256,
-    
-    # Linead Model-specific
-    "input_dim": 2*256,
-    "out_dim": 256,
-    "dropout": 0.3
+    "dropout": 0.1,
+    "batch_first": True
 })
 
 
 pilot_run_config = Config({
-    "model": flash_transformer.FlashTRAN, #linear_model.LinMod, models.LitScGraphLLM,
-    "model_config": base_transformer_config, # base_model_config,
+    "model": flash_transformer.FlashTRAN, # models.LitScGraphLLM,#
+    "model_config": base_model_config,
+    "transformer_config": base_transformer_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_train_cache", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/valHOG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_valSG_cache", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/burg/pmg/users/ld3154/data/pilotdata_cache/pilotdata_valHOG_cache", "dataset_name":"valHOG"})
             ],
         # "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         # "val": [
@@ -78,9 +69,9 @@ pilot_run_config = Config({
         #     ],
         "test": [
             ],
-        "run_test": False, 
+        "run_test":False, 
         "num_workers": 8,
-        "batch_size": 16
+        "batch_size": 64
     }),
     "trainer_config":Config({
         "max_epochs" : 100,
@@ -104,7 +95,7 @@ pilot_run_config = Config({
          }
     }),
     "repo_name":"scGraphLLM",
-    "wandb_user":"aqlab",
+    "wandb_user":"mingxuan-zhang",
     "wandb_project":"scGraphLLM",
 })
 
@@ -153,11 +144,11 @@ dataconfig_4096 =  Config({
         "batch_size": 64
     })
 
-prc_gs_1024 = deepcopy(pilot_run_config)
+prc_gs_1024 = deepcopy(vanilla)
 prc_gs_1024["data_config"] = dataconfig_1024
 
-prc_gs_2048 = deepcopy(pilot_run_config)
-prc_gs_2048["data_config"] = dataconfig_2048
+#prc_gs_2048 = deepcopy(vanilla)
+#prc_gs_2048["data_config"] = dataconfig_2048
 
-prc_gs_4096 = deepcopy(pilot_run_config)
-prc_gs_4096["data_config"] = dataconfig_4096
+#prc_gs_4096 = deepcopy(vanilla)
+#prc_gs_4096["data_config"] = dataconfig_4096

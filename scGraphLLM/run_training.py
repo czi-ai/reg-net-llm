@@ -1,7 +1,3 @@
-#%%
-### This script is used to train model via pytorch lightning logging to wandb 
-### It must be called from the modelling repo, which is set in the config  
-
 from models import LitScGraphLLM
 from data import *
 from pathlib import Path
@@ -115,19 +111,39 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
-    # lit_data_module = LitDataModule(mconfig.data_config)
-    # train_dl = lit_data_module.train_dataloader()
-    # val_dl = lit_data_module.val_dataloader()
+    lit_data_module = LitDataModule(mconfig.data_config)
+    train_dl = lit_data_module.train_dataloader()
+    val_dl = lit_data_module.val_dataloader()
 
-    transformer_data_module = TransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
+    def collate_fn(batch):
+        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
+        
+        # Make a dictionary of lists from the list of dictionaries
+        for b in batch:
+            for key in data.keys():
+                data[key].append(b[key])
+
+        # Pad these dictionaries of lists
+        for key in data.keys():
+            if key != "dataset_name":
+                data[key] = pad_sequence(data[key], batch_first=True)
+
+        return data
+
+    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
+    
+    #transformer_data_module = LitDataModule(mconfig.data_config)
+    #train_transformer_dl = transformer_data_module.train_dataloader()
+    #val_transformer_dl = transformer_data_module.val_dataloader()
+    
     print("data loaded")
 
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
-    outdir = Path(f"/hpc/mydata/{user}/GLM/model_out/")
+    outdir = Path(f"/pmglocal/{user}/model_out/")
     outdir.mkdir(exist_ok=True)
     trainer_conf = mconfig['trainer_config']
     copy_checkpoints = True
