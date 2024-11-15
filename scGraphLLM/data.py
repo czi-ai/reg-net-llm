@@ -34,6 +34,7 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         
+        ## this file maps gene names to a index: "global" bc we want the same index for each gene across all experiments 
         global_gene_to_node = pd.read_csv(gene_to_node_file)
         global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
         skipped = 0
@@ -49,11 +50,12 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
             ranks = pd.read_csv(str(Path(aracne_out).parents[0]) + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
             common_genes = list(set(network_genes).intersection(set(ranks.columns)))
 
-            ranks = ranks.loc[:,common_genes]
+            ranks = ranks.loc[:, common_genes]
             for i in range(ranks.shape[0]):
-                if ncells % 1000 ==0:
+                if ncells % 1000 == 0:
                     print(f"Processed {ncells} cells", end="\r")
                 cell_name = ranks.index[i]
+                
                 if msplit == "valSG":
                     rand = rng.random()
                     if rand > valsg_split_ratio:
@@ -62,31 +64,33 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
                         split = msplit
                 else:
                     split = msplit
+                    
                 outfile = f"{cache_dir}/{split}/{sample}_{cell_name}.pt"
                 if os.path.exists(outfile)&(not overwrite):
                     ncells+=1
                     continue
+                
                 cell = ranks.iloc[i, :]
-                # cell = cell[cell != ZERO_IDX] + NUM_GENES # offset the ranks by global number of genes -  this lets the same 
+                # cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
                 # VS:
                 # keep graph static across batches 
                 cell = cell + NUM_GENES
                 # nn.Embedding be used for both gene and rank embeddings
-                if cell.shape[0] < MIN_GENES_PER_GRAPH: ## reauire a minimum number of genes per cell 
+                if cell.shape[0] < MIN_GENES_PER_GRAPH: # require a minimum number of genes per cell 
                     skipped += 1
                     ncells+=1
                     continue
 
-                # subset network to only include genes in the cell
+                # Subset network to only include genes in the cell
                 network_cell = network[
                     network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
                 ]
 
                 local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-                ## each cell graph is disjoint from each other interms of the relative position of nodes and edges
-                ## so edge index is local to each graph for each cell. 
-                ## cell.index defines the order of the nodes in the graph
-                with warnings.catch_warnings() : ## suppress annoying pandas warnings
+                # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
+                # so edge index is local to each graph for each cell. 
+                # cell.index defines the order of the nodes in the graph
+                with warnings.catch_warnings(): # Suppress annoying pandas warnings
                     warnings.simplefilter("ignore") 
                     edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
                     edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
@@ -94,80 +98,17 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
 
                 edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
                 edge_weights = torch.tensor(np.array(edges['mi.values']))
-                node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene])for gene in cell.index]), dtype=torch.long)
-                
-                # od = {"x":node_indices, "edge_index":edge_list, "edge_weight":edge_weights}
-                # save(od, outfile)
-                
+                node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
                 data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
                 torch.save(data, outfile)
                 ncells += 1
-                
-                # try:   
-                #     data = torch.load(outfile)
-                #     ff = open("/hpc/projects/group.califano/GLM/data/d1.txt", "a")
-                #     ff.write(f"{outfile}\n")
-                # except:
-                #     ff = open("/hpc/projects/group.califano/GLM/data/d2.txt", "a")
-                #     ff.write(f"{outfile}\n")
                 
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")
         return 
 
 
-# class AracneGraphWithRanksDataset(Dataset):
-#     def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
-#         """
-#         Args:
-#             aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
-#             global_gene_to_node_file (str): path to file that maps gene name to integer index 
-#             cache_dir (str): path to directory where the processed data will be stored
-#         """   
-#         print(cache_dir)     
-#         self.debug = debug
-#         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
-#         self.dataset_name = dataset_name
-#         super().__init__(None, None, None)
-#     def len(self):
-#         if self.debug:
-#             return 1000
-#         print(len(self.cached_files))
-#         return len(self.cached_files)
-#     def get(self, idx, mask_fraction = 0.05):
-#         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
-#         data_dict = load(self.cached_files[idx])
-#         data = Data(**data_dict)
-
-#         node_indices = data.x
-#         # need the clones otherwise the original indices will be modified
-#         orig_gene_indices = node_indices[:, 0].clone()
-#         orig_rank_indices = node_indices[:, 1].clone()
-#         ## for each mask type, create boolean mask of the same shape as node_indices
-#         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-#         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-#         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-#         node_indices[gene_mask, 0] = MASK_IDX
-#         node_indices[rank_mask, 1] = MASK_IDX
-#         node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
-#         return Data(x = node_indices, edge_index = data.edge_index, edge_weight = data.edge_weight, gene_mask = gene_mask, rank_mask = rank_mask, both_mask = both_mask, orig_gene_id = orig_gene_indices, orig_rank_indices = orig_rank_indices, dataset_name = self.dataset_name)
-
-# class LitDataModule(pl.LightningDataModule):
-#     def __init__(self, data_config):
-#         super().__init__()
-#         self.data_config = data_config
-#         self.train_ds = AracneGraphWithRanksDataset(**data_config.train)
-#         self.val_ds = [AracneGraphWithRanksDataset(**val) for val in data_config.val]
-#         if data_config.run_test:
-#             self.test_ds = [AracneGraphWithRanksDataset(**test) for test in data_config.test]
-#     def train_dataloader(self):
-#         return DataLoader(self.train_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers)
-#     def val_dataloader(self):
-#         return [DataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for val_ds in self.val_ds]
-#     def test_dataloader(self):
-#         return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
-
-class TransformerDataset(torchDataset):
+class AracneGraphWithRanksDataset(Dataset):
     def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
         """
         Args:
@@ -179,26 +120,79 @@ class TransformerDataset(torchDataset):
         self.debug = debug
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
-
-    def __len__(self):
+        super().__init__(None, None, None)
+    def len(self):
         if self.debug:
             return 1000
         print(len(self.cached_files))
         return len(self.cached_files)
-
-    def __getitem__(self, idx, mask_fraction = 0.05):
+    def get(self, idx, mask_fraction = 0.05):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
-        print("\n", "$"*100, idx)
-        print(len(self.cached_files))
-        data = torch.load(self.cached_files[idx])
-        print("SUCCESS", idx)
+        data_dict = load(self.cached_files[idx])
+        data = Data(**data_dict)
+
         node_indices = data.x
+        # need the clones otherwise the original indices will be modified
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
         ## for each mask type, create boolean mask of the same shape as node_indices
         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        node_indices[gene_mask, 0] = MASK_IDX
+        node_indices[rank_mask, 1] = MASK_IDX
+        node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
+        return Data(x = node_indices, edge_index = data.edge_index, edge_weight = data.edge_weight, gene_mask = gene_mask, rank_mask = rank_mask, both_mask = both_mask, orig_gene_id = orig_gene_indices, orig_rank_indices = orig_rank_indices, dataset_name = self.dataset_name)
+
+class LitDataModule(pl.LightningDataModule):
+    def __init__(self, data_config):
+        super().__init__()
+        self.data_config = data_config
+        self.train_ds = AracneGraphWithRanksDataset(**data_config.train)
+        self.val_ds = [AracneGraphWithRanksDataset(**val) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [AracneGraphWithRanksDataset(**test) for test in data_config.test]
+    def train_dataloader(self):
+        return DataLoader(self.train_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers)
+    def val_dataloader(self):
+        return [DataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
+
+class TransformerDataset(torchDataset):
+    def __init__(self, cache_dir:str, dataset_name:str, train:bool=False, debug:bool=False):
+        """
+        Args:
+            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
+            global_gene_to_node_file (str): path to file that maps gene name to integer index 
+            cache_dir (str): path to directory where the processed data will be stored
+        """   
+        print(cache_dir)  
+        self.train = train   
+        self.debug = debug
+        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.dataset_name = dataset_name
+
+    def __len__(self):
+        if self.debug:
+            return 1000
+        return len(self.cached_files)
+
+    def __getitem__(self, idx, mask_fraction = 0.05):
+        # mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
+        data = torch.load(self.cached_files[idx])
+        
+        node_indices = data.x
+        orig_gene_indices = node_indices[:, 0].clone()
+        orig_rank_indices = node_indices[:, 1].clone()
+        
+        # For each mask type, create boolean mask of the same shape as node_indices
+        # The gene, rank, and both masks are determined from the shared rand_mask
+        # at different intervals to ensure no overlap between the masks: gene or rank or both
+        rand_mask = torch.rand(node_indices.shape[0])
+        gene_mask = rand_mask < mask_fraction # 0 - 0.05
+        rank_mask = (rand_mask >= mask_fraction) & (rand_mask < 2*mask_fraction) # 0.05 - 0.1
+        both_mask = (rand_mask >= 2*mask_fraction) & (rand_mask < 3*mask_fraction) # 0.1 - 0.15
 
         return {
                 "orig_gene_id" : orig_gene_indices, 
@@ -214,7 +208,7 @@ class TransformerDataModule(pl.LightningDataModule):
         super().__init__()
         self.data_config = data_config
         self.collate_fn = collate_fn
-        self.train_ds = TransformerDataset(**data_config.train)
+        self.train_ds = TransformerDataset(**data_config.train, train=True)
         self.val_ds = [TransformerDataset(**val) for val in data_config.val]
         if data_config.run_test:
             self.test_ds = [TransformerDataset(**test) for test in data_config.test]
@@ -240,10 +234,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     debug = args.debug
     num_proc = int(args.num_proc)
+    
+    # Read the data directories and their associated dataset label (train, valSG, valHG)
     aracane_metadata = pd.read_csv(args.aracane_outdir_md, names = ["aracne_out", "split"]).values
-
-    unique_susbets = np.unique(aracane_metadata[:,1])
-    for subset in unique_susbets:
+    
+    # Create cache directories for each dataset (train, valSG, valHG)
+    unique_subsets = np.unique(aracane_metadata[:,1])
+    for subset in unique_subsets:
         Path(f"{args.cache_dir}/{subset}").mkdir(parents=True, exist_ok=True)
     sub_lists = np.array_split(aracane_metadata, num_proc)
     args = [(sub_list, args.gene_to_node_file, args.cache_dir) for sub_list in sub_lists]
@@ -258,8 +255,3 @@ if __name__ == "__main__":
         for arg in args:
             transform_and_cache_aracane_graph_ranks(*arg)
 
-#%%
-# ds = AracneGraphWithRanksDataset("/burg/pmg/collab/scGraphLLM/data/pilotdata_cache/")
-# # %%
-# print(ds[10])
-# # %%

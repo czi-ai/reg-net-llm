@@ -2,6 +2,6 @@
 PAD_IDX=0 ## the padding token
 MASK_IDX=1 ## the mask token
 ZERO_IDX=2 ## the lowest rank, aka gene with expression 0
-MIN_GENES_PER_GRAPH=500
+MIN_GENES_PER_GRAPH=500 # Shouldn't this be 1024 ?
 NUM_GENES=19247## this is the nubmer of genes + special tokens 
-NUM_RANKS=105 ## this is the number of ranks + special tokens
+NUM_RANKS=255 ## this is the number of ranks + special tokens - was 105

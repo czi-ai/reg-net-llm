@@ -11,10 +11,10 @@ from torch_geometric.utils import negative_sampling
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
-        self.gnn_encoder = GNN(**config.model_config.gnn_config)
+        # self.gnn_encoder = GNN(**config.model_config.gnn_config)
 
-        self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
-                                               hidden_dim=config.model_config.gnn_config.hidden_dims[0])
+        # self.link_prediction_head = LinkPredictHead(in_dim=config.model_config.node_embedding_dim *2 ,
+        #                                        hidden_dim=config.model_config.gnn_config.hidden_dims[0])
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
                                                  config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
         self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
@@ -153,5 +153,3 @@ class LitScGraphLLM(pl.LightningModule):
         optim_fn = self.optim_config["optimizer"]
         optimizer = optim_fn(self.parameters(), **self.optim_config.args)
         return optimizer
-
-

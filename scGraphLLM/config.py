@@ -1,9 +1,10 @@
-import models as models
-import flash_transformer as flash_transformer
 import torch
 import torch.nn as nn
 from _globals import *
 from copy import deepcopy
+import models as models
+import flash_transformer as flash_transformer
+import linear_model as linear_model
 
 class Config(dict):
     def __getattr__(self, item):
@@ -30,28 +31,40 @@ base_gnn_config = Config({
 
 base_model_config = Config({
     "gnn_config" : base_gnn_config,
-    "num_ranks": NUM_RANKS, ## arbitary rn, but theoretically should be the cell with most genes 
+    "num_ranks": NUM_RANKS, # arbitary rn, but theoretically should be the cell with most genes 
     "num_genes": NUM_GENES, 
     "node_embedding_dim": 512
 })
 
 base_transformer_config = Config({
-    "input_dim": 2*base_model_config.node_embedding_dim,
-    "feed_dim": 512,
-    "hidden_dims": [512, 512, 512],
-    "conv_dim": 512,
-    "num_heads": 8,
-    "out_dim": base_gnn_config.out_dim,
-    "activation": "gelu",
+    "num_ranks": NUM_RANKS,
+    "num_genes": NUM_GENES, 
+    "node_embedding_dim": 256,
+    
+    # Transformer-specific
+    "input_dim": 2*256,
+    "num_heads": 2,
+    "feed_dim": 256,
     "dropout": 0.3,
-    "batch_first": True
+    "activation": "gelu",
+    "batch_first": True,
+})
+
+linear_config = Config({
+    "num_ranks": NUM_RANKS,
+    "num_genes": NUM_GENES, 
+    "node_embedding_dim": 256,
+    
+    # Linead Model-specific
+    "input_dim": 2*256,
+    "out_dim": 256,
+    "dropout": 0.3
 })
 
 
 pilot_run_config = Config({
-    "model": flash_transformer.FlashTRAN, # models.LitScGraphLLM,#
-    "model_config": base_model_config,
-    "transformer_config": base_transformer_config,
+    "model": flash_transformer.FlashTRAN, #linear_model.LinMod, models.LitScGraphLLM,
+    "model_config": base_transformer_config, # base_model_config,
     "data_config":Config({
         "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilotdata_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
@@ -67,7 +80,7 @@ pilot_run_config = Config({
             ],
         "run_test": False, 
         "num_workers": 8,
-        "batch_size": 32
+        "batch_size": 16
     }),
     "trainer_config":Config({
         "max_epochs" : 100,

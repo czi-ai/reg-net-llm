@@ -48,6 +48,21 @@ parser.add_argument('--override-config', type=str, help='wandb sweep style cl ar
 
 args = parser.parse_args()
 
+def collate_fn(batch):
+    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
+
+    # Make a dictionary of lists from the list of dictionaries
+    for b in batch:
+        for key in data.keys():
+            data[key].append(b[key])
+
+    # Pad these dictionaries of lists
+    for key in data.keys():
+        if key != "dataset_name":
+            data[key] = pad_sequence(data[key], batch_first=True)
+
+    return data
+
 def main(args):
     ## config is now a dict
     mconfig = args.config
@@ -103,21 +118,6 @@ def main(args):
     # lit_data_module = LitDataModule(mconfig.data_config)
     # train_dl = lit_data_module.train_dataloader()
     # val_dl = lit_data_module.val_dataloader()
-
-    def collate_fn(batch):
-        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
-        
-        # Make a dictionary of lists from the list of dictionaries
-        for b in batch:
-            for key in data.keys():
-                data[key].append(b[key])
-
-        # Pad these dictionaries of lists
-        for key in data.keys():
-            if key != "dataset_name":
-                data[key] = pad_sequence(data[key], batch_first=True)
-
-        return data
 
     transformer_data_module = TransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
     train_transformer_dl = transformer_data_module.train_dataloader()
