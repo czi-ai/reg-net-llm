@@ -10,7 +10,7 @@ ARACNE_TOP_N_HVG=$3
 # CHANGE TO YOUR SPECIFICATIONS
 PREPROCESS=true
 RUN_ARACNE=true
-RANK_BY_Z_SCORE=false #true
+RANK_BY_Z_SCORE=true
 MIN_TOTAL_SUBNETS=50
 ARACNE_DIRNAME=aracne_$ARACNE_TOP_N_HVG
 N_THREADS=4
@@ -21,7 +21,7 @@ mamba activate scllm
 
 # Base paths
 data_base_path=$DIRECTORY
-out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_raw"
+out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_rank_by_z_score"
 regulators_path="/hpc/projects/group.califano/GLM/data/regulators.txt"
 preprocess_path="/hpc/projects/group.califano/GLM/scGraphLLM/scGraphLLM/preprocess.py"
 aracne="/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release"
