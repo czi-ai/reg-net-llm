@@ -13,3 +13,6 @@ download_data_cancer.sh
 notebooks/preprocess_cancer_samples.ipynb
 **scratch.py
 model_out/*
+scripts/.ARACNe3_cached
+scripts/slurm_out
+slurm_data_out/

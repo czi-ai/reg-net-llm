@@ -3,7 +3,7 @@ from data import *
 from pathlib import Path
 import json 
 import os
-from data import AracneGraphWithRanksDataset
+# from data import AracneGraphWithRanksDataset
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -43,6 +43,21 @@ parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only,
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
 
 args = parser.parse_args()
+
+def collate_fn(batch):
+    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
+
+    # Make a dictionary of lists from the list of dictionaries
+    for b in batch:
+        for key in data.keys():
+            data[key].append(b[key])
+
+    # Pad these dictionaries of lists
+    for key in data.keys():
+        if key != "dataset_name":
+            data[key] = pad_sequence(data[key], batch_first=True)
+
+    return data
 
 def main(args):
     ## config is now a dict
@@ -96,14 +111,12 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
-    #lit_data_module = LitDataModule(mconfig.data_config)
-    #train_dl = lit_data_module.train_dataloader()
-    #val_dl = lit_data_module.val_dataloader()
-    
+    lit_data_module = LitDataModule(mconfig.data_config)
+    train_dl = lit_data_module.train_dataloader()
+    val_dl = lit_data_module.val_dataloader()
+
     def collate_fn(batch):
-        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
-                "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
-                "spectral_pe" : [], "dataset_name" : [] }
+        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
         
         # Make a dictionary of lists from the list of dictionaries
         for b in batch:
@@ -112,7 +125,7 @@ def main(args):
 
         # Pad these dictionaries of lists
         for key in data.keys():
-            if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
+            if key != "dataset_name":
                 data[key] = pad_sequence(data[key], batch_first=True)
 
         return data
@@ -130,7 +143,7 @@ def main(args):
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
-    outdir = Path(f"/hpc/mydata/{user}")
+    outdir = Path(f"/pmglocal/{user}/model_out/")
     outdir.mkdir(exist_ok=True)
     trainer_conf = mconfig['trainer_config']
     copy_checkpoints = True

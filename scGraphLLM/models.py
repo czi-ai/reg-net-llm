@@ -149,5 +149,3 @@ class LitScGraphLLM(pl.LightningModule):
         optim_fn = self.optim_config["optimizer"]
         optimizer = optim_fn(self.parameters(), **self.optim_config.args)
         return optimizer
-
-
