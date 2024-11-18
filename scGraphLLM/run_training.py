@@ -3,7 +3,7 @@ from data import *
 from pathlib import Path
 import json 
 import os
-# from data import AracneGraphWithRanksDataset
+from data import AracneGraphWithRanksDataset
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -24,6 +24,23 @@ def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
+def collate_fn(batch):
+    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
+            "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
+            "spectral_pe" : [], "dataset_name" : [] }
+    
+    # Make a dictionary of lists from the list of dictionaries
+    for b in batch:
+        for key in data.keys():
+            data[key].append(b[key])
+
+    # Pad these dictionaries of lists
+    for key in data.keys():
+        if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
+            data[key] = pad_sequence(data[key], batch_first=True)
+
+    return data
+
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
 # filesystem = os.environ["WHEREAMI"]
 user = os.environ["USER"]
@@ -43,21 +60,6 @@ parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only,
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
 
 args = parser.parse_args()
-
-def collate_fn(batch):
-    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
-
-    # Make a dictionary of lists from the list of dictionaries
-    for b in batch:
-        for key in data.keys():
-            data[key].append(b[key])
-
-    # Pad these dictionaries of lists
-    for key in data.keys():
-        if key != "dataset_name":
-            data[key] = pad_sequence(data[key], batch_first=True)
-
-    return data
 
 def main(args):
     ## config is now a dict
@@ -111,24 +113,6 @@ def main(args):
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
-    lit_data_module = LitDataModule(mconfig.data_config)
-    train_dl = lit_data_module.train_dataloader()
-    val_dl = lit_data_module.val_dataloader()
-
-    def collate_fn(batch):
-        data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], "rank_mask" : [], "both_mask" : [], "dataset_name" : [] }
-        
-        # Make a dictionary of lists from the list of dictionaries
-        for b in batch:
-            for key in data.keys():
-                data[key].append(b[key])
-
-        # Pad these dictionaries of lists
-        for key in data.keys():
-            if key != "dataset_name":
-                data[key] = pad_sequence(data[key], batch_first=True)
-
-        return data
 
     transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
     train_transformer_dl = transformer_data_module.train_dataloader()
@@ -143,7 +127,7 @@ def main(args):
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
-    outdir = Path(f"/pmglocal/{user}/model_out/")
+    outdir = Path(f"/hpc/mydata/{user}")
     outdir.mkdir(exist_ok=True)
     trainer_conf = mconfig['trainer_config']
     copy_checkpoints = True
@@ -189,9 +173,7 @@ def main(args):
     
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
-        litmodel = model_fn(mconfig)                                                                # HERE
-
-        # trainer.fit(litmodel, train_dataloaders = train_dl, val_dataloaders = val_dl)
+        litmodel = model_fn(mconfig)                                                               
         trainer.fit(litmodel, train_dataloaders = train_transformer_dl, val_dataloaders = val_transformer_dl)
         # trainer.validate(model=litmodel, dataloaders=val_dl)
 
@@ -202,7 +184,7 @@ def main(args):
         litmodel = model_fn.load_from_checkpoint(ckpt_file, 
                     config = mconfig)
         ### ckpt_path is required to resume training 
-        trainer.fit(litmodel, train_dataloaders = train_dl,ckpt_path = ckpt_file)
+        trainer.fit(litmodel, train_dataloaders = train_transformer_dl,ckpt_path = ckpt_file)
     else:
         raise NotImplementedError(f"mode {mode} not implemented")
 

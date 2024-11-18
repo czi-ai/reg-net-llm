@@ -32,7 +32,7 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
-from data import _chebyshev_diffusion
+from graph_op import _chebyshev_diffusion
 
 
 def rotate_half(x):
@@ -298,7 +298,7 @@ class FlashMHASelfMaskKV(nn.Module):
         assert self.d_model % num_heads == 0, f"emb {self.d_model} must be divisible by num_heads {num_heads}"
         self.head_dim = self.d_model // num_heads
         # assert self.head_dim in [16, 32, 64, 128], "Only support head_dim == 16, 32, 64, or 128"
-        assert (self.head_dim % 2 == 0) & (self.head_dim <= 256), 'heads divisible by 2'
+        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
         self.scaling = self.head_dim ** -0.5
 
         self.use_rotary_emb = use_rotary_emb
