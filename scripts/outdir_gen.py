@@ -1,39 +1,41 @@
-# This file generates the outdirs file and allots dirs to train, ValSG, and ValHG. The output file is used to cache the data for training in data.py.
+# This file generates the outdirs file and allots dirs SG, and HOG. The output file is used to cache the data for training in data.py.
 
 import os
+from argparse import ArgumentParser
 
-# Enter the proportions for each dataset: default is train: 80%, valSG: 10%, valHG: 10%
-TRAIN_prop = 0.8
-VAL_SG_prop = 0.1
-VAL_HG_prop = 0.1
+parser = ArgumentParser()
+parser.add_argument("--data-path", type=str, required=True)
+parser.add_argument("--cxg-path", type=str, required=True) # /hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_ranked_z_score
+parser.add_argument("--slurm-out-path", type=str, required=True) # /hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/1024_z_scored
+parser.add_argument("--aracne-top-n-hvg", type=int, required=True) # 1024
+args = parser.parse_args()
 
-ARACNE_TOP_N_HVG = 1024 # CHANGE THE FOLLOWING TO YOUR SPECIFICATIONS
-run = "16726641" # THIS IS THE JOB ID from the `start_slurm_preprocess.sh` run you would like to use
+# python outdir_gen.py --cxg-dir /hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_ranked_z_score --slurm-out-path /hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/2048_z_scored --aracne-top-n-hvg 2048
 
+DATA_PATH = args.data_path
+CXG_PATH = args.cxg_path
+aracne_top_n_hvg = args.aracne_top_n_hvg
+cell_types = [dir[:-1] for dir in open(f"{args.slurm_out_path}/successful_cell_types.txt", "r")]
 
-success_file = open(f"/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/slurm_out_{run}/check_out/success.txt", "r")
-success_file = [dir[:-1] for dir in success_file]
+# Enter the proportions for each dataset
+SG_prop = 0.85
+HOG_prop = 0.15
 
 # Check file size and delegate the dirs according to their size rather than equal weighting of each
-TRAIN_num = int(len(success_file)//(1/TRAIN_prop))
-SG_num = int(len(success_file)//(1/VAL_SG_prop))
-HG_num = int(len(success_file) - TRAIN_num - SG_num)
+SG_num = int(len(cell_types)//(1/SG_prop))
+HOG_num = int(len(cell_types) - SG_num)
 
-print("TRAIN_num:", TRAIN_num)
-print("VAL_SG_num:", SG_num)
-print("VAL_HG_num:", HG_num)
+print("SG_num:", SG_num)
+print("HOG_num:", HOG_num)
 
-outdirs = open(f"/hpc/projects/group.califano/GLM/data/aracne_{ARACNE_TOP_N_HVG}_outdir.csv", "w")
-aracne_path = "/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data"
+outdirs = open(f"{DATA_PATH}/aracne_{aracne_top_n_hvg}_outdir.csv", "w")
+aracne_path = CXG_PATH
 
-for i in range(TRAIN_num):
-    outdirs.write(f"{aracne_path}/{success_file[i]}/aracne_{ARACNE_TOP_N_HVG},train\n")
-
-for i in range(TRAIN_num, TRAIN_num+SG_num):
-    outdirs.write(f"{aracne_path}/{success_file[i]}/aracne_{ARACNE_TOP_N_HVG},valSG\n")
+for i in range(SG_num):
+    outdirs.write(f"{aracne_path}/{cell_types[i]}/aracne_{aracne_top_n_hvg},valSG\n")
     
-for i in range(TRAIN_num+SG_num, TRAIN_num+SG_num+HG_num):
-    outdirs.write(f"{aracne_path}/{success_file[i]}/aracne_{ARACNE_TOP_N_HVG},valHG\n")
+for i in range(SG_num, SG_num+HOG_num):
+    outdirs.write(f"{aracne_path}/{cell_types[i]}/aracne_{aracne_top_n_hvg},valHOG\n")
     
 outdirs.close()
 print("Done!")

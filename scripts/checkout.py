@@ -1,4 +1,4 @@
-import os
+import os 
 
 def extract_cell_type(file):
     return file[0][:-4].split()[-1]
@@ -76,9 +76,6 @@ for filename in directories:
     else:                                           
         runs["unaccounted"].append(extract_cell_type(file))
         summary["unaccounted"].append(int(filename[19:-4]))
-
-# Unable to synchronously open file
-# __conda_exe: command not found
 
 print(f"# successfully preprocessed: {len(runs['success'])}")
 print(f"# -- failed (clusterless): {len(runs['clusterless'])} \t\t -> Normal Behavior")

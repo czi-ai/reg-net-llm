@@ -11,7 +11,7 @@ heart
 |-- partition_0.h5ad
 |-- partition_1.h5ad
 |-- ...
-""" 
+"""
 from argparse import ArgumentParser
 import pyviper
 from pyviper._load._load_regulators import load_TFs, load_coTFs, load_sig, load_surf
@@ -413,12 +413,12 @@ def rank(metacells, n_bins, rank_by_z_score=False):
     # Get the z-score test statistic   
     df = metacells.to_df()
     
-    if rank_by_z_score:
-        mean_expr = df.mean(axis=1) # Get the mean of each gene
-        std_expr = df.std(axis=1)
-        df_z_score = (df.sub(mean_expr, axis=0)).div(std_expr, axis=0) # Calculate simple z-score
+    if rank_by_z_score == True:
+        mean_expr = df.mean(axis=0) # Get the mean of each gene
+        std_expr = df.std()
+        df_z_score = (df - mean_expr)/std_expr # Calculate simple z-score
         df_z_score = df_z_score.replace(0, np.nan) # Replace any zeros with NaN so they are not considered in the ranking
-        df = df_z_score
+        df = df_z_score # Update the initial df variable for following steps
     
     # Create a dataframe of the same size as df with all zeros
     rank_bins = np.zeros_like(df, dtype=np.int64)
