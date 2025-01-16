@@ -19,6 +19,8 @@ import wandb
 import glob 
 from config import *
 from torch_geometric.loader import DataLoader
+from wandb_checkpoint import SaveModelEveryNSteps
+# import torchsummary
 
 def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
@@ -55,7 +57,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--config', type=str, help='path to model config file',required=True)
 parser.add_argument('--version', type=str, help='run version', default=None)
 parser.add_argument('--name', type=str, help='run name', default=None)
-parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, debug, predict]', default=None, required=True)
+parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, debug, predict, validate]', default=None, required=True)
 parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only, no paths', default=None)
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
 
@@ -64,18 +66,17 @@ args = parser.parse_args()
 def main(args):
     ## config is now a dict
     mconfig = args.config
-    print(mconfig)
     mode = args.mode
     name = args.name
-    if (mode in {"train", "resume",}) and (name is None):
+    if (mode in {"train", "resume", "validate"}) and (name is None):
         raise ValueError("Must specify name for training or resume mode")
     elif mode == "predict":
         name = "predict"
         
     if mode == "debug":
-        ### run a miminal debug run to make sure everything is working
+        ### run a minimal debug run to make sure everything is working
         print("***debug***")
-        mconfig.trainer_config.max_epochs=2
+        mconfig.trainer_config.max_epochs=1
         mconfig.data_config.train["debug"] = True
         for i in range(len(mconfig.data_config.val)):
             mconfig.data_config.val[i]["debug"] = True
@@ -86,22 +87,26 @@ def main(args):
         if "strategy" in mconfig.trainer_config:
             del mconfig['trainer_config']['strategy']
     ## some lite error handling
-    if mode == "resume":
+    if mode in {"resume", "validate"}:
         ## error so we dont accidentally overwrite a run
         if args.version is None or args.ckpt_file is None:
-            raise ValueError("Must specify version and ckpt file for resume or predict mode")
+            raise ValueError("Must specify version and ckpt file for resume, predict, or validate mode")
         
     version = args.version
     if version is None:
         ## this does not break for ddp processes 
-        version = generate_random_string(8)
+        # version = generate_random_string(8)
+        timestamp = time.time()
+        current_time_UTC = time.strftime("%Y-%m-%d@%H:%M:%S", time.gmtime(timestamp))
+        version = f"{name}:{current_time_UTC}"
+        
     ## setup output directory
     project = mconfig['wandb_project']
     repo_name = mconfig['repo_name']
-    root_dir = f"{filesystem}/{repo_name}/model_out"
-    run_dir = Path(f"{root_dir}/{project}/{version}")
+    root_dir = f"{filesystem}/GLM/model_out"
+    run_dir = Path(f"{root_dir}/{version}")
     ## don't overwrite existing runs
-    if run_dir.exists() and (mode not in {"resume"}):
+    if run_dir.exists() and (mode not in {"resume", "validate"}):
         raise NotImplementedError(f"run_dir {str(run_dir)} already exists, bad input ")
     run_dir.mkdir(exist_ok=True, parents=True)
 
@@ -118,12 +123,7 @@ def main(args):
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
     
-    #transformer_data_module = LitDataModule(mconfig.data_config)
-    #train_transformer_dl = transformer_data_module.train_dataloader()
-    #val_transformer_dl = transformer_data_module.val_dataloader()
-    
     print("data loaded")
-
 
     model_fn = mconfig.model
     ## write intermediates outputs to scratch space in /pmglocal
@@ -134,9 +134,8 @@ def main(args):
     
     
     ## proceed with setting up trainer 
-    if mode in {"train", "resume", "debug"}:
+    if mode in {"train", "resume", "debug", "validate"}:
         
-
         ### Set up PTL trainer callbacks
         callbacks = []
         ## do not checkpoint every epoch,  will save time 
@@ -144,9 +143,10 @@ def main(args):
         
         if "checkpoint_config" in trainer_conf:
             check_point_conf = trainer_conf['checkpoint_config']
-            for cp_conf in check_point_conf:
-                callbacks.append(ModelCheckpoint(**cp_conf))
-
+            check_point_conf["dirpath"] = f"{run_dir}/checkpoints/"
+            check_point_conf["filename"] = f"{{epoch}}-{{step}}"
+            callbacks.append(ModelCheckpoint(**check_point_conf)) # Locally save checkpoint
+            # callbacks.append(SaveModelEveryNSteps(check_point_conf["every_n_train_steps"])) # wandb save checkpoint
 
         if "early_stopping" in trainer_conf:
             callbacks.append(EarlyStopping(**trainer_conf['early_stopping']))
@@ -154,7 +154,7 @@ def main(args):
         trainer_conf['callbacks'] = callbacks
 
         ### set up logger 
-        wblg= WandbLogger(project = mconfig['wandb_project'],
+        wblg = WandbLogger(project = mconfig['wandb_project'],
                     name = name,
                     entity = mconfig['wandb_user'],
                     version = version,
@@ -162,7 +162,6 @@ def main(args):
                     config=mconfig,
                     save_dir = str(outdir))     
         trainer_conf['logger'] = wblg
-
     else:
         raise NotImplementedError(f"mode {mode} not implemented")
     if "early_stopping" in trainer_conf:
@@ -170,21 +169,31 @@ def main(args):
     if "checkpoint_config" in trainer_conf:
         del trainer_conf["checkpoint_config"]
     
-    
+    wandb.init(project=mconfig['wandb_project'], name=name)
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
-        litmodel = model_fn(mconfig)                                                               
+        litmodel = model_fn(mconfig)
+        
+        # print(torchsummary.summary(litmodel, input_size=(3, 224, 224)))
+        
         trainer.fit(litmodel, train_dataloaders = train_transformer_dl, val_dataloaders = val_transformer_dl)
         # trainer.validate(model=litmodel, dataloaders=val_dl)
 
     elif mode == "resume":
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         ckpt = args.ckpt_file
-        ckpt_file = f"{root_dir}/{project}/{version}/checkpoints/{ckpt}"
-        litmodel = model_fn.load_from_checkpoint(ckpt_file, 
-                    config = mconfig)
+        ckpt_file = f"{run_dir}/checkpoints/{ckpt}"
+        litmodel = model_fn.load_from_checkpoint(ckpt_file, config = mconfig)
         ### ckpt_path is required to resume training 
         trainer.fit(litmodel, train_dataloaders = train_transformer_dl,ckpt_path = ckpt_file)
+        
+    elif mode == "validate":
+        trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
+        ckpt = args.ckpt_file
+        ckpt_file = f"{run_dir}/checkpoints/{ckpt}"
+        litmodel = model_fn.load_from_checkpoint(ckpt_file, config = mconfig)
+        trainer.validate(model=litmodel, dataloaders=val_transformer_dl)
+
     else:
         raise NotImplementedError(f"mode {mode} not implemented")
 

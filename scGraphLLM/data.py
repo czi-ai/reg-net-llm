@@ -201,6 +201,8 @@ class GraphTransformerDataset(torchDataset):
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         
+        # print(data.edge_index.shape, node_indices.shape[0])
+        
         # graph positional encoding
         spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
