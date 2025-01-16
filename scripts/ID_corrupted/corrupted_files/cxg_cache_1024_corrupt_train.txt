@@ -1,0 +1,15 @@
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/unknown_17725.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/lamp5_gabaergic_cortical_interneuron_14970.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/endothelial_cell_7763.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/skin_fibroblast_10684.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/vascular_associated_smooth_muscle_cell_12561.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/cd14-positive_monocyte_24549.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/thymocyte_2075.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/memory_b_cell_22113.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/memory_b_cell_28235.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/skin_fibroblast_17960.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/retinal_rod_cell_31310.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/cd4-positive_alpha-beta_memory_t_cell_2499.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/classical_monocyte_13069.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/cd14-positive_monocyte_29013.pt
+/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train/epithelial_cell_15663.pt

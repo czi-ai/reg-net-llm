@@ -77,9 +77,6 @@ for filename in directories:
         runs["unaccounted"].append(extract_cell_type(file))
         summary["unaccounted"].append(int(filename[19:-4]))
 
-# Unable to synchronously open file
-# __conda_exe: command not found
-
 print(f"# successfully preprocessed: {len(runs['success'])}")
 print(f"# -- failed (clusterless): {len(runs['clusterless'])} \t\t -> Normal Behavior")
 print(f"# -- failed (no primary data): {len(runs['no_primary_data'])} \t -> Normal Behavior")
