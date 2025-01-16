@@ -1,16 +1,64 @@
 #!/bin/bash 
 
-# DIRECTORY="/hpc/projects/group.califano/GLM/data/cellxgene/data/cell_type_all"
-# CELL_TYPE="a2_amacrine_cell"
+# CXG_DIR="/hpc/projects/group.califano/GLM/data/cellxgene/data/cell_type_all"
+# CELL_TYPE="macrophage" # "astrocyte_of_the_cerebral_cortex"
+# ARACNE_TOP_N_HVG=1024
 
-DIRECTORY=$1
-CELL_TYPE=$2
-ARACNE_TOP_N_HVG=$3
+CELL_TYPE=""
+DATA_DIR=""
+CXG_DIR=""
+OUT_DIR=""
+RANK_BY_Z=""
+ARACNE_TOP_N_HVG=""
+ARACNE_PATH=""
 
-# CHANGE TO YOUR SPECIFICATIONS
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --cell-type)
+      CELL_TYPE="$2"
+      shift # Remove --cell-type
+      shift
+      ;;
+    --data-dir)
+      DATA_DIR="$2"
+      shift # Remove --data-dir
+      shift
+      ;;
+    --cxg-dir)
+      CXG_DIR="$2"
+      shift # Remove --cxg-dir
+      shift
+      ;;
+    --out-dir)
+      OUT_DIR="$2"
+      shift # Remove --out-dir
+      shift
+      ;;
+    --rank-by-z)
+      RANK_BY_Z="$2"
+      shift # Remove --rank-by-z
+      shift
+      ;;
+    --aracne-top-n-hvg)
+      ARACNE_TOP_N_HVG="$2"
+      shift # Remove --aracne-top-n-hvg
+      shift
+      ;;
+    --aracne-path)
+      ARACNE_PATH="$2"
+      shift # Remove --aracne-path
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
+
 PREPROCESS=true
 RUN_ARACNE=true
-RANK_BY_Z_SCORE=true
 MIN_TOTAL_SUBNETS=50
 ARACNE_DIRNAME=aracne_$ARACNE_TOP_N_HVG
 N_THREADS=4
@@ -20,27 +68,38 @@ module load mamba
 mamba activate scllm
 
 # Base paths
-data_base_path=$DIRECTORY
-out_base_path="/hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_rank_by_z_score"
-regulators_path="/hpc/projects/group.califano/GLM/data/regulators.txt"
-preprocess_path="/hpc/projects/group.califano/GLM/scGraphLLM/scGraphLLM/preprocess.py"
-aracne="/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release"
+regulators_path="$DATA_DIR"/regulators.txt
+preprocess_path="../scGraphLLM/preprocess.py"
+aracne=$ARACNE_PATH
 
 # Preprocess cell-type
 echo "Processing ${CELL_TYPE}..."
 
 start_time=$(date +%s)
 if $PREPROCESS; then
-    python $preprocess_path\
-        --data_path "${data_base_path}/${CELL_TYPE}/partitions" \
-        --out_dir "${out_base_path}/${CELL_TYPE}" \
-        --save_metacells \
-        --sample_index_vars dataset_id donor_id tissue \
-        --aracne_min_n 250 \
-        --aracne_dirname $ARACNE_DIRNAME \
-        --n_bins 250 \
-        --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
-        --rank_by_z_score $RANK_BY_Z_SCORE
+    if $RANK_BY_Z_SCORE; then
+        OUT_DIR="$OUT_DIR"
+        python $preprocess_path \
+            --data_path "${CXG_DIR}/${CELL_TYPE}/partitions" \
+            --out_dir "${OUT_DIR}/${CELL_TYPE}" \
+            --save_metacells \
+            --sample_index_vars dataset_id donor_id tissue \
+            --aracne_min_n 250 \
+            --aracne_dirname $ARACNE_DIRNAME \
+            --n_bins 250 \
+            --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
+            --rank_by_z_score
+    else
+        python $preprocess_path\
+            --data_path "${CXG_DIR}/${CELL_TYPE}/partitions" \
+            --out_dir "${OUT_DIR}/${CELL_TYPE}" \
+            --save_metacells \
+            --sample_index_vars dataset_id donor_id tissue \
+            --aracne_min_n 250 \
+            --aracne_dirname $ARACNE_DIRNAME \
+            --n_bins 250 \
+            --aracne_top_n_hvg $ARACNE_TOP_N_HVG
+    fi
 
     # Check if the command succeeded
     if [ $? -eq 0 ]; then
@@ -54,7 +113,7 @@ echo -e "\n"
 
 if $RUN_ARACNE; then
     # Generate ARACNe subnetworks for each cluster
-    counts_files=($(find "$out_base_path/$CELL_TYPE/$ARACNE_DIRNAME/counts/" -name "counts_*.tsv" | sort))
+    counts_files=($(find "$OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME/counts/" -name "counts_*.tsv" | sort))
     n_clusters=${#counts_files[@]}
 
     if [ $n_clusters -eq 0 ]; then
@@ -71,7 +130,7 @@ if $RUN_ARACNE; then
             $aracne \
                 -e $file_path \
                 -r $regulators_path \
-                -o $out_base_path/$CELL_TYPE/$ARACNE_DIRNAME \
+                -o $OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME \
                 -x $n_subnets_per_cluster \
                 -FDR \
                 --runid $index \
@@ -83,9 +142,9 @@ if $RUN_ARACNE; then
 
         echo "Consolidating ARACNe subnetworks for ${n_clusters} clusters of cell type: ${CELL_TYPE} "
         $aracne \
-            -e $out_base_path/$CELL_TYPE/$ARACNE_DIRNAME/counts/counts.tsv \
+            -e $OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME/counts/counts.tsv \
             -r $regulators_path \
-            -o $out_base_path/$CELL_TYPE/$ARACNE_DIRNAME \
+            -o $OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME \
             -x $n_total_subnets \
             -FDR \
             --subsample 1.00 \

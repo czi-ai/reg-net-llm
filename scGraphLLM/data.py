@@ -29,7 +29,80 @@ def load(file):
     with open(file, "rb") as ifl:
         return pickle.load(ifl)
 
-def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]], gene_to_node_file:str, cache_dir:str, overwrite:bool=False, valsg_split_ratio = 0.3):
+def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells):
+    aracne_out = i[0]
+    msplit = i[1]
+    cell_type = aracne_out.split("/")[-2]
+    sample = aracne_out.split("/")[-1]
+    assert aracne_out[-1] != "/", "aracne_out should not end with a /"
+    network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
+    network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
+    ranks = pd.read_csv(str(Path(aracne_out).parents[0]) + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
+    common_genes = list(set(network_genes).intersection(set(ranks.columns)))
+
+    ranks = ranks.loc[:, common_genes]
+    for i in range(ranks.shape[0]):
+        if ncells % 1000 == 0:
+            print(f"Processed {ncells} cells", end="\r")
+        cell_number = ranks.index[i]
+        
+        if msplit == "valSG":
+            rand = rng.random()
+            if rand > valsg_split_ratio:
+                split = "train"
+            else:
+                split = msplit
+        else:
+            split = msplit
+        
+        outfile = f"{cache_dir}/{split}/{cell_type}_{cell_number}.pt"
+        if (os.path.exists(outfile)) and (not overwrite):
+            ncells+=1
+            continue
+        
+        cell = ranks.iloc[i, :]
+        # cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
+        # VS:
+        # keep graph static across batches 
+        cell = cell + NUM_GENES
+        # nn.Embedding be used for both gene and rank embeddings
+        if cell.shape[0] < MIN_GENES_PER_GRAPH: # require a minimum number of genes per cell 
+            skipped += 1
+            ncells+=1
+            continue
+
+        # Subset network to only include genes in the cell
+        network_cell = network[
+            network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
+        ]
+
+        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
+        # so edge index is local to each graph for each cell. 
+        # cell.index defines the order of the nodes in the graph
+        with warnings.catch_warnings(): # Suppress annoying pandas warnings
+            warnings.simplefilter("ignore") 
+            edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
+            edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
+            edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
+
+        edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
+        edge_weights = torch.tensor(np.array(edges['mi.values']))
+        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
+        data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
+        
+        torch.save(data, outfile)
+        ncells += 1
+            
+        try:
+            torch.load(outfile)
+            print(outfile)
+        except:
+            print(outfile, "-------- Failed")
+        
+    return (skipped, ncells)
+
+def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]], gene_to_node_file:str, cache_dir:str, overwrite:bool=False, single=False, valsg_split_ratio = 0.2): # 0.2 makes it closer to equal size btween SG and HOG
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         
@@ -39,71 +112,16 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
         skipped = 0
         ncells = 0
         
-        for i in aracne_outdir_info:
-            aracne_out = i[0]
-            msplit = i[1]
-            sample = aracne_out.split("/")[-1]
-            assert aracne_out[-1] != "/", "aracne_out should not end with a /"
-            network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
-            network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-            ranks = pd.read_csv(str(Path(aracne_out).parents[0]) + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
-            common_genes = list(set(network_genes).intersection(set(ranks.columns)))
+        if single: # Run on a single cell-type
+            print("Caching", aracne_outdir_info[0][0].split("/")[-2])
+            skipped, ncells = run_save(aracne_outdir_info[0], global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
+        # else:
+        #     for i in aracne_outdir_info:
+        #         skipped, ncells = run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
 
-            ranks = ranks.loc[:, common_genes]
-            for i in range(ranks.shape[0]):
-                if ncells % 1000 == 0:
-                    print(f"Processed {ncells} cells", end="\r")
-                cell_name = ranks.index[i]
-                
-                if msplit == "valSG":
-                    rand = rng.random()
-                    if rand > valsg_split_ratio:
-                        split = "train"
-                    else:
-                        split = msplit
-                else:
-                    split = msplit
-                    
-                outfile = f"{cache_dir}/{split}/{sample}_{cell_name}.pt"
-                if os.path.exists(outfile)&(not overwrite):
-                    ncells+=1
-                    continue
-                
-                cell = ranks.iloc[i, :]
-                # cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
-                # VS:
-                # keep graph static across batches 
-                cell = cell + NUM_GENES
-                # nn.Embedding be used for both gene and rank embeddings
-                if cell.shape[0] < MIN_GENES_PER_GRAPH: # require a minimum number of genes per cell 
-                    skipped += 1
-                    ncells+=1
-                    continue
-
-                # Subset network to only include genes in the cell
-                network_cell = network[
-                    network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
-                ]
-
-            local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-            ## each cell graph is disjoint from each other interms of the relative position of nodes and edges
-            ## so edge index is local to each graph for each cell. 
-            ## cell.index defines the order of the nodes in the graph
-            with warnings.catch_warnings(action="ignore") : ## suppress annoying pandas warnings
-                edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
-                edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
-                edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
-
-                edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
-                edge_weights = torch.tensor(np.array(edges['mi.values']))
-                node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
-                data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
-                torch.save(data, outfile)
-                ncells += 1
-                
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")
-        return 
+
 
 ############# Graph features ######################
 
@@ -404,8 +422,10 @@ if __name__ == "__main__":
     parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")
     parser.add_argument("--cache-dir", type=str, help="Directory to store the processed data")
     parser.add_argument("--num-proc", type=int, help="Number of processes to use", default=1)
+    parser.add_argument("--single-index", type=int, help="Index in --aracane-outdir-md to path to specific cell-type aracne for single cell-type caching (mainly used with parallelization)", default=0)
     parser.add_argument("--debug", action="store_true", default=False, help="Run in debug mode")
     args = parser.parse_args()
+    single_index = args.single_index
     debug = args.debug
     num_proc = int(args.num_proc)
     
@@ -414,18 +434,20 @@ if __name__ == "__main__":
     
     # Create cache directories for each dataset (train, valSG, valHG)
     unique_subsets = np.unique(aracane_metadata[:,1])
+    Path(f"{args.cache_dir}/train").mkdir(parents=True, exist_ok=True) # Train is not in the outdirs csv as (the way the code is written) train data is pulled from the valSG data
     for subset in unique_subsets:
         Path(f"{args.cache_dir}/{subset}").mkdir(parents=True, exist_ok=True)
     sub_lists = np.array_split(aracane_metadata, num_proc)
-    args = [(sub_list, args.gene_to_node_file, args.cache_dir) for sub_list in sub_lists]
-    
+    args_list = [(sub_list, args.gene_to_node_file, args.cache_dir) for sub_list in sub_lists]
+        
     if debug:
         print("DEBUG")
-        for arg in args:
+        for arg in args_list:
             transform_and_cache_aracane_graph_ranks(*arg)
+    elif single_index: # Single is equal to any non-zero value (the index)
+        print("SINGLE CACHE")
+        transform_and_cache_aracane_graph_ranks([aracane_metadata[single_index-1]], args.gene_to_node_file, args.cache_dir, single=True)
     else:
         print("RUNNING MULTI-THREADED")
-        # with Pool(num_proc) as p:
-        for arg in args:
-            transform_and_cache_aracane_graph_ranks(*arg)
-
+        with Pool(num_proc) as p:
+            p.starmap(transform_and_cache_aracane_graph_ranks, args_list)
