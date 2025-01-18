@@ -313,6 +313,11 @@ class FlashMHASelfMaskKV(nn.Module):
         Credit: some elements adopted from OpenFold:
         https://github.com/aqlaboratory/openfold/blob/feed4ae22edf899b37bee49293fff902bdd64e2d/openfold/model/primitives.py#L660
         """
+        
+        ## ADDED TO RUN FINE-TUNING MIGHT FUCK UP TRAINING IDK ###
+        q = q.bfloat16()
+        k = k.bfloat16()
+        v = v.bfloat16()
         dtype = q.dtype
 
         b_size, s_size, _, _ = q.shape
@@ -372,6 +377,7 @@ class FlashMHASelfMaskKV(nn.Module):
         )
         context = rearrange(context, '(b s) h d -> b s (h d)',
                             b=b_size, h=self.num_heads)
+        context = context.to(torch.float32) # ALSO ADDED FOR FINE-TUNING RUN.
         return self.out_proj(context)
 
 
