@@ -3,7 +3,6 @@ import torch.nn as nn
 from _globals import *
 from copy import deepcopy
 import models as models
-import flash_transformer as flash_transformer
 #import linear_model as linear_model
 
 class Config(dict):
@@ -29,12 +28,7 @@ node_hyperparams = Config({
 
 transformer_dim = Config({
     "input_dim": 2*node_hyperparams.node_embedding_dim,
-    "feed_dim": 2*node_hyperparams.node_embedding_dim,
-    "hidden_dims": [2*node_hyperparams.node_embedding_dim, 
-                    2*node_hyperparams.node_embedding_dim, 
-                    2*node_hyperparams.node_embedding_dim],
-    "conv_dim": 2*node_hyperparams.node_embedding_dim, 
-    "out_dim": 2*node_hyperparams.node_embedding_dim,
+    "feed_dim": 256
 })
 
 vanilla_config = Config({
@@ -90,7 +84,7 @@ graph_kernel_attn_3L_config = Config({
     "num_heads": 8,
     "num_encoder_layers": 3,
     "activation": "gelu",
-    "dropout": 0.1,
+    "dropout": 0.5,
     "batch_first": True,
     "use_pe": False,
     "use_attn_mask": True,
@@ -110,7 +104,7 @@ graph_kernel_attn_6L_config = Config({
 })
 
 vanilla_manitou = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_config,
     "data_config":Config({
@@ -155,7 +149,7 @@ vanilla_manitou = Config({
 })
 
 vanilla_1024_base = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_config,
     "data_config":Config({
@@ -200,7 +194,7 @@ vanilla_1024_base = Config({
 })
 
 vanilla_1024 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_config,
     "data_config":Config({
@@ -245,7 +239,7 @@ vanilla_1024 = Config({
 })
 
 vanilla_2048 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_config,
     "data_config":Config({
@@ -290,7 +284,7 @@ vanilla_2048 = Config({
 })
 
 vanilla_4096 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_config,
     "data_config":Config({
@@ -335,7 +329,7 @@ vanilla_4096 = Config({
 })
 
 vanilla_3L_4096 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_3L_config,
     "data_config":Config({
@@ -380,7 +374,7 @@ vanilla_3L_4096 = Config({
 })
 
 vanilla_6L_4096 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM
+    "model": models.GDTransformer, # models.LitScGraphLLM
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_6L_config,
     "data_config":Config({
@@ -425,7 +419,7 @@ vanilla_6L_4096 = Config({
 })
 
 graph_kernel_attn_manitou = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
@@ -470,7 +464,7 @@ graph_kernel_attn_manitou = Config({
 })
 
 graph_kernel_attn_1024_base = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
@@ -515,7 +509,7 @@ graph_kernel_attn_1024_base = Config({
 })
 
 graph_kernel_attn_1024 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
@@ -560,7 +554,7 @@ graph_kernel_attn_1024 = Config({
 })
 
 graph_kernel_attn_2048 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
@@ -605,7 +599,7 @@ graph_kernel_attn_2048 = Config({
 })
 
 graph_kernel_attn_4096 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
@@ -650,7 +644,7 @@ graph_kernel_attn_4096 = Config({
 })
 
 graph_kernel_attn_3L_4096 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_3L_config,
     "data_config":Config({
@@ -668,12 +662,12 @@ graph_kernel_attn_3L_4096 = Config({
     "trainer_config":Config({
         "max_epochs" : 100,
         "accelerator" : "gpu",
-        "max_time": "01:00:00:00",
+        "max_time": "05:00:00:00",
         "devices" : 1,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 1,
-        "val_check_interval":0.05,
+        "val_check_interval":0.01,
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints
                                 "every_n_train_steps" : 5000 # Save every 5000 training steps
@@ -695,7 +689,7 @@ graph_kernel_attn_3L_4096 = Config({
 })
 
 graph_kernel_attn_6L_4096 = Config({
-    "model": flash_transformer.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_6L_config,
     "data_config":Config({
