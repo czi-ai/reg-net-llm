@@ -21,16 +21,6 @@ mv /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/mast_cell* /burg/pmg/c
 find /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/ -type f | shuf -n 12800 | xargs -I {} mv {} /burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/
 ```
 
-## Model
-
-One of the challenges will be figuring out the exact training procedure. One option would be for each *batch* of cells, we first update the whole graph with the GNN, extract the gene embeddings, and then run the transformer block using these embeddings. This is contingent on how quick it is to update the graph.
-
-If updating the graph is too slow, we can try to update the graph every *epoch* instead, where each epoch is split in two 2 phases, a graph learning phase, where we feed batches of the graph to the GNN, and then a second phase where we feed batches of the cells to the transformer block.
-
-Notations: $g$: number of genes, $n$: number of cells, $d$: node embedding dimension, $r$: rank dimension
-![LLM](https://github.com/mingkz/scGraphLLM/assets/73508804/5db6c298-6dde-4d56-84da-f04143afc81b)
-
-
 ## Install deps
 
 probably a good idea to use a common conda env for all the packages
