@@ -34,7 +34,7 @@ def main(args):
 
     embex = EmbExtractor(
         model_type="Pretrained",
-        max_ncells=1000,
+        max_ncells=None,
         emb_mode="gene",
         gene_emb_style="mean_pool",
         emb_layer=-1,
