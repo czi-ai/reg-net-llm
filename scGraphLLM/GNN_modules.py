@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric
 from torch_geometric.nn import GATConv
-from MLP_modules import AttentionMLP
+from scGraphLLM.MLP_modules import AttentionMLP
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
 import networkx as nx
 import random

@@ -1,6 +1,7 @@
 import torch
-from _globals import * ## imported global variables are all caps 
 from torch_geometric.utils import scatter, remove_self_loops
+
+from scGraphLLM._globals import *  ## imported global variables are all caps 
 
 def _identity(x):
     return x

@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 import pandas as pd
 import scanpy as sc
 import os
@@ -24,15 +25,16 @@ def main(args):
         adata_or_file=data[:10,:],
         model_dir=args.model_dir,
         gene_col="index",
+        embedding_mode="raw",
         max_length=1200,
         batch_size=64,
         obs_to_save=None,
         device="cuda",
         use_fast_transformer=True,
         return_new_adata=True,
-    )
-    embs.write_h5ad(args.emb_path)
-    
+    ) # C x g x d
+
+    np.savez(join(args.out_dir, "embedding.npz"), matrix=embs)
 
 
 if __name__ == "__main__":
