@@ -38,6 +38,7 @@ class LitScGraphLLM(pl.LightningModule):
         L_mlm_rankboth = self.mlm_loss(predicted_rank_id, target_rank_ids, both_mask_locs)
         L_g = self.link_pred_loss(learned_cell_embedding, mask_locs[0], edge_index_list) # only for gene masks
         loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth + L_g
+        #loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth
         gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
         rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, rank_mask_locs | both_mask_locs)
         if type(batch) == dict:

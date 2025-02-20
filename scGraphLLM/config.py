@@ -122,7 +122,7 @@ vanilla_manitou = Config({
     "trainer_config":Config({
         "max_epochs" : 100,
         "accelerator" : "gpu",
-        "max_time": "01:00:00:00",
+        "max_time": "03:00:00:00",
         "devices" : 1,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
@@ -437,7 +437,7 @@ graph_kernel_attn_manitou = Config({
     "trainer_config":Config({
         "max_epochs" : 100,
         "accelerator" : "gpu",
-        "max_time": "01:00:00:00",
+        "max_time": "03:00:00:00",
         "devices" : 1,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,

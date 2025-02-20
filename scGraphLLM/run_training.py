@@ -29,7 +29,7 @@ def generate_random_string(length):
 def collate_fn(batch):
     data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
             "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
-            "spectral_pe" : [], "dataset_name" : [] }
+             "dataset_name" : []}
     
     # Make a dictionary of lists from the list of dictionaries
     for b in batch:

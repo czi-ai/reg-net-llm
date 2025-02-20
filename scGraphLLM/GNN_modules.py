@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric
 from torch_geometric.nn import GATConv
-from MLP_modules import AttentionMLP
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, get_laplacian, add_self_loops
 import networkx as nx
 import random
@@ -42,7 +41,7 @@ class GNN(nn.Module):
     self.output_layer = nn.Linear(conv_dim, out_dim)
     
     # attention network
-    self.attn_network = AttentionMLP(in_size=conv_dim, hidden_size=64, num_heads=self.num_heads_attn_network)
+    #self.attn_network = AttentionMLP(in_size=conv_dim, hidden_size=64, num_heads=self.num_heads_attn_network)
 
   def forward(self, X, edge_index, edge_weight):
     # positional embedding based on shortest path distance
@@ -69,7 +68,7 @@ class GNN(nn.Module):
     # virtual_node_embedding is broadcasted to (G, D) from (1, D)
     assert virtual_node_embedding.shape == node_embedding.shape
     combined_embedding = torch.stack([node_embedding, virtual_node_embedding], dim=1) # shape = (G, 2, D)
-    final_node_embedding, _ = self.attn_network(combined_embedding)
+    #final_node_embedding, _ = self.attn_network(combined_embedding)
     h = self.output_layer(final_node_embedding)
     return h
 
