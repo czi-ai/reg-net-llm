@@ -5,6 +5,8 @@ from torch_geometric.nn import MessagePassing
 import numpy as np
 import pandas as pd 
 from _globals import ZERO_IDX
+
+
 # Ground truth message passing mechnism
 class WeightedAverageConv(MessagePassing):
     def __init__(self):
@@ -64,7 +66,37 @@ class CombinedDataset(InMemoryDataset):
 
     def _process(self):
         pass
+
+# mask edges from graph
+def random_edge_mask(edge_index, mask_ratio=0.15):
+    device = edge_index.device
+    src = edge_index[0].tolist()
+    dst = edge_index[1].tolist()
+    E = edge_index.size(1)
     
+    undirected_pairs = {}
+    for i in range(E):
+        u, v = src[i], dst[i]
+        mn, mx = (u, v) if u <= v else (v, u)
+        if (mn, mx) not in undirected_pairs:
+            undirected_pairs[(mn, mx)] = []
+        undirected_pairs[(mn, mx)].append(i)
+    
+    unique_pairs = list(undirected_pairs.keys())  
+    num_unique = len(unique_pairs)
+    num_mask = int(mask_ratio * num_unique)
+    
+    perm = torch.randperm(num_unique, device=device)
+    masked_pairs_indices = perm[:num_mask]
+    masked_pairs = [unique_pairs[i.item()] for i in masked_pairs_indices]
+    masked_indices = []
+    for pair in masked_pairs:
+        masked_indices.extend(undirected_pairs[pair]) 
+    masked_indices = torch.tensor(masked_indices, device=device, dtype=torch.long)
+    
+    masked_edge_index = edge_index[:, masked_indices]
+
+    return masked_edge_index
     
     
 

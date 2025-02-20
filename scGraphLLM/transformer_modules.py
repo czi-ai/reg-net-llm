@@ -33,6 +33,7 @@ import torch
 from typing import Tuple
 from einops import repeat
 from graph_op import _chebyshev_diffusion
+from MLP_modules import PerturbationHead
 
 
 def rotate_half(x):
@@ -283,7 +284,7 @@ class WQKV(nn.Module):
 
 class FlashMHASelfMaskKV(nn.Module):
     def __init__(self, d_model, num_heads, batch_first, attention_dropout,mode="self", 
-                 bias=True, causal=False, kernel_attn=False,
+                 bias=True, causal=False, kernel_attn=False, num_perturbations=0,
                  use_rotary_emb=None, device = None, dtype = None) -> None:
         super(FlashMHASelfMaskKV, self).__init__()
         assert batch_first
@@ -300,27 +301,29 @@ class FlashMHASelfMaskKV(nn.Module):
         # assert self.head_dim in [16, 32, 64, 128], "Only support head_dim == 16, 32, 64, or 128"
         assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
         self.scaling = self.head_dim ** -0.5
+        
+        self.num_perturbations = num_perturbations
 
         self.use_rotary_emb = use_rotary_emb
         if use_rotary_emb:
             self.rot_emb = RotaryEmbeddingESM(self.head_dim)
 
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
+        self.perturb_proj_head = PerturbationHead(d_model, 1)
 
-    def forward(self, q, k,v, key_padding_mask=None, edge_index_list=None, num_nodes_list=None):
-        """x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
-        key_padding_mask: bool tensor of shape (batch, seqlen)
+    def forward(self, q, k,v, key_padding_mask=None, 
+                edge_index_list=None, num_nodes_list=None, perturb_regime=None):
+        """
         Credit: some elements adopted from OpenFold:
         https://github.com/aqlaboratory/openfold/blob/feed4ae22edf899b37bee49293fff902bdd64e2d/openfold/model/primitives.py#L660
         """
         
-        ## ADDED TO RUN FINE-TUNING MIGHT FUCK UP TRAINING IDK ###
         q = q.bfloat16()
         k = k.bfloat16()
         v = v.bfloat16()
         dtype = q.dtype
 
-        b_size, s_size, _, _ = q.shape
+        b_size, s_size, h_size, d_size = q.shape
         q_cu_seqlens = torch.arange(
             0, (b_size + 1) * s_size, step=s_size, dtype=torch.int32, device=q.device
         )
@@ -329,8 +332,19 @@ class FlashMHASelfMaskKV(nn.Module):
             q, k = self.rot_emb(q, k, seq_dimension=-3)
             
         if self.kernel_attn:
-            q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5)
-            q = q.bfloat16()
+            if self.num_perturbations == 0:
+                q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5)
+                q = q.bfloat16()
+            else:
+                q_flat = q.reshape(b_size, s_size, h_size * d_size)
+                perturb_id = perturb_regime.nonzero()[:, 1].view(b_size, self.num_perturbations) # shape (B, num_perturbations)
+                perturb_index = perturb_id.unsqueeze(-1).expand(b_size, perturb_id.size(1), q_flat.size(-1))
+                q_perturbed = torch.gather(q_flat, 1, perturb_index)
+                delta_eig = self.perturb_proj_head(q_perturbed) # eigen shift due to perturbation, shape (B, num_perturbations)
+                q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5, 
+                                         perturb_indexs=perturb_id, eigen_shifts=delta_eig, perturb_L=True)
+                q = q.bfloat16()
+                
             
         q = rearrange(q.type(dtype), 'b s h d -> (b s) h d',
                         h=self.num_heads)

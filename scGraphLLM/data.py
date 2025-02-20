@@ -15,7 +15,7 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
-from graph_op import spectral_PE
+#from graph_op import spectral_PE
 
 rng = default_rng(42)
 def save(obj, file):
@@ -77,7 +77,8 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
             network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
         ]
 
-        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        local_gene_to_node_index = global_gene_to_node
         # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
         # so edge index is local to each graph for each cell. 
         # cell.index defines the order of the nodes in the graph
@@ -211,7 +212,6 @@ class GraphTransformerDataset(torchDataset):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
-        
         ## for each mask type, create boolean mask of the same shape as node_indices
         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
@@ -230,7 +230,7 @@ class GraphTransformerDataset(torchDataset):
         num_nodes = node_indices.shape[0]
         
         # graph positional encoding
-        spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
+        #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
         return {
                 "orig_gene_id" : orig_gene_indices, 
@@ -240,7 +240,7 @@ class GraphTransformerDataset(torchDataset):
                 "both_mask" : both_mask,
                 "edge_index": data.edge_index,
                 "num_nodes": num_nodes,
-                "spectral_pe": spectral_pe,
+                #"spectral_pe": spectral_pe,
                 "dataset_name" : self.dataset_name
                 }
 
