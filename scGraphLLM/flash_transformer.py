@@ -1,11 +1,12 @@
 # For the model class
 import torch
-from GNN_modules import *
-from MLP_modules import *
-from transformer_modules import *
 import lightning.pytorch as pl
-from _globals import * ## these define the indices for the special tokens 
-from models import LitScGraphLLM
+from scGraphLLM.GNN_modules import *
+from scGraphLLM.MLP_modules import *
+from scGraphLLM.transformer_modules import *
+from scGraphLLM._globals import * ## these define the indices for the special tokens 
+from scGraphLLM.models import LitScGraphLLM
+
 
 class GDTransformer(LitScGraphLLM):
     def __init__(self, config):

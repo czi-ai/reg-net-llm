@@ -4,7 +4,7 @@ from torch.utils.data import Dataset as torchDataset
 from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
-from _globals import * ## imported global variables are all caps 
+
 import os
 from typing import List
 import warnings
@@ -15,7 +15,10 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
-from graph_op import spectral_PE
+
+from scGraphLLM.graph_op import spectral_PE
+from scGraphLLM._globals import * ## imported global variables are all caps 
+
 
 rng = default_rng(42)
 def save(obj, file):
@@ -74,12 +77,13 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
 
         # Subset network to only include genes in the cell
         network_cell = network[
-            network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
+            network["regulator.values"].isin(cell.index) & 
+            network["target.values"].isin(cell.index)
         ]
 
         local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
         # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
-        # so edge index is local to each graph for each cell. 
+        # so edge index is local to each graph for each cell.
         # cell.index defines the order of the nodes in the graph
         with warnings.catch_warnings(): # Suppress annoying pandas warnings
             warnings.simplefilter("ignore") 
@@ -90,7 +94,11 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
         edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
         edge_weights = torch.tensor(np.array(edges['mi.values']))
         node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
-        data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
+        data = Data(
+            x=node_indices, 
+            edge_index=edge_list, 
+            edge_weight=edge_weights
+        )
         
         torch.save(data, outfile)
         ncells += 1

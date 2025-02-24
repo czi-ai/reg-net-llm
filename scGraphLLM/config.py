@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
-from _globals import *
 from copy import deepcopy
-import models as models
-import flash_transformer as flash_transformer
+
 #import linear_model as linear_model
+
+import scGraphLLM.flash_transformer as flash_transformer
+import scGraphLLM.models as models
+from scGraphLLM._globals import *
 
 class Config(dict):
     def __getattr__(self, item):

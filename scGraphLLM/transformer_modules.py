@@ -32,7 +32,8 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
-from graph_op import _chebyshev_diffusion
+
+from scGraphLLM.graph_op import _chebyshev_diffusion
 
 
 def rotate_half(x):
