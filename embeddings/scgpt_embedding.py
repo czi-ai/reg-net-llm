@@ -42,7 +42,7 @@ def main(args):
         device="cuda",
         use_fast_transformer=True,
         return_new_adata=True,
-    ) # C x g x d
+    ) # cells x max_seq_length x embedding_dim
 
     # remove <CLS> token and embeddings
     embeddings = embeddings[:,1:,:]
@@ -54,7 +54,8 @@ def main(args):
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
     
     assert np.sum(genes_symbol == "cls") == 0
-    pad_indices = [np.where(seq == '<pad>')[0][0] if np.any(seq == '<pad>') else -1 for seq in genes_symbol]
+    max_seq_length = embeddings.shape[1]
+    seq_lengths = [np.where(seq == '<pad>')[0][0] if np.any(seq == '<pad>') else max_seq_length for seq in genes_symbol]
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
@@ -75,7 +76,7 @@ def main(args):
     np.savez(
         file=join(args.out_dir, "embedding.npz"), 
         x=embeddings,
-        pad_indices=pad_indices,
+        seq_lengths=seq_lengths,
         edges=edges, 
         allow_pickle=True
     )
