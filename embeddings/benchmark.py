@@ -38,7 +38,7 @@ def send_to_gpu(data):
     else:
         return data  # If not a tensor or list/dict, leave unchanged
 
-class GeneEmbeddingDataset(Dataset):
+class GeneEmbeddingDataset(torch.utils.data.Dataset):
     def __init__(self, paths):
         self.paths = paths
         
@@ -46,27 +46,22 @@ class GeneEmbeddingDataset(Dataset):
     def paths(self):
         return self._paths
 
+    @property
+    def embedding_dim(self):
+        return self.x.shape[2]
+
     @paths.setter
     def paths(self, paths):
         self._paths = paths     
         if isinstance(paths, list):
             for path in paths:
                 assert os.path.exists(path), f"File not found: {path} in provided paths list."
-            embedding = [np.load(path, allow_pickle=True) for path in paths]
+            embedding = [np.load(path, allow_pickle=True) for path in self.paths]
             
-            # assign seq_lengths
             self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
-            
-            # assign x
-            max_seq_length = np.max(self.seq_lengths)
-            x_list = [emb["x"] for emb in embedding]
-            x_list_padded = [
-                np.pad(x, pad_width=((0, 0), (0, max_seq_length - x.shape[1]), (0, 0)), mode="constant", constant_values=0)
-                for x in x_list
-            ]
-            self.x = np.concatenate(x_list_padded, axis=0)
+            self.max_seq_length = np.max(self.seq_lengths)
+            self.x = concatenate_embeddings([emb["x"] for emb in embedding])
 
-            # assign edges
             self.edges = {}
             i = 0
             for emb in embedding:
@@ -75,10 +70,11 @@ class GeneEmbeddingDataset(Dataset):
                     self.edges[i] = edges[j]
                     i += 1
         else:
-            assert os.path.exists(paths), f"File not found: {paths}"
-            embedding = np.load(paths, allow_pickle=True)
+            assert os.path.exists(self.paths), f"File not found: {self.paths}"
+            embedding = np.load(self.paths, allow_pickle=True)
             self.x = embedding["x"]
             self.seq_lengths = embedding["seq_lengths"]
+            self.max_seq_length = np.max(self.seq_lengths)
             self.edges = embedding["edges"].item()
 
     def __len__(self):
@@ -90,6 +86,15 @@ class GeneEmbeddingDataset(Dataset):
             "seq_lengths": torch.tensor(self.seq_lengths[idx]),
             "edges": torch.tensor(self.edges[idx])
         }
+
+def concatenate_embeddings(x_list):
+    max_seq_length = max(x.shape[1] for x in x_list)
+    x_list_padded = [
+        np.pad(x, pad_width=((0, 0), (0, max_seq_length - x.shape[1]), (0, 0)), mode="constant", constant_values=0)
+        for x in x_list
+    ]
+    return np.concatenate(x_list_padded, axis=0)
+
 
 def embedding_collate_fn(batch):
     return {
@@ -211,7 +216,8 @@ def main(args):
         shuffle=False,
         collate_fn=embedding_collate_fn
     )
-    link_predictor = LinkPredictHead(512, 1).to(device)
+
+    link_predictor = LinkPredictHead(dataset.embedding_dim, 1).to(device)
 
     fine_tune(
         ft_model=link_predictor,
