@@ -180,7 +180,7 @@ def fine_tune(ft_model: torch.nn.Module, train_dataloader, lr=1e-3, num_epochs=1
     opt = torch.optim.Adam(ft_model.parameters(), lr=lr, weight_decay=1e-4)
     ft_model.train()
 
-    for epoch in range(num_epochs):
+    for epoch in range(20):
         print(f"Epoch {epoch + 1}/{num_epochs}")
         
         # Training phase
@@ -207,29 +207,180 @@ def fine_tune(ft_model: torch.nn.Module, train_dataloader, lr=1e-3, num_epochs=1
         print(f"Train loss: {train_loss_epoch:.4f}")
     return train_losses
 
+def predict_links(model, dataloader, max_num_batches=100):
+    model.eval().to("cuda")
+    
+    all_preds = []
+    all_labels = []
+    n_b = 0
+    for batch in tqdm.tqdm(dataloader, leave=False):
+        batch = send_to_gpu(batch)
+        loss, preds, labels = link_pred_loss(
+            predictor=model,
+            node_embedding=batch["x"].to(device), 
+            mask_locs=None,
+            seq_lengths=batch["seq_lengths"],
+            edge_index_list=batch["edges"]
+        )
+        all_preds.extend(preds.cpu().detach().numpy())
+        all_labels.extend(labels.cpu().detach().numpy())
+        
+        n_b += 1
+        if n_b >= max_num_batches:
+            break
+    
+    # AUROC
+    fpr, tpr, _ = roc_curve(all_labels, all_preds)
+    auc_score = auc(fpr, tpr)
+    
+    # PR
+    p, r, _ = precision_recall_curve(all_labels, all_preds)
+    apr = average_precision_score(all_labels, all_preds)
+    
+    return fpr, tpr, auc_score, p, r, apr
+
+
+# def plot_auc_roc_pr(fpr, tpr, auc_score, precision, recall, apr, save_path=None):
+#     plt.style.use("ggplot")
+#     fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+
+#     # ROC Curve
+#     ax[0].plot(fpr, tpr, label=f"ROC curve (AUC = {auc_score:.3f})", color="blue")
+#     ax[0].plot([0, 1], [0, 1], "k--", label="Random (AUC = 0.5)")
+#     ax[0].set_xlabel("False Positive Rate")
+#     ax[0].set_ylabel("True Positive Rate")
+#     ax[0].set_title("ROC Curve")
+#     ax[0].legend()
+
+#     # Precision-Recall Curve
+#     ax[1].plot(recall, precision, label=f"PR curve (AP = {apr:.3f})", color="red")
+#     ax[1].set_xlabel("Recall")
+#     ax[1].set_ylabel("Precision")
+#     ax[1].set_title("Precision-Recall Curve")
+#     ax[1].legend()
+
+#     if save_path is not None:
+#         fig.savefig(save_path)
+        
+#     return fig, ax
+
+
+def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, recall_train, apr_train,
+                    fpr_test, tpr_test, auc_score_test, precision_test, recall_test, apr_test, 
+                    save_path=None):
+
+    NEUTRAL = (.1, .1, .1)
+    BLUE = (.0, .4, .8)
+    RED = (.8, 0, .1)
+    PURPLE = (.3, .3, 0.5)
+    GREEN = (.2, .5, 0.3)
+    plt.style.use("ggplot")
+    fig, ax = plt.subplots(1, 2, figsize=(18, 8))
+
+    # ROC Curve
+    ax[0].plot(fpr_train, tpr_train, label=f"Train ROC curve (AUC = {auc_score_train:.3f})", color=(*BLUE, 0.6))
+    ax[0].plot(fpr_test, tpr_test, label=f"Test ROC curve (AUC = {auc_score_test:.3f})", color=(*RED, 0.6))
+    ax[0].plot([0, 1], [0, 1], "k--", label="Random (AUC = 0.5)")
+    ax[0].set_xlabel("False Positive Rate")
+    ax[0].set_ylabel("True Positive Rate")
+    ax[0].set_title("ROC Curve")
+    ax[0].legend()
+
+    # Precision-Recall Curve
+    ax[1].plot(recall_train, precision_train, label=f"Train PR curve (AP = {apr_train:.3f})", color=(*BLUE, 0.6))
+    ax[1].plot(recall_test, precision_test, label=f"Test PR curve (AP = {apr_test:.3f})", color=(*RED, 0.6))
+    ax[1].set_xlabel("Recall")
+    ax[1].set_ylabel("Precision")
+    ax[1].set_title("Precision-Recall Curve")
+    ax[1].legend()
+
+    if save_path is not None:
+        fig.savefig(save_path)
+        
+    return fig, ax
+
+
 
 def main(args):
-    dataset = GeneEmbeddingDataset(args.embedding_path)
-    dataloader = DataLoader(
-        dataset,
+    print("Loading dataset...")
+    scgpt_embedding_path = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
+    train_cell_types = [
+        "cd14_monocytes",
+        # "cd16_monocytes",
+        "cd20_b_cells",
+        # "cd4_t_cells",
+        "cd8_t_cells",
+        # "erythrocytes",
+        "monocyte-derived_dendritic_cells",
+        # "nk_cells",
+        "nkt_cells"
+    ]
+    test_cell_types = [
+        # "cd14_monocytes",
+        "cd16_monocytes",
+        # "cd20_b_cells",
+        "cd4_t_cells",
+        # "cd8_t_cells",
+        "erythrocytes",
+        # "monocyte-derived_dendritic_cells",
+        "nk_cells",
+        # "nkt_cells"
+    ]
+    train_dataset = GeneEmbeddingDataset( 
+        paths=[scgpt_embedding_path.format(cell_type) for cell_type in train_cell_types]
+    )
+    test_dataset = GeneEmbeddingDataset( 
+        paths=[scgpt_embedding_path.format(cell_type) for cell_type in test_cell_types]
+    )
+
+    train_dataloader = DataLoader(
+        train_dataset,
         batch_size=32,
-        shuffle=False,
+        shuffle=True,
         collate_fn=embedding_collate_fn
     )
 
-    link_predictor = LinkPredictHead(dataset.embedding_dim, 1).to(device)
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=32,
+        shuffle=True,
+        collate_fn=embedding_collate_fn
+    )
 
+    link_predictor = LinkPredictHead(train_dataset.embedding_dim, 1).to(device)
+
+    print("Fine tuning link predictor...")
     fine_tune(
         ft_model=link_predictor,
-        train_dataloader=dataloader,
-        max_num_batches=20
+        train_dataloader=train_dataloader,
+        max_num_batches=200,
+        num_epochs=20
     )
+
+    print("Making Inference with link predictor...")
+    fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test = predict_links(
+        link_predictor, test_dataloader, max_num_batches=100
+    )
+
+    fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train = predict_links(
+        link_predictor, train_dataloader, max_num_batches=100
+    )
+
+    save_path = join(args.out_dir, "roc_prc.png")
+    print(f"Saving plot to: {save_path}")
+    plot_auc_roc_pr(
+        fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train,
+        fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test,
+        save_path=save_path
+    )
+
+    # save
+    torch.save(link_predictor.state_dict(), "link_predictor_scgpt.pth")
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--embedding_path", type=str, required=True)
-    # parser.add_argument("--out_dir", type=str, required=True)
+    # parser.add_argument("--embedding_path", type=str, required=True)
+    parser.add_argument("--out_dir", type=str, required=True)
     args = parser.parse_args()
-
     main(args)
