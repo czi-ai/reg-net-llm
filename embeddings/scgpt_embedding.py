@@ -401,7 +401,6 @@ if __name__ == "__main__":
 
     args.cells_path = join(args.data_dir, "cells.h5ad")
     args.out_dir = join(args.data_dir, "embeddings/scgpt")
-    args.emb_path = join(args.out_dir, "embedding.h5ad")
     os.makedirs(args.out_dir, exist_ok=True)
 
     main(args)
