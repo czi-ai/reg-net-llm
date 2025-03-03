@@ -16,7 +16,7 @@ from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
 
-from scGraphLLM.graph_op import spectral_PE
+# from scGraphLLM.graph_op import spectral_PE
 from scGraphLLM._globals import * ## imported global variables are all caps 
 
 

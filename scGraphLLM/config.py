@@ -5,8 +5,6 @@ from copy import deepcopy
 #import linear_model as linear_model
 
 import scGraphLLM.models as models
-import scGraphLLM.flash_transformer as flash_transformer
-import scGraphLLM.models as models
 from scGraphLLM._globals import *
 
 class Config(dict):
