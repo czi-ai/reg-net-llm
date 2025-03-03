@@ -14,10 +14,6 @@ def _cosine_kernel(x):
     return torch.cos(PI * x / 2)
 
 def _rescaled_L(edge_index, num_nodes, edge_weight=None):
-    """
-    Rescale the Laplacian matrix to have eigenvalues in [-1, 1]
-    Math: L_rescaled = -D^(-1/2) * A * D^(-1/2), assume lambda_max = 2
-    """
     edge_index, edge_weight = remove_self_loops(edge_index, edge_weight) 
     if edge_weight is None:
         edge_weight = torch.ones(edge_index.size(1), dtype=torch.float32, device=edge_index.device)
@@ -34,6 +30,25 @@ def _rescaled_L(edge_index, num_nodes, edge_weight=None):
     L_rescaled = torch.sparse_coo_tensor(edge_index, -edge_weight, (num_nodes, num_nodes))
     return L_rescaled
 
+def _perturbed_rescaled_L(edge_index, num_nodes, perturb_index=None, eigen_shift=None):
+    L_unperturbed = _rescaled_L(edge_index, num_nodes)
+    
+    # diagonal of P
+    diag_P = torch.zeros(num_nodes, device=L_unperturbed.device)
+    diag_P[perturb_index] = eigen_shift
+    # build P by assigning eigen shifts
+    diag_idx = torch.arange(num_nodes, device=edge_index.device)
+    diag_indices = torch.stack([diag_idx, diag_idx], dim=0)
+    P = torch.sparse_coo_tensor(diag_indices, diag_P, (num_nodes, num_nodes))
+    
+    # shift to perturbed laplacian
+    L_perturbed = L_unperturbed + P
+    # scale the eigenvalues of perturbed laplacian
+    max_shift = diag_P.max().item()
+    scaling = 2.0 / (2.0 + max_shift)
+    L_perturbed_scaled = L_perturbed.to_dense() * scaling
+    return L_perturbed_scaled.to_sparse()
+
 def _chebyshev_coeff(L_rescaled, K, func, N=100):
     # Gauss-Chebyshev quadrature
     ind = torch.arange(0, K+1, dtype=torch.float32, device=L_rescaled.device) # index
@@ -45,30 +60,16 @@ def _chebyshev_coeff(L_rescaled, K, func, N=100):
     c_k = (2 / torch.pi) * torch.matmul(T_kx, w * f_x)
     return c_k
 
-def _chebyshev_vec(L_rescaled, K, func, num_nodes):
-    c_k = _chebyshev_coeff(L_rescaled, K, func)
-    # Initialize Chebyshev polynomials
-    x0 = torch.ones(num_nodes, 1, dtype=L_rescaled.dtype, device=L_rescaled.device)
-    T_k_x0 = [x0]  # T_0 x0
-    if K == 0:
-        return c_k[0] * x0
-    x1 = torch.sparse.mm(L_rescaled, x0)  # T_1 x0
-    T_k_x0.append(x1)
-    for _ in range(2, K+1):
-        x2 = 2 * torch.sparse.mm(L_rescaled, T_k_x0[-1]) - T_k_x0[-2]
-        T_k_x0.append(x2)
-    
-    y = c_k[0] * T_k_x0[0]
-    for k in range(1, K+1):
-        y += c_k[k] * T_k_x0[k]
-    return y
-
 @torch.amp.autocast(enabled=False, device_type='cuda')
-def _chebyshev_diffusion_per_sample(edge_index, num_nodes, E, k=128, edge_weight=None, beta=0.5):
+def _chebyshev_diffusion_per_sample(edge_index, num_nodes, E, k=128, edge_weight=None, beta=0.5, 
+                                    perturb_index=None, eigen_shift=None, perturb_L=False):
     """
     E: (S, H, d)
     """
-    L_rescaled = _rescaled_L(edge_index, num_nodes, edge_weight)
+    if perturb_L:
+        L_rescaled = _perturbed_rescaled_L(edge_index, num_nodes, perturb_index, eigen_shift)
+    else:
+        L_rescaled = _rescaled_L(edge_index, num_nodes, edge_weight)
     c_k = _chebyshev_coeff(L_rescaled, k, lambda x: _exp_kernel(x, beta))
     E = E.to(torch.float32)
     s, h, d = E.size()
@@ -89,11 +90,13 @@ def _chebyshev_diffusion_per_sample(edge_index, num_nodes, E, k=128, edge_weight
         # shift index
         T_k_prev_prev = T_k_prev 
         T_k_prev = T_k
+        
     final_emb = y.reshape(num_nodes, h, d)
     final_emb = final_emb.bfloat16()
     return final_emb
 
-def _chebyshev_diffusion(edge_index_list, num_nodes_list, E, k=64, beta=0.5):
+def _chebyshev_diffusion(edge_index_list, num_nodes_list, E, k=64, beta=0.5, 
+                         perturb_indexs=None, eigen_shifts=None, perturb_L=False):
     """
     edge index list: list of edge index, length B
     E: (B, S, H, d)
@@ -104,7 +107,15 @@ def _chebyshev_diffusion(edge_index_list, num_nodes_list, E, k=64, beta=0.5):
     for i in range(B):
         E_i = E[i, :num_nodes_list[i], ...]
         edge_index = edge_index_list[i]
-        sample_emb = _chebyshev_diffusion_per_sample(edge_index, num_nodes_list[i], E_i, k=k, beta=beta)
+        if perturb_L:
+            perturb_index = perturb_indexs[i]
+            eigen_shift = eigen_shifts[i]
+            sample_emb = _chebyshev_diffusion_per_sample(edge_index, num_nodes_list[i], E_i, k=k, beta=beta, 
+                                                          perturb_index=perturb_index, 
+                                                          eigen_shift=eigen_shift, 
+                                                          perturb_L=perturb_L)
+        else:
+            sample_emb = _chebyshev_diffusion_per_sample(edge_index, num_nodes_list[i], E_i, k=k, beta=beta)
         
         # pad zero at the right end
         pad_size = S - sample_emb.size(0)
@@ -115,20 +126,3 @@ def _chebyshev_diffusion(edge_index_list, num_nodes_list, E, k=64, beta=0.5):
     fe = torch.stack(final_emb, dim=0)
     assert fe.size() == E.size(), f"Expect {E.size()}, Got {fe.size()}"
     return fe
-
-def spectral_PE(edge_index, num_nodes, k=128, edge_weight=None):
-    """
-    Compute spectral positional embeddings using Chebyshev polynomials from graphs.
-    edge_index: edge_index of the input graph
-    num_nodes: number of nodes in the graph
-    k: order of Chebyshev polynomials
-    edge_weight: edge weights of the input graph(MUST BE POSITIVE)
-    """
-    L_rescaled = _rescaled_L(edge_index, num_nodes, edge_weight)
-    pe = _chebyshev_vec(L_rescaled, k, _identity, num_nodes)
-    pe = pe[:, 1:] # first column is all 1
-    pe_min = pe.min(dim=0, keepdim=True)[0]
-    pe_max = pe.max(dim=0, keepdim=True)[0]
-    pe_standardized = (pe - pe_min) / (pe_max - pe_min + 1e-8)
-    
-    return pe_standardized

@@ -81,7 +81,8 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
             network["target.values"].isin(cell.index)
         ]
 
-        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        local_gene_to_node_index = global_gene_to_node
         # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
         # so edge index is local to each graph for each cell.
         # cell.index defines the order of the nodes in the graph
@@ -215,22 +216,29 @@ class GraphTransformerDataset(torchDataset):
         print(len(self.cached_files))
         return len(self.cached_files)
 
-    def __getitem__(self, idx, mask_fraction = 0.05):
+    def __getitem__(self, idx, mask_fraction = 0.1):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
-        orig_gene_indices = node_indices[:, 0].clone()
-        orig_rank_indices = node_indices[:, 1].clone()
-        num_nodes = node_indices.shape[0]
         ## for each mask type, create boolean mask of the same shape as node_indices
         gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         
-        # print(data.edge_index.shape, node_indices.shape[0])
+        
+        # mask the tensors
+        node_indices[gene_mask, 0] = MASK_IDX
+        node_indices[rank_mask, 1] = MASK_IDX + NUM_GENES
+        node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX + NUM_GENES], 
+                                                  dtype=node_indices.dtype)
+        
+        orig_gene_indices = node_indices[:, 0].clone()
+        orig_rank_indices = node_indices[:, 1].clone()
+        
+        num_nodes = node_indices.shape[0]
         
         # graph positional encoding
-        spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
+        #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
         return {
                 "orig_gene_id" : orig_gene_indices, 
@@ -240,7 +248,7 @@ class GraphTransformerDataset(torchDataset):
                 "both_mask" : both_mask,
                 "edge_index": data.edge_index,
                 "num_nodes": num_nodes,
-                "spectral_pe": spectral_pe,
+                #"spectral_pe": spectral_pe,
                 "dataset_name" : self.dataset_name
                 }
 
