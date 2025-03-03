@@ -469,9 +469,9 @@ def make_metacells(
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank(metacells, n_bins, rank_by_z_score=False):    
+def rank(cells, n_bins, rank_by_z_score=False):    
     # Get the z-score test statistic   
-    df = metacells.to_df()
+    df = cells.to_df()
     
     if rank_by_z_score:
         mean_expr = df.mean(axis=1) # Get the mean of each gene
@@ -575,6 +575,10 @@ def main(args):
         info["metacells"] = qc_metacells
         logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
     else:
+        adata = sc.read_h5ad(args.cells_path)
+        qc_adata = qc_metrics_dict(adata)
+        logger.info(f"Loaded {adata.shape[0]:,} processed cells with sparsity = {qc_adata['sparsity']:2f}")  
+
         metacells = sc.read_h5ad(args.meta_path)
         qc_metacells = qc_metrics_dict(metacells)
         logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
@@ -582,7 +586,7 @@ def main(args):
     if "rank" in args.steps:
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
         ranks, qc_rank = rank(
-            metacells, 
+            adata,
             n_bins=args.n_bins, 
             rank_by_z_score=args.rank_by_z_score
         )

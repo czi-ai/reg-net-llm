@@ -36,12 +36,14 @@ parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--scf_rootdir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
+parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
 
 # scFoundation imports
 sys.path.append(join(args.scf_rootdir, "model"))
 from load import *
 from get_embedding import main_gene_selection
+
 VOCAB_SIZE = 19264
 
 def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature, input_type, pre_normalized, tgthighres, output_type, pool_type):
@@ -211,7 +213,7 @@ def load_data(data_path, vocab_size, gene_list, pre_normalized, input_type, demo
     
     return gexpr_feature
 
-def preprocess_data(gexpr_feature, vocab_size, gene_list, pre_normalized, input_type, demo):
+def preprocess_data(gexpr_feature, vocab_size, gene_list, pre_normalized, input_type, demo=False):
     if gexpr_feature.shape[1] < vocab_size:
         print('Converting gene feature into VOCAB_SIZE')
         gexpr_feature, _, _ = main_gene_selection(gexpr_feature, gene_list)
@@ -252,6 +254,10 @@ def main(args):
     data = data[:, ~data.var["symbol_id"].isna()]
     data.var.set_index("symbol_id")
     data.var_names = data.var["symbol_id"]
+
+    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
+        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+
     data_df = data.to_df()
 
     # load scFoundation gene index
@@ -265,7 +271,7 @@ def main(args):
         gene_list=gene_list, 
         pre_normalized=True, 
         input_type="singlecell", 
-        demo=True
+        demo=False
     )
 
     # Load model

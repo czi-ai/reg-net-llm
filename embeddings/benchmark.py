@@ -303,7 +303,8 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
 
 def main(args):
     print("Loading dataset...")
-    scgpt_embedding_path = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
+    # scgpt_embedding_path = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
+    scf_embedding_path = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scfoundation/embedding.npz"
     train_cell_types = [
         "cd14_monocytes",
         # "cd16_monocytes",
@@ -326,11 +327,17 @@ def main(args):
         "nk_cells",
         # "nkt_cells"
     ]
+    # train_dataset = GeneEmbeddingDataset( 
+    #     paths=[scgpt_embedding_path.format(cell_type) for cell_type in train_cell_types]
+    # )
+    # test_dataset = GeneEmbeddingDataset( 
+    #     paths=[scgpt_embedding_path.format(cell_type) for cell_type in test_cell_types]
+    # )
     train_dataset = GeneEmbeddingDataset( 
-        paths=[scgpt_embedding_path.format(cell_type) for cell_type in train_cell_types]
+        paths=[scf_embedding_path.format(cell_type) for cell_type in ["cd8_t_cells"]]
     )
     test_dataset = GeneEmbeddingDataset( 
-        paths=[scgpt_embedding_path.format(cell_type) for cell_type in test_cell_types]
+        paths=[scf_embedding_path.format(cell_type) for cell_type in ["cd8_t_cells"]]
     )
 
     train_dataloader = DataLoader(
@@ -383,4 +390,5 @@ if __name__ == "__main__":
     # parser.add_argument("--embedding_path", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     args = parser.parse_args()
+    os.makedirs(args.out_dir, exist_ok=True)
     main(args)
