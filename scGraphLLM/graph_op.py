@@ -18,6 +18,17 @@ def _rescaled_L(edge_index, num_nodes, edge_weight=None):
     if edge_weight is None:
         edge_weight = torch.ones(edge_index.size(1), dtype=torch.float32, device=edge_index.device)
     row, col = edge_index[0], edge_index[1]
+
+    if row.shape != edge_weight.shape:
+        print(f"Shape mismatch: row={row.shape}, edge_weight={edge_weight.shape}")
+    max_index = max_index = row.max().item()
+    if max_index >= num_nodes:
+        print(f"Row index out of bounds! max index = {max_index} >= num_nodes = {num_nodes}")
+    if torch.isnan(edge_weight).any():
+        print("NaN detected in edge_weight!")
+    if torch.isinf(edge_weight).any():
+        print("Inf detected in edge_weight!")
+
     deg = scatter(edge_weight, row, 0, dim_size=num_nodes, reduce='sum')
     deg = deg.clamp(min=1e-8)
     assert not torch.isnan(edge_weight).any(), "NaN values in edge_weight"

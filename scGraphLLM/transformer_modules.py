@@ -310,7 +310,7 @@ class FlashMHASelfMaskKV(nn.Module):
             self.rot_emb = RotaryEmbeddingESM(self.head_dim)
 
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
-        self.perturb_proj_head = PerturbationHead(d_model, 1)
+        # self.perturb_proj_head = PerturbationHead(d_model, 1)
 
     def forward(self, q, k,v, key_padding_mask=None, 
                 edge_index_list=None, num_nodes_list=None, perturb_regime=None):

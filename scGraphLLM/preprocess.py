@@ -469,7 +469,7 @@ def make_metacells(
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank(cells, n_bins, rank_by_z_score=False):    
+def rank(cells, n_bins, rank_by_z_score=False, save_path=None):    
     # Get the z-score test statistic   
     df = cells.to_df()
     
@@ -500,7 +500,8 @@ def rank(cells, n_bins, rank_by_z_score=False):
     # Convert the binned ranks to a pandas dataframe
     ranks = pd.DataFrame(rank_bins, columns=df.columns)
     # Save ranks_raw.csv file to cell-type-specific directory
-    ranks.to_csv(f"{args.ranks_path}", index=False, header=True)
+    if save_path is not None:
+        ranks.to_csv(save_path, index=False, header=True)
 
     # Save the ranking info
     df_info = df.count(axis=1)
@@ -588,7 +589,8 @@ def main(args):
         ranks, qc_rank = rank(
             adata,
             n_bins=args.n_bins, 
-            rank_by_z_score=args.rank_by_z_score
+            rank_by_z_score=args.rank_by_z_score,
+            save_path=args.ranks_path
         )
         info["ranks"] = qc_rank
     

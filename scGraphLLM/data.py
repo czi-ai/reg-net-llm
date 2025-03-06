@@ -81,8 +81,8 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
             network["target.values"].isin(cell.index)
         ]
 
-        #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-        local_gene_to_node_index = global_gene_to_node
+        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        # local_gene_to_node_index = global_gene_to_node
         # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
         # so edge index is local to each graph for each cell.
         # cell.index defines the order of the nodes in the graph
@@ -198,17 +198,12 @@ class LitDataModule(pl.LightningDataModule):
         return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
-        """
-        Args:
-            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
-            global_gene_to_node_file (str): path to file that maps gene name to integer index 
-            cache_dir (str): path to directory where the processed data will be stored
-        """   
+    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.1, debug:bool=False, ):
         print(cache_dir)     
         self.debug = debug
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
+        self.mask_fraction = mask_fraction
 
     def __len__(self):
         if self.debug:
@@ -216,15 +211,19 @@ class GraphTransformerDataset(torchDataset):
         print(len(self.cached_files))
         return len(self.cached_files)
 
-    def __getitem__(self, idx, mask_fraction = 0.1):
+    def __getitem__(self, idx):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
         ## for each mask type, create boolean mask of the same shape as node_indices
-        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        
+        if self.mask_fraction == 0:
+            gene_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+            rank_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+            both_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+        else:
+            gene_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
+            rank_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
+            both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
         # mask the tensors
         node_indices[gene_mask, 0] = MASK_IDX
@@ -241,16 +240,16 @@ class GraphTransformerDataset(torchDataset):
         #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
         return {
-                "orig_gene_id" : orig_gene_indices, 
-                "orig_rank_indices" : orig_rank_indices, 
-                "gene_mask" : gene_mask, 
-                "rank_mask" : rank_mask, 
-                "both_mask" : both_mask,
-                "edge_index": data.edge_index,
-                "num_nodes": num_nodes,
-                #"spectral_pe": spectral_pe,
-                "dataset_name" : self.dataset_name
-                }
+            "orig_gene_id" : orig_gene_indices, 
+            "orig_rank_indices" : orig_rank_indices, 
+            "gene_mask" : gene_mask, 
+            "rank_mask" : rank_mask, 
+            "both_mask" : both_mask,
+            "edge_index": data.edge_index,
+            "num_nodes": num_nodes,
+            #"spectral_pe": spectral_pe,
+            "dataset_name" : self.dataset_name
+        }
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
