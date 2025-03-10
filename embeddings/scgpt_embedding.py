@@ -31,6 +31,7 @@ TAR_VALS = "target.values"
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, required=True)
 parser.add_argument("--model_dir", type=str, required=True)
+parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--scgpt_rootdir", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
@@ -400,7 +401,6 @@ def main(args):
 if __name__ == "__main__":
 
     args.cells_path = join(args.data_dir, "cells.h5ad")
-    args.out_dir = join(args.data_dir, "embeddings/scgpt")
     os.makedirs(args.out_dir, exist_ok=True)
 
     main(args)

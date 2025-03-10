@@ -1,7 +1,9 @@
 import os 
 from os.path import join, abspath, dirname
 import sys
+import gc
 from argparse import ArgumentParser
+from datetime import datetime
 
 from torch_geometric.utils import negative_sampling
 import lightning.pytorch as pl
@@ -10,14 +12,14 @@ from scGraphLLM.data import *
 from scGraphLLM.GNN_modules import *
 from scGraphLLM.MLP_modules import *
 from scGraphLLM._globals import *
-from scGraphLLM.flash_transformer import GDTransformer
+# from scGraphLLM.flash_transformer import GDTransformer
 from scGraphLLM.config import *
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 from sklearn.metrics import roc_curve, auc
 from sklearn.metrics import precision_recall_curve
@@ -175,37 +177,78 @@ def link_pred_loss(predictor, node_embedding, edge_index_list, mask_locs=None, s
         return torch.tensor(0.0, device=device), torch.tensor([], device=device), torch.tensor([], device=device)
 
 
-def fine_tune(ft_model: torch.nn.Module, train_dataloader, lr=1e-3, num_epochs=100, max_num_batches=200):
-    train_losses = []
-    opt = torch.optim.Adam(ft_model.parameters(), lr=lr, weight_decay=1e-4)
-    ft_model.train()
+class FineTuneModule(pl.LightningModule):
+    def __init__(self, model, lr=1e-3, weight_decay=1e-4):
+        super().__init__()
+        self.model = model
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.model.to(self.device)
 
-    for epoch in range(20):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
-        
-        # Training phase
-        train_loss_epoch = 0
-        train_batches = len(train_dataloader)
-        num_batches = 0
-        for batch in  tqdm.tqdm(train_dataloader, desc="Training", leave=False):
-            loss, _, _ = link_pred_loss(
-                predictor=ft_model,
-                node_embedding=batch["x"].to(device), 
-                mask_locs=None,
-                seq_lengths=batch["seq_lengths"],
-                edge_index_list=batch["edges"]
-            )
-            loss.backward()
-            opt.step()
+    def training_step(self, batch, batch_idx):
+        loss, _, _ = link_pred_loss(
+            predictor=self.model,
+            node_embedding=batch["x"].to(self.device), 
+            mask_locs=None,
+            seq_lengths=batch["seq_lengths"],
+            edge_index_list=batch["edges"]
+        )
+        self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
+        return loss
     
-            train_loss_epoch += loss.item()
-            num_batches += 1
-            if num_batches >= max_num_batches:
-                break
-        train_loss_epoch /= train_batches
-        train_losses.append(train_loss_epoch)
-        print(f"Train loss: {train_loss_epoch:.4f}")
-    return train_losses
+    def validation_step(self, batch, batch_idx):
+        loss, _, _ = link_pred_loss(
+            predictor=self.model,
+            node_embedding=batch["x"].to(self.device), 
+            mask_locs=None,
+            seq_lengths=batch["seq_lengths"],
+            edge_index_list=batch["edges"]
+        )
+        self.log("val_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
+
+    def configure_optimizers(self):
+        return {
+            "optimizer": torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay),
+            "frequency": 1
+        }
+
+def fine_tune_pl(ft_model, train_dataloader, val_dataloader=None, lr=1e-3, num_epochs=100, max_num_batches=200):
+    
+    early_stop_callback = pl.callbacks.EarlyStopping(
+        monitor="val_loss", 
+        mode="min",
+        verbose=True,
+        strict=True,
+        patience=3
+    )
+    # checkpoint_callback = pl.callbacks.ModelCheckpoint(
+    #     monitor="val_loss", 
+    #     mode="min",
+    #     save_top_k=3,
+    #     verbose=True,
+    #     every_n_epochs=20,
+    #     save_last=True,
+    #     filename="{epoch}-{step}-{val_loss_stage_1:.4f}",
+    #     dirpath=""
+    # )
+    # checkpoint_callback.CHECKPOINT_NAME_LAST = "last-{epoch}-{step}-{val_loss:.4f}"
+
+    trainer = pl.Trainer(
+        max_epochs=num_epochs, 
+        limit_train_batches=max_num_batches,
+        callbacks=[early_stop_callback],
+        check_val_every_n_epoch=1,
+        accumulate_grad_batches=1
+    )
+    model = FineTuneModule(
+        model=ft_model, 
+        lr=lr
+    )
+    trainer.fit(
+        model=model, 
+        train_dataloaders=train_dataloader,
+        val_dataloaders=val_dataloader
+    )
 
 def predict_links(model, dataloader, max_num_batches=100):
     model.eval().to("cuda")
@@ -239,30 +282,6 @@ def predict_links(model, dataloader, max_num_batches=100):
     
     return fpr, tpr, auc_score, p, r, apr
 
-
-# def plot_auc_roc_pr(fpr, tpr, auc_score, precision, recall, apr, save_path=None):
-#     plt.style.use("ggplot")
-#     fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-
-#     # ROC Curve
-#     ax[0].plot(fpr, tpr, label=f"ROC curve (AUC = {auc_score:.3f})", color="blue")
-#     ax[0].plot([0, 1], [0, 1], "k--", label="Random (AUC = 0.5)")
-#     ax[0].set_xlabel("False Positive Rate")
-#     ax[0].set_ylabel("True Positive Rate")
-#     ax[0].set_title("ROC Curve")
-#     ax[0].legend()
-
-#     # Precision-Recall Curve
-#     ax[1].plot(recall, precision, label=f"PR curve (AP = {apr:.3f})", color="red")
-#     ax[1].set_xlabel("Recall")
-#     ax[1].set_ylabel("Precision")
-#     ax[1].set_title("Precision-Recall Curve")
-#     ax[1].legend()
-
-#     if save_path is not None:
-#         fig.savefig(save_path)
-        
-#     return fig, ax
 
 
 def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, recall_train, apr_train,
@@ -303,77 +322,112 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
 
 def main(args):
     print("Loading dataset...")
-    # scgpt_embedding_path = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
-    scf_embedding_path = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scfoundation/embedding.npz"
+    if args.model == "scglm":
+        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
+    elif args.model == "scgpt":
+        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
+    elif args.model == "scf":
+        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scfoundation/aracne_4096/embedding.npz"
+
     train_cell_types = [
         "cd14_monocytes",
-        # "cd16_monocytes",
         "cd20_b_cells",
-        # "cd4_t_cells",
         "cd8_t_cells",
-        # "erythrocytes",
-        "monocyte-derived_dendritic_cells",
-        # "nk_cells",
         "nkt_cells"
     ]
-    test_cell_types = [
-        # "cd14_monocytes",
-        "cd16_monocytes",
-        # "cd20_b_cells",
-        "cd4_t_cells",
-        # "cd8_t_cells",
+    val_cell_types = [
         "erythrocytes",
-        # "monocyte-derived_dendritic_cells",
-        "nk_cells",
-        # "nkt_cells"
+        "cd16_monocytes"
     ]
+    test_cell_types = [
+        "cd4_t_cells",
+        "monocyte-derived_dendritic_cells",
+        "nk_cells"
+    ]
+    train_dataset = GeneEmbeddingDataset( 
+        paths=[embedding_path_format.format(cell_type) for cell_type in train_cell_types]
+    )
+    val_dataset = GeneEmbeddingDataset( 
+        paths=[embedding_path_format.format(cell_type) for cell_type in val_cell_types]
+    )
+    
     # train_dataset = GeneEmbeddingDataset( 
-    #     paths=[scgpt_embedding_path.format(cell_type) for cell_type in train_cell_types]
+    #     paths=[embedding_path_format.format(cell_type) for cell_type in ["cd14_monocytes"]]
+    # )
+    # val_dataset = GeneEmbeddingDataset( 
+    #     paths=[embedding_path_format.format(cell_type) for cell_type in ["cd14_monocytes"]]
     # )
     # test_dataset = GeneEmbeddingDataset( 
-    #     paths=[scgpt_embedding_path.format(cell_type) for cell_type in test_cell_types]
+    #     paths=[embedding_path_format.format(cell_type) for cell_type in ["cd14_monocytes"]]
     # )
-    train_dataset = GeneEmbeddingDataset( 
-        paths=[scf_embedding_path.format(cell_type) for cell_type in ["cd8_t_cells"]]
-    )
-    test_dataset = GeneEmbeddingDataset( 
-        paths=[scf_embedding_path.format(cell_type) for cell_type in ["cd8_t_cells"]]
-    )
+    
+
+    batch_size=8
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=32,
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=embedding_collate_fn
+    )  
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=64,
+        shuffle=True,
+        collate_fn=embedding_collate_fn
+    )   
+
+    link_predictor = LinkPredictHead(
+        embed_dim=train_dataset.embedding_dim, 
+        output_dim=1
+    ).to(device)
+
+    print("Fine tuning link predictor...")
+    fine_tune_pl(
+        ft_model=link_predictor,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        lr=1e-5,
+        max_num_batches=8,
+        num_epochs=200
+        # num_epochs=5
+
+    )
+
+    print("Making Inference with link predictor...")
+
+    fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train = predict_links(
+        link_predictor, train_dataloader, max_num_batches=200
+    )
+
+
+    # Free up memory by deleting datasets and dataloaders
+    del train_dataset, val_dataset, train_dataloader, val_dataloader
+    gc.collect()  # Run garbage collection to release Python memory
+
+    # If using GPU, empty CUDA cache
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+
+    print("Loading Test Data")
+    test_dataset = GeneEmbeddingDataset( 
+        paths=[embedding_path_format.format(cell_type) for cell_type in test_cell_types]
     )
 
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=32,
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=embedding_collate_fn
     )
-
-    link_predictor = LinkPredictHead(train_dataset.embedding_dim, 1).to(device)
-
-    print("Fine tuning link predictor...")
-    fine_tune(
-        ft_model=link_predictor,
-        train_dataloader=train_dataloader,
-        max_num_batches=200,
-        num_epochs=20
-    )
-
-    print("Making Inference with link predictor...")
+    
     fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test = predict_links(
-        link_predictor, test_dataloader, max_num_batches=100
+        link_predictor, test_dataloader, max_num_batches=200
     )
 
-    fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train = predict_links(
-        link_predictor, train_dataloader, max_num_batches=100
-    )
-
-    save_path = join(args.out_dir, "roc_prc.png")
+    save_path = join(args.res_dir, "roc_prc.png")
     print(f"Saving plot to: {save_path}")
     plot_auc_roc_pr(
         fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train,
@@ -381,14 +435,32 @@ def main(args):
         save_path=save_path
     )
 
-    # save
-    torch.save(link_predictor.state_dict(), "link_predictor_scgpt.pth")
+    save_data_path = join(args.res_dir, "roc_prc_data.npz")
+    print(f"Saving roc prc data to: {save_data_path}")
+    np.savez(save_data_path,
+        fpr_test=fpr_test,
+        tpr_test=tpr_test,
+        auc_score_test=auc_score_test,
+        p_test=p_test,
+        r_test=r_test,
+        apr_test=apr_test,
+        fpr_train=fpr_train,
+        tpr_train=tpr_train,
+        auc_score_train=auc_score_train,
+        p_train=p_train,
+        r_train=r_train,
+        apr_train=apr_train
+    )
+
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    # parser.add_argument("--embedding_path", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--suffix", type=str, required=True)
+    parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf"])
     args = parser.parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
+    
+    args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
+    os.makedirs(args.res_dir, exist_ok=False)
     main(args)

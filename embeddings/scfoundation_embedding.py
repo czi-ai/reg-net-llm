@@ -32,6 +32,7 @@ TAR_VALS = "target.values"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, required=True)
+parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--scf_rootdir", type=str, required=True)
@@ -308,7 +309,6 @@ def main(args):
     ], axis=0)
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
 
-
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
 
@@ -337,6 +337,5 @@ def main(args):
 
 if __name__ == "__main__":
     args.cells_path = join(args.data_dir, "cells.h5ad")
-    args.out_dir = join(args.data_dir, "embeddings/scfoundation")
     os.makedirs(args.out_dir, exist_ok=True)
     main(args)

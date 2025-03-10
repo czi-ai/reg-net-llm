@@ -199,16 +199,16 @@ class LitDataModule(pl.LightningDataModule):
 
 class GraphTransformerDataset(torchDataset):
     def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.1, debug:bool=False, ):
-        print(cache_dir)     
         self.debug = debug
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
         self.mask_fraction = mask_fraction
+        print(f"Cache Directory: {cache_dir}")
+        print(f"Observation Count: {len(self):,}")
 
     def __len__(self):
         if self.debug:
             return 1000
-        print(len(self.cached_files))
         return len(self.cached_files)
 
     def __getitem__(self, idx):

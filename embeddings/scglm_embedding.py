@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import torch
-from torch.utils.data import Dataset, DataLoader
 from anndata import AnnData
+import torch
 from torch.utils.data import DataLoader, SequentialSampler
 import os
 import sys
@@ -20,17 +20,9 @@ from typing import Optional, Union
 from os.path import join, dirname, abspath
 import warnings
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import lightning.pytorch as pl
-from scGraphLLM.GNN_modules import *
-from scGraphLLM.MLP_modules import *
-from scGraphLLM.preprocess import rank
-import lightning.pytorch as pl
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
-from torch_geometric.utils import negative_sampling
 from scGraphLLM.models import GDTransformer
+from scGraphLLM.preprocess import rank
 from scGraphLLM.config import *
 from scGraphLLM.data import *
 warnings.filterwarnings("ignore")
@@ -51,6 +43,7 @@ TAR_VALS = "target.values"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, required=True)
+parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--gene_index_path", type=str, required=True)
@@ -113,7 +106,9 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
             continue
         
         cell = ranks.iloc[i, :]
-        cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
+        zero_expression_rank = cell.max()
+        # print(f"Number of cells of zero expression rank {(cell == zero_expression_rank).sum()}")
+        cell = cell[cell != zero_expression_rank] + NUM_GENES ## offset the ranks by global number of genes - this lets the same 
         # VS:
         # keep graph static across batches 
         # cell = cell + NUM_GENES
@@ -171,10 +166,10 @@ def main(args):
 
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
- 
-    # ranks = pd.read_csv(join(args.data_dir, "rank_raw.csv"))
-    ranks, _ = rank(adata, n_bins=250, rank_by_z_score=False)
     
+    print(f"Tokenizing and caching data...")
+    # ranks = pd.read_csv(join(args.data_dir, "rank_raw.csv"))
+    ranks, _ = rank(adata, n_bins=250, rank_by_z_score=True)
     run_save_(
         network=network, 
         ranks=ranks, 
@@ -196,7 +191,7 @@ def main(args):
         mask_fraction=0
     )
     
-    dataloader = DataLoader(
+    dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=16,
         shuffle=False,
@@ -207,6 +202,7 @@ def main(args):
     model = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_manitou)
     
     # Get embeddings
+    print(f"Performing forward pass...")
     model.eval()
 
     embedding_list = []
@@ -216,8 +212,8 @@ def main(args):
         for batch in dataloader:
             embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
             embedding_list.append(embedding.cpu().numpy())
-            edges_list.append(edge_index_list.cpu().numpy())
-            seq_lengths.append(batch["num_nodes"].cpu().numpy())
+            edges_list.append([e.cpu().numpy() for e in edge_index_list])
+            seq_lengths.append(batch["num_nodes"])
 
     seq_lengths = np.concatenate(seq_lengths, axis=0)
     max_seq_length = max(seq_lengths)
@@ -234,21 +230,20 @@ def main(args):
             edges[i] = e
             i += 1
 
+    print("Saving emeddings...")
     np.savez(
-        file=join(args.out_dir, "embedding.npz"), 
+        file=args.emb_path, 
         x=embeddings,
         seq_lengths=seq_lengths,
-        edges=edges, 
+        edges=edges,
         allow_pickle=True
     )
-
-
 
 if __name__ == "__main__":
 
     args.cells_path = join(args.data_dir, "cells.h5ad")
     args.ranks_path = join(args.data_dir, "rank_raw.csv")
-    args.out_dir = join(args.data_dir, "embeddings/scglm")
+    args.emb_path = join(args.out_dir, "embedding.npz")
     args.cache_dir = join(args.out_dir, "cache")
     args.all_data_dir = join(args.cache_dir, "all")
     os.makedirs(args.out_dir, exist_ok=True)
