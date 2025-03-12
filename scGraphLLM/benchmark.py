@@ -212,31 +212,34 @@ class FineTuneModule(pl.LightningModule):
             "frequency": 1
         }
 
-def fine_tune_pl(ft_model, train_dataloader, val_dataloader=None, lr=1e-3, num_epochs=100, max_num_batches=200):
+def fine_tune_pl(ft_model, train_dataloader, save_dir, val_dataloader=None, lr=1e-3, num_epochs=100, max_num_batches=200):
     
     early_stop_callback = pl.callbacks.EarlyStopping(
         monitor="val_loss", 
         mode="min",
         verbose=True,
         strict=True,
-        patience=3
+        patience=10
     )
-    # checkpoint_callback = pl.callbacks.ModelCheckpoint(
-    #     monitor="val_loss", 
-    #     mode="min",
-    #     save_top_k=3,
-    #     verbose=True,
-    #     every_n_epochs=20,
-    #     save_last=True,
-    #     filename="{epoch}-{step}-{val_loss_stage_1:.4f}",
-    #     dirpath=""
-    # )
-    # checkpoint_callback.CHECKPOINT_NAME_LAST = "last-{epoch}-{step}-{val_loss:.4f}"
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        monitor="val_loss", 
+        mode="min",
+        save_top_k=3,
+        verbose=True,
+        every_n_epochs=10,
+        save_last=True,
+        filename="{epoch}-{step}-{val_loss_stage_1:.4f}",
+        dirpath=save_dir
+    )
+    checkpoint_callback.CHECKPOINT_NAME_LAST = "last-{epoch}-{step}-{val_loss:.4f}"
 
     trainer = pl.Trainer(
         max_epochs=num_epochs, 
         limit_train_batches=max_num_batches,
-        callbacks=[early_stop_callback],
+        callbacks=[
+            early_stop_callback,
+            checkpoint_callback
+        ],
         check_val_every_n_epoch=1,
         accumulate_grad_batches=1
     )
@@ -249,6 +252,16 @@ def fine_tune_pl(ft_model, train_dataloader, val_dataloader=None, lr=1e-3, num_e
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader
     )
+
+    best_model_path = checkpoint_callback.best_model_path
+    if best_model_path:
+        print(f"Loading best model from: {best_model_path}")
+        best_model = FineTuneModule.load_from_checkpoint(best_model_path, model=ft_model, lr=lr)
+    else:
+        print("No best model checkpoint found. Returning the original model.")
+        best_model = ft_model
+
+    return best_model
 
 def predict_links(model, dataloader, max_num_batches=100):
     model.eval().to("cuda")
@@ -351,17 +364,6 @@ def main(args):
         paths=[embedding_path_format.format(cell_type) for cell_type in val_cell_types]
     )
     
-    # train_dataset = GeneEmbeddingDataset( 
-    #     paths=[embedding_path_format.format(cell_type) for cell_type in ["cd14_monocytes"]]
-    # )
-    # val_dataset = GeneEmbeddingDataset( 
-    #     paths=[embedding_path_format.format(cell_type) for cell_type in ["cd14_monocytes"]]
-    # )
-    # test_dataset = GeneEmbeddingDataset( 
-    #     paths=[embedding_path_format.format(cell_type) for cell_type in ["cd14_monocytes"]]
-    # )
-    
-
     batch_size=8
 
     train_dataloader = DataLoader(
@@ -384,21 +386,21 @@ def main(args):
     ).to(device)
 
     print("Fine tuning link predictor...")
-    fine_tune_pl(
+    best_model: FineTuneModule = fine_tune_pl(
         ft_model=link_predictor,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         lr=1e-5,
         max_num_batches=8,
-        num_epochs=200
-        # num_epochs=5
-
+        num_epochs=200,
+        save_dir=args.model_save_dir
     )
+    best_link_predictor = best_model.model
 
     print("Making Inference with link predictor...")
 
     fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train = predict_links(
-        link_predictor, train_dataloader, max_num_batches=200
+        best_link_predictor, train_dataloader, max_num_batches=200
     )
 
 
@@ -424,7 +426,7 @@ def main(args):
     )
     
     fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test = predict_links(
-        link_predictor, test_dataloader, max_num_batches=200
+        best_link_predictor, test_dataloader, max_num_batches=200
     )
 
     save_path = join(args.res_dir, "roc_prc.png")
@@ -459,8 +461,10 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf"])
+    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm"])
     args = parser.parse_args()
     
     args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
+    args.model_save_dir = join(args.res_dir, "model")
     os.makedirs(args.res_dir, exist_ok=False)
     main(args)
