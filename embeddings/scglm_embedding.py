@@ -27,7 +27,7 @@ from scGraphLLM.config import *
 from scGraphLLM.data import *
 warnings.filterwarnings("ignore")
 
-from scGraphLLM.benchmark import send_to_gpu
+from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 
 
 
@@ -46,6 +46,7 @@ parser.add_argument("--data_dir", type=str, required=True)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
+parser.add_argument("--use_masked_edges", action="store_true")
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
@@ -207,13 +208,22 @@ def main(args):
 
     embedding_list = []
     edges_list = []
+    masked_edges_list = []
     seq_lengths = []
     with torch.no_grad():
         for batch in dataloader:
-            embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
-            embedding_list.append(embedding.cpu().numpy())
-            edges_list.append([e.cpu().numpy() for e in edge_index_list])
-            seq_lengths.append(batch["num_nodes"])
+            if args.use_masked_edges:
+                edges_list.append([e.cpu().numpy() for e in batch["edge_index"]])
+                batch["edge_index"] = [random_edge_mask(edge_index) for edge_index in batch["edge_index"]]
+                embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
+                embedding_list.append(embedding.cpu().numpy())
+                seq_lengths.append(batch["num_nodes"])
+                masked_edges_list.append(edge_index_list)
+            else:
+                embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
+                embedding_list.append(embedding.cpu().numpy())
+                edges_list.append([e.cpu().numpy() for e in edge_index_list])
+                seq_lengths.append(batch["num_nodes"])
 
     seq_lengths = np.concatenate(seq_lengths, axis=0)
     max_seq_length = max(seq_lengths)
@@ -223,21 +233,36 @@ def main(args):
         for emb in embedding_list
     ], axis=0)
     
+    edges = get_edges_dict(edges_list)
+
+    print("Saving emeddings...") 
+    if masked_edges_list:
+        masked_edges = get_edges_dict(masked_edges_list)
+        np.savez(
+            file=args.emb_path, 
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            edges=edges,
+            masked_edges=masked_edges,
+            allow_pickle=True
+        )
+    else:  
+        np.savez(
+            file=args.emb_path, 
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            edges=edges,
+            allow_pickle=True
+        )
+    
+def get_edges_dict(edges_list):
     edges = {}
     i = 0
     for lst in edges_list:
         for e in lst:
             edges[i] = e
             i += 1
-
-    print("Saving emeddings...")
-    np.savez(
-        file=args.emb_path, 
-        x=embeddings,
-        seq_lengths=seq_lengths,
-        edges=edges,
-        allow_pickle=True
-    )
+    return edges
 
 if __name__ == "__main__":
 
