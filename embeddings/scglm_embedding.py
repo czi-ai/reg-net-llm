@@ -243,7 +243,7 @@ def main(args):
     edges = get_edges_dict(edges_list)
 
     print("Saving emeddings...")
-    if masked_edges_list:
+    if args.use_masked_edges:
         masked_edges = get_edges_dict(masked_edges_list)
         np.savez(
             file=args.emb_path, 

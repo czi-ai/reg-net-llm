@@ -17,9 +17,10 @@ class RobertaLMHead(nn.Module):
     def forward(self, features):
         return self.net(features)
 
+
 class LinkPredictHead(nn.Module):
-    """Head for linked prediction"""
-    def __init__(self, embed_dim, output_dim):
+    """Head for link prediction"""
+    def __init__(self, embed_dim, output_dim=1):
         super().__init__()
         self.net = nn.Sequential(
                 nn.Linear(2 * embed_dim, embed_dim),

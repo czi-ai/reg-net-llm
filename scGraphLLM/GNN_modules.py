@@ -72,6 +72,23 @@ class GNN(nn.Module):
     #final_node_embedding, _ = self.attn_network(combined_embedding)
     h = self.output_layer(final_node_embedding)
     return h
+  
+
+class GATEncoder(nn.Module):
+    """Graph Attention Network (GAT) Encoder"""
+    def __init__(self, in_channels, hidden_dim, out_channels, heads=1, layers=1):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        self.layers.append(GATConv(in_channels, hidden_dim, heads=heads, concat=False))
+        for _ in range(layers - 1):
+          self.layers.append(GATConv(hidden_dim, hidden_dim, heads=heads, concat=False))
+        self.proj = nn.Linear(hidden_dim, out_channels)
+
+    def forward(self, x, edge_index):
+        for layer in self.layers:
+           x = F.gelu(layer(x, edge_index))
+        x = self.proj(x)
+        return x
 
 
 # Graph smoothness reg

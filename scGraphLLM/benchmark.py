@@ -4,13 +4,14 @@ import sys
 import gc
 from argparse import ArgumentParser
 from datetime import datetime
+from functools import partial
 
 from torch_geometric.utils import negative_sampling
 import lightning.pytorch as pl
 
 from scGraphLLM.data import *
-from scGraphLLM.GNN_modules import *
-from scGraphLLM.MLP_modules import *
+from scGraphLLM.GNN_modules import GATEncoder 
+from scGraphLLM.MLP_modules import LinkPredictHead
 from scGraphLLM._globals import *
 # from scGraphLLM.flash_transformer import GDTransformer
 from scGraphLLM.config import *
@@ -104,18 +105,37 @@ def concatenate_embeddings(x_list):
     return np.concatenate(x_list_padded, axis=0)
 
 
-def embedding_collate_fn(batch):
+def embedding_collate_fn(batch, masked_edges=False):
     collated = {
         "x": torch.stack([item["x"] for item in batch]),
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
     }
+    if masked_edges:
+        collated["masked_edges"] = [item["masked_edges"] for item in batch]
     return collated
-    # "masked_edges": [item["masked_edges"] for item in batch]
+
+
+class LinkPredictor(nn.Module):
+    """Full model: GAT Encoder + Link Prediction Head"""
+    def __init__(self, in_channels, hidden_dim, embed_dim, use_gat=False):
+        super().__init__()
+        self.use_gat = use_gat
+        self.encoder = GATEncoder(in_channels, hidden_dim, embed_dim) if self.use_gat else None
+        self.link_predictor = LinkPredictHead(embed_dim, output_dim=1)
+
+    def forward(self, x, edge_index, edge_pairs):
+        if self.use_gat:
+            node_embeddings = self.encoder(x, edge_index)
+        else:
+            node_embeddings = x
+        x_i = node_embeddings[edge_pairs[0]]
+        x_j = node_embeddings[edge_pairs[1]]
+        return self.link_predictor(x_i, x_j)
 
 
 def generalized_link_pred_loss(
-    predictor,
+    predictor: LinkPredictor,
     node_embedding,
     edge_index_list,
     masked_edge_index_list=None,
@@ -163,14 +183,17 @@ def generalized_link_pred_loss(
         ).to(device)
         
         # Positive scores
-        src_emb_pos, dst_emb_pos = node_embedding[i, pos_edge_index[0]], node_embedding[i, pos_edge_index[1]]
-        pos_scores = predictor(src_emb_pos, dst_emb_pos)
+        # src_emb_pos, dst_emb_pos = node_embedding[i, pos_edge_index[0]], node_embedding[i, pos_edge_index[1]]
+        # pos_scores = predictor(src_emb_pos, dst_emb_pos)
+        # FIXME: must provide the operative edge used in embedding as edge_idnex when doing MGM
+        pos_scores = predictor(node_embedding[i], edge_index=edge_index, edge_pairs=pos_edge_index)
         pos_preds.append(pos_scores)
         pos_labels.append(torch.ones_like(pos_scores, device=device))
         
         # Negative scores
-        src_emb_neg, dst_emb_neg = node_embedding[i, neg_edge_index[0]], node_embedding[i, neg_edge_index[1]]
-        neg_scores = predictor(src_emb_neg, dst_emb_neg)
+        # src_emb_neg, dst_emb_neg = node_embedding[i, neg_edge_index[0]], node_embedding[i, neg_edge_index[1]]
+        # neg_scores = predictor(src_emb_neg, dst_emb_neg)
+        neg_scores = predictor(node_embedding[i], edge_index=edge_index, edge_pairs=neg_edge_index)
         neg_preds.append(neg_scores)
         neg_labels.append(torch.zeros_like(neg_scores, device=device))
         
@@ -254,8 +277,7 @@ def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None
         mode="min",
         save_top_k=3,
         verbose=True,
-        # every_n_epochs=10,
-        every_n_epochs=2,
+        every_n_epochs=20, # FIXME
         save_last=True,
         filename="{epoch}-{step}-{val_loss:.4f}",
         dirpath=save_dir
@@ -289,7 +311,7 @@ def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None
         best_model = FineTuneModule.load_from_checkpoint(best_model_path, model=ft_model, lr=lr, task=task)
     else:
         print("No best model checkpoint found. Returning the original model.")
-        best_model = ft_model
+        best_model = model
 
     return best_model
 
@@ -405,11 +427,11 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
     return fig, ax
 
 
-
 def main(args):
     print("Loading dataset...")
     if args.model == "scglm":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
+        # embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked/embedding.npz"
     elif args.model == "scgpt":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
     elif args.model == "scf":
@@ -430,29 +452,19 @@ def main(args):
         "monocyte-derived_dendritic_cells",
         "nk_cells"
     ]
-    # train_dataset = GeneEmbeddingDataset( 
-    #     paths=[embedding_path_format.format(cell_type) for cell_type in train_cell_types]
-    # )
-    # val_dataset = GeneEmbeddingDataset( 
-    #     paths=[embedding_path_format.format(cell_type) for cell_type in val_cell_types]
-    # )
-    masked_paths = [
-        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd8_t_cells/embeddings/scglm/masked_test/embedding.npz",
-        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/embeddings/scglm/masked_test/embedding.npz"
-    ]
-    unmasked_paths = [
-        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd8_t_cells/embeddings/scglm/test/embedding.npz",
-        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/embeddings/scglm/test/embedding.npz"
-    ]
-    
-    # train_dataset = GeneEmbeddingDataset(paths=unmasked_paths)
-    # val_dataset = GeneEmbeddingDataset(paths=unmasked_paths)
+    train_paths = [embedding_path_format.format(cell_type) for cell_type in train_cell_types]
+    val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
+    test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
+
+    print("Loading Train and Validation Data...")
     if args.task == "link":
-        train_dataset = GeneEmbeddingDataset(paths=masked_paths)
-        val_dataset = GeneEmbeddingDataset(paths=masked_paths)
+        train_dataset = GeneEmbeddingDataset(paths=train_paths)
+        val_dataset = GeneEmbeddingDataset(paths=val_paths)
+        collate_fn = embedding_collate_fn
     elif args.task == "mgm":
-        train_dataset = GeneEmbeddingDatasetWithMasks(paths=masked_paths)
-        val_dataset = GeneEmbeddingDatasetWithMasks(paths=masked_paths)
+        train_dataset = GeneEmbeddingDatasetWithMasks(paths=train_paths)
+        val_dataset = GeneEmbeddingDatasetWithMasks(paths=val_paths)
+        collate_fn = partial(embedding_collate_fn, masked_edges=True)
     
     batch_size=8
 
@@ -460,20 +472,22 @@ def main(args):
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=embedding_collate_fn
-    )  
+        collate_fn=collate_fn
+    )
 
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=64,
         shuffle=True,
-        collate_fn=embedding_collate_fn
+        collate_fn=collate_fn
     )   
 
-    predictor = LinkPredictHead(
+    predictor = LinkPredictor(
+        in_channels=train_dataset.embedding_dim,
+        hidden_dim=train_dataset.embedding_dim,
         embed_dim=train_dataset.embedding_dim,
-        output_dim=1
-    ).to(device)
+        use_gat=args.use_gat
+    )
 
     print("Fine tuning link predictor...")
     best_model: FineTuneModule = fine_tune_pl(
@@ -483,8 +497,7 @@ def main(args):
         val_dataloader=val_dataloader,
         lr=1e-5,
         max_num_batches=8,
-        # num_epochs=200,
-        num_epochs=5,
+        num_epochs=200, #FIXME
         save_dir=args.model_save_dir
     )
     best_predictor = best_model.model
@@ -505,16 +518,16 @@ def main(args):
     
 
     print("Loading Test Data")
-    # test_dataset = GeneEmbeddingDataset( 
-    #     paths=[embedding_path_format.format(cell_type) for cell_type in test_cell_types]
-    # )
-    test_dataset = GeneEmbeddingDataset(paths=unmasked_paths)
+    if args.task == "link":
+        test_dataset = GeneEmbeddingDataset(paths=test_paths)
+    elif args.task == "mgm":
+        test_dataset = GeneEmbeddingDatasetWithMasks(paths=test_paths)
 
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=embedding_collate_fn
+        collate_fn=collate_fn
     )
     
     fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test = predict_links(
@@ -552,6 +565,7 @@ if __name__ == "__main__":
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf"])
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm"])
+    parser.add_argument("--use_gat", action="store_true")
     args = parser.parse_args()
     
     args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
