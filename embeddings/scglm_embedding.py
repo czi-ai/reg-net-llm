@@ -209,23 +209,23 @@ def main(args):
     embedding_list = []
     edges_list = []
     masked_edges_list = []
+    non_masked_edges_list = []
     seq_lengths = []
     with torch.no_grad():
         for batch in dataloader:
             if args.use_masked_edges:
                 edges_list.append([e.cpu().numpy() for e in batch["edge_index"]])
                 # idendify edges to mask for each cell
-                masked_edge_indices = [random_edge_mask(edge_index) for edge_index in batch["edge_index"]]
-                non_masked_edge_inices = [
-                    get_non_masked_edges(edge_index, masked_edge_index) 
-                    for edge_index, masked_edge_index in zip(batch["edge_index"], masked_edge_indices)
-                ]
+                # random edge mask returns a tuple (non_masked_edge_index, masked_edge_index)
+                random_edge_masks = [random_edge_mask(edge_index) for edge_index in batch["edge_index"]]
+                non_masked_edge_inices = [edge_mask[0] for edge_mask in random_edge_masks]
+                masked_edge_indices = [edge_mask[1] for edge_mask in random_edge_masks]
                 batch["edge_index"] = non_masked_edge_inices
                 embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
                 embedding_list.append(embedding.cpu().numpy())
                 seq_lengths.append(batch["num_nodes"])
-                masked_edges_list.append(edge_index_list)
-                
+                masked_edges_list.append(masked_edge_indices)
+                non_masked_edges_list.append(non_masked_edge_inices)
             else:
                 embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
                 embedding_list.append(embedding.cpu().numpy())
@@ -242,15 +242,18 @@ def main(args):
     
     edges = get_edges_dict(edges_list)
 
+
     print("Saving emeddings...")
     if args.use_masked_edges:
         masked_edges = get_edges_dict(masked_edges_list)
+        non_masked_edges = get_edges_dict(non_masked_edges_list)
         np.savez(
             file=args.emb_path, 
             x=embeddings,
             seq_lengths=seq_lengths,
             edges=edges,
             masked_edges=masked_edges,
+            non_masked_edges=non_masked_edges,
             allow_pickle=True
         )
     else:  
@@ -262,29 +265,6 @@ def main(args):
             allow_pickle=True
         )
 
-def get_non_masked_edges(edge_index: torch.Tensor, masked_edge_index: torch.Tensor):
-    """
-    Removes edges in masked_edge_index from edge_index.
-
-    Args:
-        edge_index (torch.Tensor): Tensor of shape (2, num_edges) representing the full edge list.
-        masked_edge_index (torch.Tensor): Tensor of shape (2, num_masked_edges) representing edges to be removed.
-
-    Returns:
-        torch.Tensor: Tensor of shape (2, num_remaining_edges) with the non-masked edges.
-    """
-    if masked_edge_index.size(1) == 0:
-        return edge_index  # No edges to remove
-    
-    # Convert to sets of tuples for fast lookup
-    masked_edges_set = set(map(tuple, masked_edge_index.T.cpu().numpy()))
-    edge_tuples = list(map(tuple, edge_index.T.cpu().numpy()))
-    edge_mask = torch.tensor(
-        [edge not in masked_edges_set for edge in edge_tuples],
-        dtype=torch.bool,
-        device=edge_index.device
-    )
-    return edge_index[:, edge_mask]
 
 def get_edges_dict(edges_list):
     edges = {}

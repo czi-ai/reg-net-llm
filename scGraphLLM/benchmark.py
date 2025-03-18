@@ -1,3 +1,4 @@
+import json
 import os 
 from os.path import join, abspath, dirname
 import sys
@@ -5,6 +6,7 @@ import gc
 from argparse import ArgumentParser
 from datetime import datetime
 from functools import partial
+from typing import Dict
 
 from torch_geometric.utils import negative_sampling
 import lightning.pytorch as pl
@@ -54,16 +56,19 @@ class GeneEmbeddingDataset(torch.utils.data.Dataset):
         self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
         self.max_seq_length = np.max(self.seq_lengths)
         self.x = concatenate_embeddings([emb["x"] for emb in embedding])
-        
-        self.edges = {}
+        self.edges = self.aggregate_edges_dict(embedding)
+
+    def aggregate_edges_dict(self, embedding, edges_key="edges"):
+        edges = {}
         i = 0
         for emb in embedding:
-            edges = emb["edges"].item()
+            edges = emb[edges_key].item()
             n_samples = len(edges)
             for j,e in edges.items():
-                self.edges[i+j] = e
+                edges[i+j] = e
             i += n_samples
-        
+        return edges
+
     @property
     def embedding_dim(self):
         return self.x.shape[2]
@@ -78,23 +83,40 @@ class GeneEmbeddingDataset(torch.utils.data.Dataset):
             "edges": torch.tensor(self.edges[idx])
         }
 
-class GeneEmbeddingDatasetWithMasks(GeneEmbeddingDataset):
-    def __init__(self, paths):
+class GeneEmbeddingDatasetWithEdgeMasks(GeneEmbeddingDataset):
+    def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False):
         super().__init__(paths)
-        embedding = [np.load(path, allow_pickle=True) for path in self.paths]
-        self.masked_edges = {}
-        i = 0
-        for emb in embedding:
-            n_samples = len(emb["x"])
-            masked_edges = emb["masked_edges"].item()
-            for j,e in masked_edges.items():
-                self.masked_edges[i+j] = e
-            i += n_samples
+        self.mask_ratio = mask_ratio
+        self.generate_edge_masks = generate_edge_masks
+
+        if not generate_edge_masks:
+            embedding = [np.load(path, allow_pickle=True) for path in self.paths]
+            self.masked_edges = self.aggregate_edges_dict(embedding, edges_key="masked_edges")
+            self.non_masked_edges = self.aggregate_edges_dict(embedding, edges_key="non_masked_edges")
+            
+            mean_perc_masked_edges = np.mean([
+                self.masked_edges[k].shape[1] / self.edges[k].shape[1]
+                for k in self.edges.keys()
+            ])
+            print(f"Mean percentage masked edges {mean_perc_masked_edges:.3f}")
+
+            mean_perc_non_masked_edges = np.mean([
+                self.non_masked_edges[k].shape[1] / self.edges[k].shape[1]
+                for k in self.edges.keys()
+            ])
+            print(f"Mean percentage non masked edges {mean_perc_non_masked_edges:.3f}") 
     
     def __getitem__(self, idx):
         item = super().__getitem__(idx)
-        item["masked_edges"] = torch.tensor(self.masked_edges[idx])
+        if self.generate_edge_masks:
+            non_masked_edges, masked_edges = random_edge_mask(item["edges"], self.mask_ratio)
+            item["masked_edges"] = masked_edges
+            item["non_masked_edges"] = non_masked_edges
+        else:
+            item["masked_edges"] = torch.tensor(self.masked_edges[idx])
+            item["non_masked_edges"] = torch.tensor(self.non_masked_edges[idx])
         return item
+
 
 def concatenate_embeddings(x_list):
     max_seq_length = max(x.shape[1] for x in x_list)
@@ -111,8 +133,11 @@ def embedding_collate_fn(batch, masked_edges=False):
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
     }
+
     if masked_edges:
         collated["masked_edges"] = [item["masked_edges"] for item in batch]
+        collated["non_masked_edges"] = [item["non_masked_edges"] for item in batch]
+
     return collated
 
 
@@ -139,6 +164,7 @@ def generalized_link_pred_loss(
     node_embedding,
     edge_index_list,
     masked_edge_index_list=None,
+    non_masked_edge_index_list=None,
     mask_locs=None,
     seq_lengths=None,
     device="cuda",
@@ -151,13 +177,15 @@ def generalized_link_pred_loss(
     
     for i in range(batch_size):
         edge_index = edge_index_list[i].to(device)
-        
         if masked_edge_index_list is not None:
+            assert non_masked_edge_index_list is not None
             masked_edge_index = masked_edge_index_list[i].to(device)
+            non_masked_edge_index = non_masked_edge_index_list[i].to(device)
             if masked_edge_index.size(1) == 0:
                 continue
             # set positive edges as witheld (masked) edges
             pos_edge_index = masked_edge_index
+            operative_edge_index = non_masked_edge_index
         elif mask_locs is not None:
             masked_nodes = torch.where(mask_locs[i])[0].to(device)
             if masked_nodes.numel() == 0:
@@ -167,8 +195,10 @@ def generalized_link_pred_loss(
             src_nodes, dst_nodes = edge_index[0], edge_index[1]
             edge_mask = (~masked_nodes_bool[src_nodes]) & (~masked_nodes_bool[dst_nodes])
             pos_edge_index = edge_index[:, edge_mask]
+            operative_edge_index = pos_edge_index
         else:
             pos_edge_index = edge_index
+            operative_edge_index = edge_index
         
         if pos_edge_index.size(1) == 0:
             continue
@@ -183,17 +213,14 @@ def generalized_link_pred_loss(
         ).to(device)
         
         # Positive scores
-        # src_emb_pos, dst_emb_pos = node_embedding[i, pos_edge_index[0]], node_embedding[i, pos_edge_index[1]]
-        # pos_scores = predictor(src_emb_pos, dst_emb_pos)
-        # FIXME: must provide the operative edge used in embedding as edge_idnex when doing MGM
-        pos_scores = predictor(node_embedding[i], edge_index=edge_index, edge_pairs=pos_edge_index)
+        # provide the operative edge index to use in the graph convolution
+        # for mgm, this is the non-masked portion of the graph, for link prediction, this is the entire graph
+        pos_scores = predictor(node_embedding[i], edge_index=operative_edge_index, edge_pairs=pos_edge_index)
         pos_preds.append(pos_scores)
         pos_labels.append(torch.ones_like(pos_scores, device=device))
         
         # Negative scores
-        # src_emb_neg, dst_emb_neg = node_embedding[i, neg_edge_index[0]], node_embedding[i, neg_edge_index[1]]
-        # neg_scores = predictor(src_emb_neg, dst_emb_neg)
-        neg_scores = predictor(node_embedding[i], edge_index=edge_index, edge_pairs=neg_edge_index)
+        neg_scores = predictor(node_embedding[i], edge_index=operative_edge_index, edge_pairs=neg_edge_index)
         neg_preds.append(neg_scores)
         neg_labels.append(torch.zeros_like(neg_scores, device=device))
         
@@ -227,35 +254,39 @@ class FineTuneModule(pl.LightningModule):
         self.task = task
     
     def training_step(self, batch, batch_idx):
-        loss = self._step(batch)
+        loss, _, _ = self._step(batch)
         self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
-        loss = self._step(batch)
+        loss, _, _ = self._step(batch)
         self.log("val_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
+
+    def predict_step(self, batch, batch_idx):
+        """Handles predictions during inference."""
+        _, preds, labels = self._step(batch)
+        return {"preds": preds, "labels": labels}
 
     def _step(self, batch):
         if self.task == "link":
-            loss, _, _ = generalized_link_pred_loss(
+            loss, preds, labels = generalized_link_pred_loss(
                 predictor=self.model,
                 node_embedding=batch["x"].to(self.device),
                 seq_lengths=batch["seq_lengths"],
                 edge_index_list=batch["edges"],
-                masked_edge_index_list=None,
                 use_bce_loss=False
             )
         elif self.task == "mgm":
-            loss, _, _ = generalized_link_pred_loss(
+            loss, preds, labels = generalized_link_pred_loss(
                 predictor=self.model,
                 node_embedding=batch["x"].to(self.device), 
                 seq_lengths=batch["seq_lengths"],
                 edge_index_list=batch["edges"],
                 masked_edge_index_list=batch["masked_edges"],
+                non_masked_edge_index_list=batch["non_masked_edges"],
                 use_bce_loss=True
             )
-            pass
-        return loss
+        return loss, preds, labels
 
     def configure_optimizers(self):
         return {
@@ -263,14 +294,14 @@ class FineTuneModule(pl.LightningModule):
             "frequency": 1
         }
 
-def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None, lr=1e-3, num_epochs=100, max_num_batches=200):
+def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None, lr=1e-3, num_epochs=100, max_num_batches=200, patience=5):
     
     early_stop_callback = pl.callbacks.EarlyStopping(
         monitor="val_loss", 
         mode="min",
         verbose=True,
         strict=True,
-        patience=10
+        patience=patience
     )
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         monitor="val_loss", 
@@ -335,47 +366,35 @@ def random_edge_mask(edge_index, mask_ratio=0.15):
     num_mask = int(mask_ratio * num_unique)
     
     perm = torch.randperm(num_unique, device=device)
-    # perm = np.random.permutation(num_unique)
     masked_pairs = [unique_pairs[i.item()] for i in perm[:num_mask]]
     masked_indices = []
+
     for pair in masked_pairs:
         masked_indices.extend(pairs[pair]) 
+
     masked_indices = torch.tensor(masked_indices, device=device, dtype=torch.long)
-    
-    masked_edge_index = edge_index[:, masked_indices]
+    # get non_masked indices
+    all_indices = torch.arange(E, device=device)
+    non_masked_indices = all_indices[~torch.isin(all_indices, masked_indices)]
 
-    return masked_edge_index
+    masked_edge_index = edge_index[:,masked_indices]
+    non_masked_edge_index = edge_index[:,non_masked_indices]
+
+    return non_masked_edge_index, masked_edge_index
 
 
-def predict_links(model, dataloader, task, max_num_batches=100):
+def predict_links(model: FineTuneModule, dataloader, max_num_batches=100):    
     model.eval().to("cuda")
-    
     all_preds = []
     all_labels = []
     n_b = 0
     for batch in tqdm.tqdm(dataloader, leave=False):
         batch = send_to_gpu(batch)
-        if task == "link":
-            loss, preds, labels = generalized_link_pred_loss(
-                predictor=model,
-                node_embedding=batch["x"].to(device), 
-                mask_locs=None,
-                seq_lengths=batch["seq_lengths"],
-                edge_index_list=batch["edges"],
-                use_bce_loss=False
-            )
-        elif task == "mgm":
-            loss, preds, labels = generalized_link_pred_loss(
-                predictor=model,
-                node_embedding=batch["x"].to(device), 
-                seq_lengths=batch["seq_lengths"],
-                edge_index_list=batch["edges"],
-                masked_edge_index_list=batch["masked_edges"],
-                use_bce_loss=True
-            )
+        result = model.predict_step(batch, batch_idx=None)
+        preds = result["preds"]
+        labels = result["labels"]
         all_preds.extend(preds.cpu().detach().numpy())
         all_labels.extend(labels.cpu().detach().numpy())
-        
         n_b += 1
         if n_b >= max_num_batches:
             break
@@ -427,11 +446,20 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
     return fig, ax
 
 
+def print_dataset_info(name, dataset):
+    num_cells, seq_length, embedding_size = dataset.x.shape
+    print(f"{name} Dataset: Number of cells: {num_cells:,}, Sequence length: {seq_length:,}, Embedding size: {embedding_size:,}")
+
+
 def main(args):
+    print("Running train.py with args:")
+    print(json.dumps(args.__dict__, indent=4))
+    info = dict(args=args.__dict__)
+
     print("Loading dataset...")
     if args.model == "scglm":
-        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
-        # embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked/embedding.npz"
+        # embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
+        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked/embedding.npz"
     elif args.model == "scgpt":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
     elif args.model == "scf":
@@ -462,22 +490,25 @@ def main(args):
         val_dataset = GeneEmbeddingDataset(paths=val_paths)
         collate_fn = embedding_collate_fn
     elif args.task == "mgm":
-        train_dataset = GeneEmbeddingDatasetWithMasks(paths=train_paths)
-        val_dataset = GeneEmbeddingDatasetWithMasks(paths=val_paths)
+        train_dataset = GeneEmbeddingDatasetWithEdgeMasks(train_paths, generate_edge_masks=args.generate_edge_masks)
+        val_dataset = GeneEmbeddingDatasetWithEdgeMasks(val_paths, generate_edge_masks=args.generate_edge_masks)
         collate_fn = partial(embedding_collate_fn, masked_edges=True)
-    
-    batch_size=8
+
+    print_dataset_info("Train", train_dataset)
+    print_dataset_info("Validation", val_dataset)
+    info["train_embedding_tensor"] = train_dataset.x.shape
+    info["val_embedding_tensor"] = val_dataset.x.shape
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn
     )
 
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=64,
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn
     )   
@@ -488,24 +519,22 @@ def main(args):
         embed_dim=train_dataset.embedding_dim,
         use_gat=args.use_gat
     )
-
-    print("Fine tuning link predictor...")
+    
+    print(f"Fine tuning link predictor...\n {predictor}")
     best_model: FineTuneModule = fine_tune_pl(
         ft_model=predictor,
         task=args.task,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        lr=1e-5,
-        max_num_batches=8,
-        num_epochs=200, #FIXME
+        lr=args.lr,
+        max_num_batches=args.max_num_batches,
+        num_epochs=args.num_epochs,
         save_dir=args.model_save_dir
     )
-    best_predictor = best_model.model
 
     print("Making Inference with link predictor...")
-
     fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train = predict_links(
-        best_predictor, train_dataloader, task=args.task, max_num_batches=200
+        best_model, train_dataloader, max_num_batches=200
     )
 
     # Free up memory by deleting datasets and dataloaders
@@ -515,23 +544,25 @@ def main(args):
     # If using GPU, empty CUDA cache
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    
 
-    print("Loading Test Data")
+    print("Loading Test Data...")
     if args.task == "link":
         test_dataset = GeneEmbeddingDataset(paths=test_paths)
     elif args.task == "mgm":
-        test_dataset = GeneEmbeddingDatasetWithMasks(paths=test_paths)
+        test_dataset = GeneEmbeddingDatasetWithEdgeMasks(test_paths, generate_edge_masks=args.generate_edge_masks)
+
+    print_dataset_info("Test", test_dataset)
+    info["test_embedding_tensor"] = test_dataset.x.shape
 
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn
     )
     
     fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test = predict_links(
-        best_predictor, test_dataloader,task=args.task, max_num_batches=200
+        best_model, test_dataloader, max_num_batches=200
     )
 
     save_path = join(args.res_dir, "roc_prc.png")
@@ -559,16 +590,27 @@ def main(args):
         apr_train=apr_train
     )
 
+    with open(args.info_path, "w") as file:
+        json.dump(info, file, indent=4)
+
+
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf"])
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm"])
+    parser.add_argument("--generate_edge_masks", action="store_true")
     parser.add_argument("--use_gat", action="store_true")
+    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--max_num_batches", type=int, default=8)
+    parser.add_argument("--num_epochs", type=int, default=200)
+    parser.add_argument("--patience", type=int, default=10)
     args = parser.parse_args()
     
     args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
     args.model_save_dir = join(args.res_dir, "model")
+    args.info_path = join(args.res_dir, f"info.json")
     os.makedirs(args.res_dir, exist_ok=False)
     main(args)
