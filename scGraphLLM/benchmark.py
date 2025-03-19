@@ -59,15 +59,15 @@ class GeneEmbeddingDataset(torch.utils.data.Dataset):
         self.edges = self.aggregate_edges_dict(embedding)
 
     def aggregate_edges_dict(self, embedding, edges_key="edges"):
-        edges = {}
+        edges_dict = {}
         i = 0
         for emb in embedding:
             edges = emb[edges_key].item()
             n_samples = len(edges)
             for j,e in edges.items():
-                edges[i+j] = e
+                edges_dict[i+j] = e
             i += n_samples
-        return edges
+        return edges_dict
 
     @property
     def embedding_dim(self):
