@@ -1,6 +1,7 @@
 import json
 import os 
 from os.path import join, abspath, dirname
+from typing import Union
 import sys
 import gc
 from argparse import ArgumentParser
@@ -294,8 +295,18 @@ class FineTuneModule(pl.LightningModule):
             "frequency": 1
         }
 
-def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None, lr=1e-3, num_epochs=100, max_num_batches=200, patience=5):
-    
+def fine_tune_pl(
+        ft_model, 
+        train_dataloader, 
+        task, 
+        save_dir, 
+        lr, 
+        num_epochs, 
+        max_num_batches,
+        val_check_interval,
+        patience,
+        val_dataloader=None
+    ):
     early_stop_callback = pl.callbacks.EarlyStopping(
         monitor="val_loss", 
         mode="min",
@@ -308,7 +319,7 @@ def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None
         mode="min",
         save_top_k=3,
         verbose=True,
-        every_n_epochs=20, # FIXME
+        every_n_epochs=1, # FIXME
         save_last=True,
         filename="{epoch}-{step}-{val_loss:.4f}",
         dirpath=save_dir
@@ -316,14 +327,15 @@ def fine_tune_pl(ft_model, train_dataloader, task, save_dir, val_dataloader=None
     checkpoint_callback.CHECKPOINT_NAME_LAST = "last-{epoch}-{step}-{val_loss:.4f}"
 
     trainer = pl.Trainer(
-        max_epochs=num_epochs, 
+        max_epochs=num_epochs,
         limit_train_batches=max_num_batches,
+        val_check_interval=val_check_interval,
         callbacks=[
             early_stop_callback,
             checkpoint_callback
         ],
-        check_val_every_n_epoch=1,
-        accumulate_grad_batches=1
+        accumulate_grad_batches=1,
+        deterministic=True
     )
     model = FineTuneModule(
         model=ft_model, 
@@ -383,10 +395,11 @@ def random_edge_mask(edge_index, mask_ratio=0.15):
     return non_masked_edge_index, masked_edge_index
 
 
-def predict_links(model: FineTuneModule, dataloader, max_num_batches=100):    
+def predict_links(model: FineTuneModule, dataloader, max_num_batches=None):    
     model.eval().to("cuda")
     all_preds = []
     all_labels = []
+
     n_b = 0
     for batch in tqdm.tqdm(dataloader, leave=False):
         batch = send_to_gpu(batch)
@@ -396,7 +409,7 @@ def predict_links(model: FineTuneModule, dataloader, max_num_batches=100):
         all_preds.extend(preds.cpu().detach().numpy())
         all_labels.extend(labels.cpu().detach().numpy())
         n_b += 1
-        if n_b >= max_num_batches:
+        if max_num_batches is not None and n_b >= max_num_batches:
             break
     
     # AUROC
@@ -406,8 +419,12 @@ def predict_links(model: FineTuneModule, dataloader, max_num_batches=100):
     # PR
     p, r, _ = precision_recall_curve(all_labels, all_preds)
     apr = average_precision_score(all_labels, all_preds)
+
+    # Sample sizes
+    n_pos = np.sum(np.array(all_labels) == 1)
+    n_neg = np.sum(np.array(all_labels) == 0)
     
-    return fpr, tpr, auc_score, p, r, apr
+    return fpr, tpr, auc_score, p, r, apr, n_pos, n_neg
 
 
 
@@ -456,14 +473,21 @@ def main(args):
     print(json.dumps(args.__dict__, indent=4))
     info = dict(args=args.__dict__)
 
+    # pytorch lightning seed
+    pl.seed_everything(args.random_seed, workers=True)
+
     print("Loading dataset...")
     if args.model == "scglm":
-        # embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
-        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked/embedding.npz"
+        if args.task == "link":
+            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
+        elif args.task == "mgm":
+            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked_002/embedding.npz"
     elif args.model == "scgpt":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
     elif args.model == "scf":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scfoundation/aracne_4096/embedding.npz"
+    elif args.model == "gf":
+        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/geneformer/aracne_4096/embedding.npz"
 
     train_cell_types = [
         "cd14_monocytes",
@@ -509,7 +533,7 @@ def main(args):
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         collate_fn=collate_fn
     )   
 
@@ -528,13 +552,15 @@ def main(args):
         val_dataloader=val_dataloader,
         lr=args.lr,
         max_num_batches=args.max_num_batches,
+        val_check_interval=args.val_check_interval,
         num_epochs=args.num_epochs,
+        patience=args.patience,
         save_dir=args.model_save_dir
     )
 
     print("Making Inference with link predictor...")
-    fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train = predict_links(
-        best_model, train_dataloader, max_num_batches=200
+    fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train, n_pos_train, n_neg_train = predict_links(
+        best_model, train_dataloader, max_num_batches=None
     )
 
     # Free up memory by deleting datasets and dataloaders
@@ -557,12 +583,12 @@ def main(args):
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         collate_fn=collate_fn
     )
     
-    fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test = predict_links(
-        best_model, test_dataloader, max_num_batches=200
+    fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test, n_pos_test, n_neg_test = predict_links(
+        best_model, test_dataloader, max_num_batches=None
     )
 
     save_path = join(args.res_dir, "roc_prc.png")
@@ -576,18 +602,24 @@ def main(args):
     save_data_path = join(args.res_dir, "roc_prc_data.npz")
     print(f"Saving roc prc data to: {save_data_path}")
     np.savez(save_data_path,
+        # Test metrics
         fpr_test=fpr_test,
         tpr_test=tpr_test,
         auc_score_test=auc_score_test,
         p_test=p_test,
         r_test=r_test,
         apr_test=apr_test,
+        n_pos_test=n_pos_test,
+        n_neg_test=n_neg_test,
+        # Train metrics
         fpr_train=fpr_train,
         tpr_train=tpr_train,
         auc_score_train=auc_score_train,
         p_train=p_train,
         r_train=r_train,
-        apr_train=apr_train
+        apr_train=apr_train,
+        n_pos_train=n_pos_train,
+        n_neg_train=n_neg_train
     )
 
     with open(args.info_path, "w") as file:
@@ -598,15 +630,21 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
-    parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf"])
+    parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm"])
     parser.add_argument("--generate_edge_masks", action="store_true")
     parser.add_argument("--use_gat", action="store_true")
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--max_num_batches", type=int, default=8)
-    parser.add_argument("--num_epochs", type=int, default=200)
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--max_num_batches", type=int, default=None)
+    parser.add_argument("--num_epochs", type=int, default=500)
+    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--val_check_interval", type=Union[int, float], default=1.0)
+    parser.add_argument("--random_seed", default=0)
+    # effectively, early stopping will kick in if the model has not improved after
+    # seeing (batch_size * val_check_interval * patience) cells
+    # e.g, trainer will stop if validation score hasn't improved after
+    # training on batch_size=8 * val_check_interval=16 * patience=8 = 1024 cells
     args = parser.parse_args()
     
     args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
