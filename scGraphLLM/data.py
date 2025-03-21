@@ -4,6 +4,7 @@ from torch.utils.data import Dataset as torchDataset
 from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
+import anndata as ad
 
 import os
 from typing import List
@@ -16,8 +17,8 @@ from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
 
-from scGraphLLM.graph_op import spectral_PE
-from scGraphLLM._globals import * ## imported global variables are all caps 
+from graph_op import spectral_PE
+from _globals import * ## imported global variables are all caps 
 
 
 rng = default_rng(42)
@@ -33,18 +34,31 @@ def load(file):
     with open(file, "rb") as ifl:
         return pickle.load(ifl)
 
-def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells):
+def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells, perturbed=False, gene_id="gene_id"):
     aracne_out = i[0]
     msplit = i[1]
     cell_type = aracne_out.split("/")[-2]
     sample = aracne_out.split("/")[-1]
     assert aracne_out[-1] != "/", "aracne_out should not end with a /"
+    
     network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
     network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-    ranks = pd.read_csv(str(Path(aracne_out).parents[0]) + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
+    
+    ranks = pd.read_csv(str(Path(aracne_out).parents[0]) + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0 (ZERO_IDX)
     common_genes = list(set(network_genes).intersection(set(ranks.columns)))
+    ranks = ranks.loc[:, common_genes] # Keep only genes that are also in network (no change expected - they should be the same)
+    
+    if perturbed:
+        prt_dataset = ad.read(str(Path(aracne_out).parents[0]) + "/cells.h5ad", backed="r") # Get perturbation dataset
+        prt_mask = prt_dataset.obs[gene_id].isin(ranks.columns).to_numpy() # Mask accounting for perturbed genes that are included in our dataset
+        # Below will be used going forward
+        ranks = ranks.loc[prt_mask].reset_index(drop=True) # Update "ranks" dataframe -> filter out cells that have perturbed genes we don't cover
+        # Create one-hot vectors for each cell -> 1 corresponding to perturbed gene
+        prts = prt_dataset.obs[gene_id][prt_mask].reset_index(drop=True) # Series object of included perturbations
+        prts_one_hot = np.zeros((ranks.shape), dtype=int)  # Initialize zero matrix
+        for i, gene in enumerate(prts):
+            prts_one_hot[i, ranks.columns.get_loc(gene)] = 1 # Set "1" in appropriate positions
 
-    ranks = ranks.loc[:, common_genes]
     for i in range(ranks.shape[0]):
         if ncells % 1000 == 0:
             print(f"Processed {ncells} cells", end="\r")
@@ -77,13 +91,13 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
 
         # Subset network to only include genes in the cell
         network_cell = network[
-            network["regulator.values"].isin(cell.index) & 
-            network["target.values"].isin(cell.index)
+            network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
         ]
 
-        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        local_gene_to_node_index = global_gene_to_node
         # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
-        # so edge index is local to each graph for each cell.
+        # so edge index is local to each graph for each cell. 
         # cell.index defines the order of the nodes in the graph
         with warnings.catch_warnings(): # Suppress annoying pandas warnings
             warnings.simplefilter("ignore") 
@@ -94,11 +108,21 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
         edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
         edge_weights = torch.tensor(np.array(edges['mi.values']))
         node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
-        data = Data(
-            x=node_indices, 
-            edge_index=edge_list, 
-            edge_weight=edge_weights
-        )
+        
+        if perturbed:
+            cell_perturbation = torch.tensor(prts_one_hot[i], dtype=torch.int) # Get the perturbation corresponding to this cell
+            data = Data(
+                x=node_indices, 
+                edge_index=edge_list, 
+                edge_weight=edge_weights,
+                cell_perturbation=cell_perturbation
+            )
+        else:
+            data = Data(
+                x=node_indices, 
+                edge_index=edge_list, 
+                edge_weight=edge_weights
+            )
         
         torch.save(data, outfile)
         ncells += 1
@@ -111,7 +135,7 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
         
     return (skipped, ncells)
 
-def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]], gene_to_node_file:str, cache_dir:str, overwrite:bool=False, single=False, valsg_split_ratio = 0.2): # 0.2 makes it closer to equal size btween SG and HOG
+def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]], gene_to_node_file:str, cache_dir:str, overwrite:bool=False, single=False, valsg_split_ratio = 0.2, perturbed=False, gene_id="gene_id"): # 0.2 makes it closer to equal size btween SG and HOG
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         
@@ -123,7 +147,7 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
         
         if single: # Run on a single cell-type
             print("Caching", aracne_outdir_info[0][0].split("/")[-2])
-            skipped, ncells = run_save(aracne_outdir_info[0], global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
+            skipped, ncells = run_save(aracne_outdir_info[0], global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells, perturbed=perturbed, gene_id=gene_id)
         # else:
         #     for i in aracne_outdir_info:
         #         skipped, ncells = run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
@@ -227,22 +251,34 @@ class GraphTransformerDataset(torchDataset):
         rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
         
-        # print(data.edge_index.shape, node_indices.shape[0])
-        
         # graph positional encoding
         spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
-        return {
-                "orig_gene_id" : orig_gene_indices, 
-                "orig_rank_indices" : orig_rank_indices, 
-                "gene_mask" : gene_mask, 
-                "rank_mask" : rank_mask, 
-                "both_mask" : both_mask,
-                "edge_index": data.edge_index,
-                "num_nodes": num_nodes,
-                "spectral_pe": spectral_pe,
-                "dataset_name" : self.dataset_name
-                }
+        if hasattr(data, "cell_perturbation"): # If perturbation information is included (perturbation dataset)
+            return {
+                    "orig_gene_id" : orig_gene_indices, 
+                    "orig_rank_indices" : orig_rank_indices, 
+                    "gene_mask" : gene_mask, 
+                    "rank_mask" : rank_mask, 
+                    "both_mask" : both_mask,
+                    "edge_index": data.edge_index,
+                    "perturbation": data.cell_perturbation,
+                    "num_nodes": num_nodes,
+                    "spectral_pe": spectral_pe,
+                    "dataset_name" : self.dataset_name
+                    }
+        else: # If this is not a perturbation dataset
+            return {
+                    "orig_gene_id" : orig_gene_indices, 
+                    "orig_rank_indices" : orig_rank_indices, 
+                    "gene_mask" : gene_mask, 
+                    "rank_mask" : rank_mask, 
+                    "both_mask" : both_mask,
+                    "edge_index": data.edge_index,
+                    "num_nodes": num_nodes,
+                    "spectral_pe": spectral_pe,
+                    "dataset_name" : self.dataset_name
+                    }
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
@@ -266,17 +302,19 @@ class GraphTransformerDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    ## This portion lets you generate the cache for the data outside of the model training loop - took about ~1 hour on 5 cores for the pilot data set
-    ## python scGraphLLM/data.py --aracane-outdir-md  /hpc/projects/group.califano/GLM/data/aracne_1024_outdir.csv --gene-to-node-file /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv --cache-dir /hpc/projects/group.califano/GLM/data/pilotdata_1024 --num-proc 16
+    # This portion lets you generate the cache for the data outside of the model training loop - took about ~1 hour on 5 cores for the pilot data set
+    # python scGraphLLM/data.py --aracane-outdir-md  /hpc/projects/group.califano/GLM/data/aracne_1024_outdir.csv --gene-to-node-file /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv --cache-dir /hpc/projects/group.califano/GLM/data/pilotdata_1024 --num-proc 16
     parser = argparse.ArgumentParser()
     parser.add_argument("--aracane-outdir-md", type=str, help="File containing a list of aracne outdirs; `ls path/to/aracaneOutdirs/* > <input>` ")
     parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")
     parser.add_argument("--cache-dir", type=str, help="Directory to store the processed data")
     parser.add_argument("--num-proc", type=int, help="Number of processes to use", default=1)
-    parser.add_argument("--single-index", type=int, help="Index in --aracane-outdir-md to path to specific cell-type aracne for single cell-type caching (mainly used with parallelization)", default=0)
+    parser.add_argument("--perturbed", type=bool, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
+    parser.add_argument("--gene_id", type=str, help="For perturbation ONLY: column in dataset.obs corresponding to the perturbed gene_id (ENSEMBL symbol notation)", default=None)
+    parser.add_argument("--single-index", type=int, help="Index in --aracane-outdir-md to path to specific cell-type aracne for single cell-type caching (mainly used with parallelization)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run in debug mode")
     args = parser.parse_args()
-    single_index = args.single_index
+    single_index = args.single_index-1 # SLURM starts counting at 1 not 0
     debug = args.debug
     num_proc = int(args.num_proc)
     
@@ -295,9 +333,9 @@ if __name__ == "__main__":
         print("DEBUG")
         for arg in args_list:
             transform_and_cache_aracane_graph_ranks(*arg)
-    elif single_index: # Single is equal to any non-zero value (the index)
+    elif (single_index) or (single_index == 0): # An index value has been given - corresponding to a specific cell-type to be process individually
         print("SINGLE CACHE")
-        transform_and_cache_aracane_graph_ranks([aracane_metadata[single_index-1]], args.gene_to_node_file, args.cache_dir, single=True)
+        transform_and_cache_aracane_graph_ranks([aracane_metadata[single_index]], args.gene_to_node_file, args.cache_dir, single=True, perturbed=args.perturbed, gene_id=args.gene_id)
     else:
         print("RUNNING MULTI-THREADED")
         with Pool(num_proc) as p:

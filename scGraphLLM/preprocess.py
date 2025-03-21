@@ -276,6 +276,10 @@ def get_samples(adata, index_vars=None):
     if index_vars is None or len(index_vars) == 0:
         adata.obs["sample_id"] = "0"
     else:
+        x = adata.obs[index_vars]
+        y = x.apply(lambda row: "_".join(row), axis=1)
+        z = pd.Categorical(y)
+        
         index_vars = sorted(index_vars)
         adata.obs["sample_id"] = pd.Categorical(adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1))
         
@@ -469,11 +473,11 @@ def make_metacells(
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank(metacells, n_bins, rank_by_z_score=False):    
+def rank(metacells, n_bins, z_score_expression=False):    
     # Get the z-score test statistic   
     df = metacells.to_df()
     
-    if rank_by_z_score:
+    if z_score_expression:
         mean_expr = df.mean(axis=1) # Get the mean of each gene
         std_expr = df.std(axis=1)
         df_z_score = (df.sub(mean_expr, axis=0)).div(std_expr, axis=0) # Calculate simple z-score
@@ -582,9 +586,9 @@ def main(args):
     if "rank" in args.steps:
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
         ranks, qc_rank = rank(
-            metacells, 
+            adata,
             n_bins=args.n_bins, 
-            rank_by_z_score=args.rank_by_z_score
+            z_score_expression=args.z_score_expression
         )
         info["ranks"] = qc_rank
     
@@ -632,7 +636,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
-    parser.add_argument("--sample_index_vars", nargs="+")
+    parser.add_argument("--sample_index_vars", nargs="+", default=None)
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
@@ -645,7 +649,7 @@ if __name__ == "__main__":
     parser.add_argument("--aracne_top_n_hvg", type=int, default=None)
     parser.add_argument("--aracne_dirname", type=str, default="aracne")
     parser.add_argument("--n_bins", type=int, default=250)
-    parser.add_argument("--rank_by_z_score", action="store_true")
+    parser.add_argument("--z_score_expression", type=bool, default=True)
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")
@@ -671,6 +675,6 @@ if __name__ == "__main__":
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.aracne_dir, exist_ok=True)
     os.makedirs(args.fig_dir, exist_ok=True)
-    logger.addHandler(logging.FileHandler(args.log_path)) 
+    logger.addHandler(logging.FileHandler(args.log_path))
     
     main(args)
