@@ -299,6 +299,74 @@ class GraphTransformerDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
                                 num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
+        
+        
+class PerturbationDataset(torchDataset):
+    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
+        """
+        Args:
+            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
+            global_gene_to_node_file (str): path to file that maps gene name to integer index 
+            cache_dir (str): path to directory where the processed data will be stored
+        """   
+        print(cache_dir)     
+        self.debug = debug
+        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.dataset_name = dataset_name
+
+    def __len__(self):
+        if self.debug:
+            return 1000
+        print(len(self.cached_files))
+        return len(self.cached_files)
+
+    def __getitem__(self, idx, mask_fraction = 0.05):
+        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
+        data = torch.load(self.cached_files[idx], weights_only=False)
+        node_indices = data.x
+        orig_gene_indices = node_indices[:, 0].clone()
+        orig_rank_indices = node_indices[:, 1].clone()
+        num_nodes = node_indices.shape[0]
+        ## for each mask type, create boolean mask of the same shape as node_indices
+        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
+        
+        # graph positional encoding
+        spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
+        
+        return {
+                "orig_gene_id" : orig_gene_indices, 
+                "orig_rank_indices" : orig_rank_indices, 
+                "gene_mask" : gene_mask, 
+                "rank_mask" : rank_mask, 
+                "both_mask" : both_mask,
+                "edge_index": data.edge_index,
+                "perturbation": data.cell_perturbation, # Perturbation one-hot vector
+                "num_nodes": num_nodes,
+                "spectral_pe": spectral_pe,
+                "dataset_name" : self.dataset_name
+                }
+
+class PerturbationDataModule(pl.LightningDataModule):
+    def __init__(self, data_config, collate_fn=None):
+        super().__init__()
+        self.data_config = data_config
+        self.collate_fn = collate_fn
+        self.train_ds = PerturbationDataset(**data_config.train)
+        self.val_ds = [PerturbationDataset(**val) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [PerturbationDataset(**test) for test in data_config.test]
+    
+    def train_dataloader(self):
+        return torchDataLoader(self.train_ds, batch_size = self.data_config.batch_size, 
+                               num_workers = self.data_config.num_workers, collate_fn=self.collate_fn)
+    def val_dataloader(self):
+        return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, 
+                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
+                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
 
 
 if __name__ == "__main__":
