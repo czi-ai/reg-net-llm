@@ -319,21 +319,9 @@ class PerturbationDataset(torchDataset):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
-        ## for each mask type, create boolean mask of the same shape as node_indices
-        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        
-        
-        # mask the tensors
-        node_indices[gene_mask, 0] = MASK_IDX
-        node_indices[rank_mask, 1] = MASK_IDX + NUM_GENES
-        node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX + NUM_GENES], 
-                                                  dtype=node_indices.dtype)
         
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
-        
         num_nodes = node_indices.shape[0]
         
         # graph positional encoding
