@@ -72,9 +72,9 @@ vanilla_6L_config = Config({
 graph_kernel_attn_config = Config({
     "transformer_dim": transformer_dim,
     "num_heads": 8,
-    "num_encoder_layers": 12,
+    "num_encoder_layers": 6,
     "activation": "gelu",
-    "dropout": 0.5,
+    "dropout": 0.1,
     "batch_first": True,
     "use_pe": False,
     "use_attn_mask": True,
@@ -433,14 +433,14 @@ graph_kernel_attn_manitou = Config({
         "test": [
             ],
         "run_test":False, 
-        "num_workers": 1,
+        "num_workers": 8,
         "batch_size": 8
     }),
     "trainer_config":Config({
-        "max_epochs" : 100,
+        "max_epochs" : 10,
         "accelerator" : "gpu",
-        "max_time": "03:00:00:00",
-        "devices" : 1,
+        "max_time": "05:00:00:00",
+        "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 1,

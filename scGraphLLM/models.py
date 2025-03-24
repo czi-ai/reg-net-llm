@@ -168,7 +168,8 @@ class GDTransformer(LitScGraphLLM):
                     self.tconfig.batch_first,
                     use_attn_mask=self.tconfig.use_attn_mask,
                     use_PE=self.tconfig.use_pe,
-                    use_flash_attn=self.tconfig.use_flash_attn
+                    use_flash_attn=self.tconfig.use_flash_attn,
+                    fine_tuning=self.tconfig.fine_tuning,
                 )
         else:
             self.transformer_encoder = nn.ModuleList()
@@ -183,7 +184,8 @@ class GDTransformer(LitScGraphLLM):
                         self.tconfig.batch_first,
                         use_attn_mask=self.tconfig.use_attn_mask,
                         use_PE=self.tconfig.use_pe,
-                        use_flash_attn=self.tconfig.use_flash_attn
+                        use_flash_attn=self.tconfig.use_flash_attn,
+                        fine_tuning=self.tconfig.fine_tuning,
                     )   
                 )
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
@@ -243,10 +245,27 @@ class Perturb_GDTransformer(GDTransformer):
                 param.requires_grad = False
 
     def forward(self, batch):
-        x_c = batch["orig_exp"]
+        x_c = batch["ctrl_exp"]
         x_p = batch["perturb_exp"]
-        learned_embedding, _, _, _, _, _ = super().forward(batch)
-        x_p_hat = self.expression_pred_head(learned_embedding).squeeze()
+        r_p = batch['perturb_one_hot']
+        edge_index_list = batch["edge_index"]
+        num_nodes_list = batch["num_nodes"]
+        pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None
+        
+        ctrl_exp_embedding = self.node_embedding(x_c)
+        
+        if self.tconfig.num_encoder_layers == 1:
+            pert_exp_embedding = self.transformer_encoder(ctrl_exp_embedding, p=pe, 
+                                                     edge_index_list=edge_index_list, 
+                                                     num_nodes_list=num_nodes_list,
+                                                     perturb_one_hot=r_p)
+        else:
+            for encoder_layer in self.transformer_encoder:
+                pert_exp_embedding = encoder_layer(ctrl_exp_embedding, p=pe, 
+                                               edge_index_list=edge_index_list, 
+                                               num_nodes_list=num_nodes_list,
+                                               perturb_one_hot=r_p)
+        x_p_hat = self.expression_pred_head(pert_exp_embedding).squeeze()
         assert x_p_hat.shape == x_p.shape
         return x_c, x_p, x_p_hat
     
