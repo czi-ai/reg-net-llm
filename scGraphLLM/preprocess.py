@@ -23,20 +23,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
+import re
 import logging
 import sys
 import warnings
 import json
+import importlib.util
 from datetime import date, datetime
 import multiprocessing as mp
 from typing import List
-from os.path import join
+from os.path import join, abspath, dirname
 from functools import partial
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler(sys.stdout))
 logger.setLevel(logging.DEBUG)
+
+# var names
+FEATURE_NAME = "feature_name"
+FEATURE_ID = "feature_id" # ENSG
+SOMA_JOINID = "soma_joinid"
+FEATURE_LENGTH ="feature_length"
+NNZ = "nnz"
+N_MEASURED_OBS = "n_measured_obs"
+
+# obs names
+CELL_TYPE = "cell_type"
+TISSUE = "tissue"
+
+genes_names = pd.read_csv("/hpc/projects/group.califano/GLM/data/gene-name-map.csv", index_col=0)
+ENSG_PROTEIN_CODING = set(genes_names["ensg.values"])
 
 
 def list_files(dir):
@@ -62,6 +79,41 @@ def apply_parallel_list(lst, func, n_cores=None, **kwargs):
 def check_index(df, name):
     if df.index.name != name:
         df.set_index(name, inplace=True)
+
+
+def clean_cell_type_name(cell_type_name):
+    # Replace spaces and backslashes with underscores
+    cell_type_name = cell_type_name.replace(" ", "_").replace("/", "_")
+    # Remove non-alphanumeric characters, hyphens, and underscores, lower
+    cell_type_name = re.sub(r"[^a-zA-Z0-9-_]", "", cell_type_name).lower()
+    return cell_type_name
+
+
+def write_cell_types_for_partition(partition_file, type_dir, write_name, type_limit=None):
+    print(f"\nLoading {write_name} partition...")
+    adata = sc.read_h5ad(partition_file)
+    # filter non-protein-coding genes
+    adata = adata[:,adata.var[FEATURE_ID].isin(ENSG_PROTEIN_CODING)]
+    
+    print(f"Cleaning cell type names for {write_name} partition...")
+    # clean cell typenames    
+    adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
+    cell_types = pd.Series(adata.obs[CELL_TYPE].unique().sort_values()) \
+        if type_limit is None else \
+        adata.obs[CELL_TYPE].value_counts(ascending=False).index[:type_limit].to_series()
+    
+    # write cell type to separate partitions
+    for cell_type in cell_types:
+        cell_type_dir = join(type_dir, cell_type, "partitions")
+        os.makedirs(cell_type_dir, exist_ok=True)
+        subset = adata[adata.obs[CELL_TYPE] == cell_type]
+        subset.write_h5ad(join(cell_type_dir, f"{write_name}.h5ad"))
+    
+    print("="*50)
+    print(f"Wrote {len(cell_types)} cell types for {write_name} partition..\n")
+
+    del adata
+    return cell_types
 
 
 def concatenate_partitions(partitions, require_matching_metadata=True):
@@ -365,13 +417,22 @@ def get_clusters(adata, random_state, qc=True):
     }
 
 
-def make_metacells(adata, target_depth, compression, target_sum, random_state, save_path=None, qc=True):
+def make_metacells(
+        adata, 
+        target_depth,
+        compression, 
+        target_sum, 
+        random_state, 
+        save_path=None, 
+        size=None,
+        groupby_var="cluster",
+        qc=True):
     """Make meta cells within clusters"""
-    assert "cluster" in adata.obs.columns, "Making metacells requires cluster info"
-    clusters = adata.obs["cluster"].value_counts()
+    assert groupby_var in adata.obs.columns, f"Making metacells requires group by var {groupby_var}"
+    groups = adata.obs[groupby_var].value_counts()
     metacells = {}
-    for name in clusters.index:
-        cluster = adata[adata.obs["cluster"] == name].copy()
+    for name in groups.index:
+        cluster = adata[adata.obs[groupby_var] == name].copy()
         try:
             sc.pp.scale(cluster)
             pyviper.pp.repr_metacells(
@@ -379,18 +440,17 @@ def make_metacells(adata, target_depth, compression, target_sum, random_state, s
                 counts=None,
                 pca_slot="X_pca", 
                 dist_slot="corr_dist", 
-                size=int(clusters[name] * compression), 
+                size=int(groups[name] * compression) if size is None else size, 
                 min_median_depth=target_depth, 
                 clusters_slot=None,
                 key_added=f"metacells",
                 seed=random_state,
                 verbose=False
             )
-
             metacells[name] = cluster.uns["metacells"]
             metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
-        except:
-            logger.info(f"(!) ----> Cluster {name} metacell processing FAILED!")
+        except Exception as e:
+            logger.info(f"(!) ----> Cluster {name} metacell processing FAILED! {e}")
         else:
             logger.info(f"Cluster {name} metacell processing succeeded!")
         finally:
@@ -409,9 +469,9 @@ def make_metacells(adata, target_depth, compression, target_sum, random_state, s
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank(metacells, n_bins, rank_by_z_score=False):    
+def rank(cells, n_bins, rank_by_z_score=False, save_path=None):    
     # Get the z-score test statistic   
-    df = metacells.to_df()
+    df = cells.to_df()
     
     if rank_by_z_score:
         mean_expr = df.mean(axis=1) # Get the mean of each gene
@@ -440,7 +500,8 @@ def rank(metacells, n_bins, rank_by_z_score=False):
     # Convert the binned ranks to a pandas dataframe
     ranks = pd.DataFrame(rank_bins, columns=df.columns)
     # Save ranks_raw.csv file to cell-type-specific directory
-    ranks.to_csv(f"{args.ranks_path}", index=False, header=True)
+    if save_path is not None:
+        ranks.to_csv(save_path, index=False, header=True)
 
     # Save the ranking info
     df_info = df.count(axis=1)
@@ -468,10 +529,11 @@ def main(args):
         logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
         
         # CellXGene specific processing
-        adata = adata[adata.obs["is_primary_data"],:]
-        adata.obs.reset_index(inplace=True)
-        adata.var.reset_index(inplace=True)
-        check_index(adata.var, "feature_id")
+        if args.dataset == "cell_x_gene":
+            adata = adata[adata.obs["is_primary_data"],:]
+            adata.obs.reset_index(inplace=True)
+            adata.var.reset_index(inplace=True)
+            check_index(adata.var, "feature_id")
 
         adata, qc_processed = preprocess_data(
             adata=adata, 
@@ -479,32 +541,45 @@ def main(args):
             umi_min=args.umi_min, 
             umi_max=args.umi_max,
             max_perc_umi_filtering=args.max_perc_umi_filtering,
-            target_sum=args.target_sum) 
+            target_sum=args.target_sum
+        ) 
         info["preprocessed"] = qc_processed
         logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
 
         samples, qc_samples = get_samples(
             adata=adata,
-            index_vars=args.sample_index_vars)
+            index_vars=args.sample_index_vars
+        )
         info["samples"] = qc_samples
         logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
 
         qc_cluster = get_clusters(
             adata, 
-            random_state=args.random_state)
+            random_state=args.random_state
+        )
         info["clusters"] = qc_cluster
         logger.info(f"Detected {qc_cluster['count']} clusters")
+        
+        # Save preprocessed data
+        adata.write_h5ad(args.cells_path)
 
         metacells, qc_metacells = make_metacells(
             adata=adata,
             target_depth=args.metacells_target_depth,
             compression=args.metacells_compression,
+            size=args.metacells_size,
             target_sum=args.target_sum,
+            groupby_var="sample_id" if args.aracne_by_sample else "cluster",
             save_path=(args.meta_path if args.save_metacells else None),
-            random_state=args.random_state)
+            random_state=args.random_state
+        )
         info["metacells"] = qc_metacells
         logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
     else:
+        adata = sc.read_h5ad(args.cells_path)
+        qc_adata = qc_metrics_dict(adata)
+        logger.info(f"Loaded {adata.shape[0]:,} processed cells with sparsity = {qc_adata['sparsity']:2f}")  
+
         metacells = sc.read_h5ad(args.meta_path)
         qc_metacells = qc_metrics_dict(metacells)
         logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
@@ -512,12 +587,15 @@ def main(args):
     if "rank" in args.steps:
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
         ranks, qc_rank = rank(
-            metacells, 
+            adata,
             n_bins=args.n_bins, 
-            rank_by_z_score=args.rank_by_z_score)
+            rank_by_z_score=args.rank_by_z_score,
+            save_path=args.ranks_path
+        )
         info["ranks"] = qc_rank
     
     if "aracne" in args.steps:
+        # aracne_cells = metacells if args.aracne_metacells else args.
         qc_aracne = make_aracne_counts(
             adata=metacells,
             min_n_sample=args.aracne_min_n,
@@ -525,7 +603,8 @@ def main(args):
             min_perc_nz=args.aracne_min_perc_nz,
             top_n_hvg=args.aracne_top_n_hvg,
             regulators=args.aracne_regulators,
-            aracne_dir=args.aracne_dir)
+            aracne_dir=args.aracne_dir
+        )
         info["aracne"] = qc_aracne
         logger.info(f"{qc_aracne['count']} clusters have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
 
@@ -548,6 +627,7 @@ def main(args):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--dataset", type=str, default="cell_x_gene")
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--steps", nargs="+", default=["preprocess", "rank", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
@@ -559,9 +639,11 @@ if __name__ == "__main__":
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
     parser.add_argument("--sample_index_vars", nargs="+")
-    parser.add_argument("--metacells_by_cluster", action="store_true")
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
+    parser.add_argument("--metacells_size", type=int, default=None)
+    parser.add_argument("--aracne_with_metacells", action="store_true")
+    parser.add_argument("--aracne_by_sample", action="store_true")
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
     parser.add_argument("--aracne_min_perc_nz", type=float, default=0.01)
@@ -584,10 +666,14 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     args.ranks_path = join(args.out_dir, "rank_raw.csv")
     args.meta_path = join(args.out_dir, "metacells.h5ad")
+    args.cells_path = join(args.out_dir, "cells.h5ad")
     args.info_path = join(args.out_dir, f"info_{timestamp}.json")
     args.log_path = join(args.out_dir, f"log_{timestamp}.txt")
     args.aracne_dir = join(args.out_dir, args.aracne_dirname, "counts")
     args.fig_dir = join(args.out_dir, "figure")
+    print(f"args.out_dir: {args.out_dir}")
+    print(f"args.aracne_dir: {args.aracne_dir}")
+    print(f"args.fig_dir: {args.fig_dir}")
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.aracne_dir, exist_ok=True)
     os.makedirs(args.fig_dir, exist_ok=True)

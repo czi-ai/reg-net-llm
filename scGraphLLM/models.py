@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from GNN_modules import *
-from MLP_modules import *
-import lightning.pytorch as pl
-from _globals import * ## these define the indices for the special tokens 
 from torch_geometric.utils import negative_sampling
-from transformer_modules import *
+import lightning.pytorch as pl
+
+from scGraphLLM.GNN_modules import *
+from scGraphLLM.MLP_modules import *
+from scGraphLLM._globals import * ## these define the indices for the special tokens 
+from scGraphLLM.transformer_modules import *
 
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):

@@ -1,5 +1,5 @@
 from data import *
-from config import *
+from scGraphLLM.config import *
 import argparse
 
 print("Starting...")

@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
-from _globals import *
 from copy import deepcopy
-import models as models
+
 #import linear_model as linear_model
+
+import scGraphLLM.models as models
+from scGraphLLM._globals import *
 
 class Config(dict):
     def __getattr__(self, item):
@@ -516,10 +518,10 @@ graph_kernel_attn_1024 = Config({
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_1024/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_1024_META/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_1024/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_1024/valHOG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_1024_META/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_1024_META/valHOG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],

@@ -4,7 +4,7 @@ from torch.utils.data import Dataset as torchDataset
 from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
-from _globals import * ## imported global variables are all caps 
+
 import os
 from typing import List
 import warnings
@@ -15,7 +15,10 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
-#from graph_op import spectral_PE
+
+# from scGraphLLM.graph_op import spectral_PE
+from scGraphLLM._globals import * ## imported global variables are all caps 
+
 
 rng = default_rng(42)
 def save(obj, file):
@@ -74,13 +77,14 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
 
         # Subset network to only include genes in the cell
         network_cell = network[
-            network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
+            network["regulator.values"].isin(cell.index) & 
+            network["target.values"].isin(cell.index)
         ]
 
-        #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-        local_gene_to_node_index = global_gene_to_node
+        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+        # local_gene_to_node_index = global_gene_to_node
         # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
-        # so edge index is local to each graph for each cell. 
+        # so edge index is local to each graph for each cell.
         # cell.index defines the order of the nodes in the graph
         with warnings.catch_warnings(): # Suppress annoying pandas warnings
             warnings.simplefilter("ignore") 
@@ -91,7 +95,11 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
         edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
         edge_weights = torch.tensor(np.array(edges['mi.values']))
         node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
-        data = Data(x = node_indices, edge_index = edge_list, edge_weight = edge_weights)
+        data = Data(
+            x=node_indices, 
+            edge_index=edge_list, 
+            edge_weight=edge_weights
+        )
         
         torch.save(data, outfile)
         ncells += 1
@@ -190,33 +198,32 @@ class LitDataModule(pl.LightningDataModule):
         return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
-        """
-        Args:
-            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
-            global_gene_to_node_file (str): path to file that maps gene name to integer index 
-            cache_dir (str): path to directory where the processed data will be stored
-        """   
-        print(cache_dir)     
+    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.1, debug:bool=False, ):
         self.debug = debug
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
+        self.mask_fraction = mask_fraction
+        print(f"Cache Directory: {cache_dir}")
+        print(f"Observation Count: {len(self):,}")
 
     def __len__(self):
         if self.debug:
             return 1000
-        print(len(self.cached_files))
         return len(self.cached_files)
 
-    def __getitem__(self, idx, mask_fraction = 0.1):
+    def __getitem__(self, idx):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
         ## for each mask type, create boolean mask of the same shape as node_indices
-        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        
+        if self.mask_fraction == 0:
+            gene_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+            rank_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+            both_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+        else:
+            gene_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
+            rank_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
+            both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
         # mask the tensors
         #node_indices[gene_mask, 0] = MASK_IDX
@@ -233,16 +240,16 @@ class GraphTransformerDataset(torchDataset):
         #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
         return {
-                "orig_gene_id" : orig_gene_indices, 
-                "orig_rank_indices" : orig_rank_indices, 
-                "gene_mask" : gene_mask, 
-                "rank_mask" : rank_mask, 
-                "both_mask" : both_mask,
-                "edge_index": data.edge_index,
-                "num_nodes": num_nodes,
-                #"spectral_pe": spectral_pe,
-                "dataset_name" : self.dataset_name
-                }
+            "orig_gene_id" : orig_gene_indices, 
+            "orig_rank_indices" : orig_rank_indices, 
+            "gene_mask" : gene_mask, 
+            "rank_mask" : rank_mask, 
+            "both_mask" : both_mask,
+            "edge_index": data.edge_index,
+            "num_nodes": num_nodes,
+            #"spectral_pe": spectral_pe,
+            "dataset_name" : self.dataset_name
+        }
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
