@@ -72,13 +72,14 @@ vanilla_6L_config = Config({
 graph_kernel_attn_config = Config({
     "transformer_dim": transformer_dim,
     "num_heads": 8,
-    "num_encoder_layers": 6,
+    "num_encoder_layers": 12,
     "activation": "gelu",
     "dropout": 0.1,
     "batch_first": True,
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": True,
+    "fine_tuning": False
 })
 
 graph_kernel_attn_3L_config = Config({
@@ -613,21 +614,21 @@ graph_kernel_attn_4096 = Config({
         "test": [
             ],
         "run_test":False, 
-        "num_workers": 1,
-        "batch_size": 16
+        "num_workers": 8,
+        "batch_size": 8
     }),
     "trainer_config":Config({
-        "max_epochs" : 100,
+        "max_epochs" : 10,
         "accelerator" : "gpu",
-        "max_time": "03:00:00:00",
-        "devices" : 1,
+        "max_time": "05:00:00:00",
+        "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 1,
         "val_check_interval":0.05,
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints
-                                "every_n_train_steps" : 5000 # Save every 5000 training steps
+                                "every_n_train_steps" : 1000 # Save every 5000 training steps
                             }
     }),
     "loss_config":Config({
