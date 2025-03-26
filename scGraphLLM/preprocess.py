@@ -89,33 +89,6 @@ def clean_cell_type_name(cell_type_name):
     return cell_type_name
 
 
-def write_cell_types_for_partition(partition_file, type_dir, write_name, type_limit=None):
-    print(f"\nLoading {write_name} partition...")
-    adata = sc.read_h5ad(partition_file)
-    # filter non-protein-coding genes
-    adata = adata[:,adata.var[FEATURE_ID].isin(ENSG_PROTEIN_CODING)]
-    
-    print(f"Cleaning cell type names for {write_name} partition...")
-    # clean cell typenames    
-    adata.obs[CELL_TYPE] = adata.obs[CELL_TYPE].map(clean_cell_type_name)
-    cell_types = pd.Series(adata.obs[CELL_TYPE].unique().sort_values()) \
-        if type_limit is None else \
-        adata.obs[CELL_TYPE].value_counts(ascending=False).index[:type_limit].to_series()
-    
-    # write cell type to separate partitions
-    for cell_type in cell_types:
-        cell_type_dir = join(type_dir, cell_type, "partitions")
-        os.makedirs(cell_type_dir, exist_ok=True)
-        subset = adata[adata.obs[CELL_TYPE] == cell_type]
-        subset.write_h5ad(join(cell_type_dir, f"{write_name}.h5ad"))
-    
-    print("="*50)
-    print(f"Wrote {len(cell_types)} cell types for {write_name} partition..\n")
-
-    del adata
-    return cell_types
-
-
 def concatenate_partitions(partitions, require_matching_metadata=True):
     """Concatenate the partitions of a dataset"""
     # concatenate observations
@@ -283,9 +256,9 @@ def get_samples(adata, index_vars=None):
         index_vars = sorted(index_vars)
         adata.obs["sample_id"] = pd.Categorical(adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1))
         
-    samples = adata.obs\
-        .groupby("sample_id")\
-        .size()[lambda size: size > 0]\
+    samples = adata.obs \
+        .groupby("sample_id") \
+        .size()[lambda size: size > 0] \
         .sort_values(ascending=False)
     
     qc = samples.describe().astype(float).to_dict()
@@ -473,7 +446,7 @@ def make_metacells(
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank(metacells, n_bins, z_score_expression=False):    
+def quantize(metacells, n_bins, z_score_expression=False):    
     # Get the z-score test statistic   
     df = metacells.to_df()
     
@@ -485,13 +458,13 @@ def rank(metacells, n_bins, z_score_expression=False):
         df = df_z_score
     
     # Create a dataframe of the same size as df with all zeros
-    rank_bins = np.zeros_like(df, dtype=np.int64)
+    expression_bins = np.zeros_like(df, dtype=np.int64)
     
     # Rank the z-scores into separate "expression bins" that represent the expression of each gene 
-    # relative to itself across this set of cells
-    df_ranked = df.rank(axis=1, method="first", ascending=False).replace(np.nan, 0)
-    for i in range(df_ranked.shape[0]): # Iterate through rows (single cells)
-        row = df_ranked.iloc[i].to_numpy(dtype=int)
+    # relative to itself across this set of cells. Low bin number represents high expression
+    df_binned = df.rank(axis=1, method="first", ascending=False).replace(np.nan, 0)
+    for i in range(df_binned.shape[0]): # Iterate through rows (single cells)
+        row = df_binned.iloc[i].to_numpy(dtype=int)
         non_zero = row.nonzero()
         if len(row[non_zero]) != 0: # Make sure row is not all zeros/nans (expressionless)
             if len(row[non_zero]) < n_bins-1:
@@ -499,25 +472,24 @@ def rank(metacells, n_bins, z_score_expression=False):
             # "Binnify" the rankings
             bins = np.quantile(row[non_zero], np.linspace(0, 1, n_bins-1))
             bindices = np.digitize(row[non_zero], bins)
-            rank_bins[i, non_zero] = bindices
+            expression_bins[i, non_zero] = bindices
 
-    # Convert the binned ranks to a pandas dataframe
-    ranks = pd.DataFrame(rank_bins, columns=df.columns)
-    # Save ranks_raw.csv file to cell-type-specific directory
-    ranks.to_csv(f"{args.ranks_path}", index=False, header=True)
+    # Convert the binned expressions to a pandas dataframe
+    bins = pd.DataFrame(expression_bins, columns=df.columns)
+    # Save bins.csv file to cell-type-specific directory
+    bins.to_csv(f"{args.bins_path}", index=False, header=True)
 
-    # Save the ranking info
+    # Save the binning info
     df_info = df.count(axis=1)
-    rank_info = {
+    bin_info = {
         "n_bins": n_bins,
         "min_genes_per_metacell": int(df_info.min()),
         "max_genes_per_metacell": int(df_info.max()),
         "median_genes_per_metacell": df_info.median(),
-        "mean_genes_per_bin": round(df.count(axis=0).sum()/(df.dropna(how="all").shape[0] * n_bins), 2),
-        "num_unique_highest_expressed": int(np.sum(np.any(np.isin(rank_bins, [99]), axis=0))) # Number of genes that were in the highest bin rank across metacells
+        "mean_genes_per_bin": round(df.count(axis=0).sum()/(df.dropna(how="all").shape[0] * n_bins), 2)
     }
 
-    return ranks, rank_info
+    return bins, bin_info
 
 
 def main(args):
@@ -583,14 +555,18 @@ def main(args):
         qc_metacells = qc_metrics_dict(metacells)
         logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
 
-    if "rank" in args.steps:
-        # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
-        ranks, qc_rank = rank(
-            adata,
-            n_bins=args.n_bins, 
-            z_score_expression=args.z_score_expression
-        )
-        info["ranks"] = qc_rank
+    if not args.perturbed: # Perturbation data has to be raw normalize data - no quantization/binning
+        if "binnify" in args.steps:
+            # Returns: pandas dataframe with metacell x genes: values are quantized expression bin number | AND | bin_info JSON element
+            bins, qc_bins = quantize(
+                adata,
+                n_bins=args.n_bins,
+                z_score_expression=args.z_score_expression,
+            )
+            info["bins"] = qc_bins
+    else:
+        logger.info("No binning/quantization of expression values.")
+        
     
     if "aracne" in args.steps:
         # aracne_cells = metacells if args.aracne_metacells else args.
@@ -626,8 +602,9 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--dataset", type=str, default="cell_x_gene")
+    parser.add_argument("--perturbed", type=bool, default=False) 
     parser.add_argument("--out_dir", type=str, required=True)
-    parser.add_argument("--steps", nargs="+", default=["preprocess", "rank", "aracne"])
+    parser.add_argument("--steps", nargs="+", default=["preprocess", "binnify", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
@@ -662,7 +639,7 @@ if __name__ == "__main__":
     
     # define paths 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    args.ranks_path = join(args.out_dir, "rank_raw.csv")
+    args.bins_path = join(args.out_dir, "binned_expression.csv")
     args.meta_path = join(args.out_dir, "metacells.h5ad")
     args.cells_path = join(args.out_dir, "cells.h5ad")
     args.info_path = join(args.out_dir, f"info_{timestamp}.json")

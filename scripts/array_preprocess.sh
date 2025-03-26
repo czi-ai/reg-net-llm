@@ -1,6 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=preempted
-#SBATCH --requeue
+#SBATCH --partition=cpu
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=512G
@@ -19,6 +18,7 @@ while [[ $# -gt 0 ]]; do
     --regulators-path) REGULATORS_PATH="$2"; shift 2 ;;
     --index-vars) INDEX_VARS="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
+    --perturbed) PERTURBED="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -37,4 +37,5 @@ source ./preprocess_cellxgene.sh \
         --aracne-path $ARACNE_PATH \
         --regulators-path $REGULATORS_PATH \
         --index-vars $INDEX_VARS \
-        --dataset $DATASET
+        --dataset $DATASET \
+        --perturbed $PERTURBED

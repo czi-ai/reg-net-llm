@@ -9,6 +9,7 @@ ARACNE_PATH="" # Path to the compiled ARACNe3 algorithm (i.e. /hpc/projects/grou
 REGULATORS_PATH="" # Path to the regulators file (i.e. /hpc/projects/group.califano/GLM/data/regulators.txt)
 INDEX_VARS="" # Set of adata.obs columns to consider in grouping steps: "condition" for CellxGene, "gene gene_id transcript" for Replogle
 DATASET="" # Dataset name - cellxgene will be treated differently to other datasets
+PERTURBED=false # Is this a perturbation dataset? In this case the expression binning will not take place as normalized raw expression data is what is desired for our purposes
 JOB_OUT_DIR="" # Where to store all log files from this parallelization process
 
 # Parse arguments
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     --regulators-path) REGULATORS_PATH="$2"; shift 2 ;;
     --index-vars) INDEX_VARS="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
+    --perturbed) PERTURBED=true; shift ;;
     --job-out-dir) JOB_OUT_DIR="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
@@ -44,6 +46,7 @@ echo -e "aracne-path:\t\t $ARACNE_PATH"
 echo -e "regulators-path:\t $REGULATORS_PATH"
 echo -e "index-vars:\t\t $INDEX_VARS"
 echo -e "dataset:\t\t $DATASET"
+echo -e "perturbed:\t\t $PERTURBED"
 echo -e "job-out-dir:\t\t $JOB_OUT_DIR"
 echo ""
 echo ""
@@ -65,7 +68,8 @@ sbatch --array=1-${FILE_COUNT} --output=${JOB_OUT_DIR}/slurm_out_%A/array_job_%A
     --aracne-path $ARACNE_PATH \
     --regulators-path $REGULATORS_PATH \
     --index-vars $INDEX_VARS \
-    --dataset $DATASET
+    --dataset $DATASET \
+    --perturbed $PERTURBED
 
 
 ##########################################################################################
@@ -73,6 +77,12 @@ sbatch --array=1-${FILE_COUNT} --output=${JOB_OUT_DIR}/slurm_out_%A/array_job_%A
 ##########################################################################################
 
 : <<'END_COMMENT'
+
+# replogle_full_raw: full replogle data file
+# replogle_raw: full replogle data split into 10 files - all in the same partition: equivalent to one large file when preprocessing
+# replogle_raw_partitioned: replogle data split into 10 separate partitions: for parallel processing and lower memory requirements
+# replogle_clean_partitioned: processed partitioned dataset.
+# replogle_ranked_z_score: processed partitioned dataset.
 
 # Replogle preprocessing command (as one)
 source start_slurm_preprocess.sh \
@@ -84,6 +94,7 @@ source start_slurm_preprocess.sh \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
     --index-vars "gene_id" \
     --dataset "replogle" \
+    --perturbed \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/4096"
 
 
@@ -97,6 +108,7 @@ source start_slurm_preprocess.sh \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
     --index-vars "gene_id" \
     --dataset "replogle" \
-    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/full"
+    --perturbed \
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/partitioned"
 
 END_COMMENT

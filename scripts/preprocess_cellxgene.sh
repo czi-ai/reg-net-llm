@@ -12,6 +12,7 @@ while [[ $# -gt 0 ]]; do
     --regulators-path) REGULATORS_PATH="$2"; shift 2 ;;
     --index-vars) INDEX_VARS="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
+    --perturbed) PERTURBED="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -41,7 +42,8 @@ if $preprocess; then
             --aracne_dirname $aracne_dirname \
             --n_bins 250 \
             --z_score_expression $Z_SCORE_EXPRESSION \
-            --dataset $DATASET
+            --dataset $DATASET \
+            --perturbed $PERTURBED
     else # Consider ARACNE_TOP_N_HVG genes (no ARACNE_TOP_N_HVG argument passed)
         python $preprocess_path \
             --data_path "${RAW_DATA_DIR}/${CELL_TYPE}/partitions" \
@@ -53,7 +55,8 @@ if $preprocess; then
             --n_bins 250 \
             --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
             --z_score_expression $Z_SCORE_EXPRESSION \
-            --dataset $DATASET
+            --dataset $DATASET \
+            --perturbed $PERTURBED
     fi
 
     # Check if the command succeeded

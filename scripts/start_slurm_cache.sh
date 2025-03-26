@@ -64,6 +64,6 @@ source start_slurm_cache.sh \
     --cache-dir "/hpc/projects/group.califano/GLM/data/perturbation/replogle" \
     --perturbed \
     --gene_id "gene_id" \
-    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle_partitioned/4096_z_scored"
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/partitioned"
 
 END_COMMENT
