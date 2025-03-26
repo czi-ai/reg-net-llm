@@ -226,7 +226,7 @@ class GraphTransformerDataset(torchDataset):
             both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
         # mask the tensors
-        node_indices[gene_mask, 0] = MASK_IDX
+        #node_indices[gene_mask, 0] = MASK_IDX
         node_indices[rank_mask, 1] = MASK_IDX + NUM_GENES
         node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX + NUM_GENES], 
                                                   dtype=node_indices.dtype)

@@ -32,9 +32,8 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
-
-from scGraphLLM.graph_op import _chebyshev_diffusion
-from scGraphLLM.MLP_modules import PerturbationHead
+from graph_op import _chebyshev_diffusion
+from MLP_modules import PerturbEmbedding
 
 
 def rotate_half(x):
@@ -284,8 +283,8 @@ class WQKV(nn.Module):
 
 
 class FlashMHASelfMaskKV(nn.Module):
-    def __init__(self, d_model, num_heads, batch_first, attention_dropout,mode="self", 
-                 bias=True, causal=False, kernel_attn=False, num_perturbations=0,
+    def __init__(self, d_model, num_heads, batch_first, attention_dropout, mode="self", 
+                 bias=True, causal=False, kernel_attn=False, fine_tuning=False,
                  use_rotary_emb=None, device = None, dtype = None) -> None:
         super(FlashMHASelfMaskKV, self).__init__()
         assert batch_first
@@ -295,25 +294,23 @@ class FlashMHASelfMaskKV(nn.Module):
         self.kernel_attn = kernel_attn
         self.dropout_p = attention_dropout
         self.mode = mode 
-
         self.num_heads = num_heads
         assert self.d_model % num_heads == 0, f"emb {self.d_model} must be divisible by num_heads {num_heads}"
         self.head_dim = self.d_model // num_heads
         # assert self.head_dim in [16, 32, 64, 128], "Only support head_dim == 16, 32, 64, or 128"
         assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
         self.scaling = self.head_dim ** -0.5
-        
-        self.num_perturbations = num_perturbations
-
+        self.fine_tuning = fine_tuning
         self.use_rotary_emb = use_rotary_emb
         if use_rotary_emb:
             self.rot_emb = RotaryEmbeddingESM(self.head_dim)
-
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
-        # self.perturb_proj_head = PerturbationHead(d_model, 1)
+        if fine_tuning:
+            self.perturb_emb = PerturbEmbedding(max_hop=4, embed_dim=self.d_model, 
+                                            hidden_dim=100, output_dim=self.d_model)
 
     def forward(self, q, k,v, key_padding_mask=None, 
-                edge_index_list=None, num_nodes_list=None, perturb_regime=None):
+                edge_index_list=None, num_nodes_list=None, perturb_one_hot=None):
         """
         Credit: some elements adopted from OpenFold:
         https://github.com/aqlaboratory/openfold/blob/feed4ae22edf899b37bee49293fff902bdd64e2d/openfold/model/primitives.py#L660
@@ -333,18 +330,16 @@ class FlashMHASelfMaskKV(nn.Module):
             q, k = self.rot_emb(q, k, seq_dimension=-3)
             
         if self.kernel_attn:
-            if self.num_perturbations == 0:
-                q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5)
-                q = q.bfloat16()
-            else:
-                q_flat = q.reshape(b_size, s_size, h_size * d_size)
-                perturb_id = perturb_regime.nonzero()[:, 1].view(b_size, self.num_perturbations) # shape (B, num_perturbations)
-                perturb_index = perturb_id.unsqueeze(-1).expand(b_size, perturb_id.size(1), q_flat.size(-1))
-                q_perturbed = torch.gather(q_flat, 1, perturb_index)
-                delta_eig = self.perturb_proj_head(q_perturbed) # eigen shift due to perturbation, shape (B, num_perturbations)
-                q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5, 
-                                         perturb_indexs=perturb_id, eigen_shifts=delta_eig, perturb_L=True)
-                q = q.bfloat16()
+            q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5)
+            
+            # shift query by perturbational embedding if observing perturb seq data
+            if self.fine_tuning:
+                assert perturb_one_hot is not None, "need perturbation labels"
+                perturb_bias = self.perturb_emb(edge_index_list, num_nodes_list, perturb_one_hot)
+                assert q.shape == perturb_bias.shape
+                q += perturb_bias
+                
+            q = q.bfloat16()
                 
             
         q = rearrange(q.type(dtype), 'b s h d -> (b s) h d',
@@ -392,7 +387,7 @@ class FlashMHASelfMaskKV(nn.Module):
         )
         context = rearrange(context, '(b s) h d -> b s (h d)',
                             b=b_size, h=self.num_heads)
-        context = context.to(torch.float32) # ALSO ADDED FOR FINE-TUNING RUN.
+        context = context.to(torch.float32)
         return self.out_proj(context)
 
 
@@ -648,7 +643,8 @@ class FlashTransformerEncoderLayer(nn.Module):
     """
     def __init__(self, d_model, nhead, dim_feedforward, dropout ,
                  activation,batch_first, use_flash_attn = True, use_attn_mask = False, use_PE=False,
-                 layer_norm_eps = 1e-5, norm_first = False,lora_qv_rank = None, use_rotary_emb = False, 
+                 fine_tuning=False, layer_norm_eps = 1e-5, norm_first = False,
+                 lora_qv_rank = None, use_rotary_emb = False, 
                  init_scheme = "kaiming_uniform"
                  ):
         super(FlashTransformerEncoderLayer, self).__init__()
@@ -664,10 +660,12 @@ class FlashTransformerEncoderLayer(nn.Module):
             raise ValueError(f'TransformerLayer {activation} not implemented')
         ## MHA
         self.use_attn_mask = use_attn_mask
+        self.fine_tuning = fine_tuning
         if use_flash_attn:
             self.self_attention = FlashMHASelfMaskKV(
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                attention_dropout=dropout, use_rotary_emb=use_rotary_emb, kernel_attn=use_attn_mask
+                attention_dropout=dropout, use_rotary_emb=use_rotary_emb, 
+                kernel_attn=use_attn_mask, fine_tuning=self.fine_tuning
             )
         else:
             self.self_attention = CustomTorchMHASelf(
@@ -702,7 +700,8 @@ class FlashTransformerEncoderLayer(nn.Module):
         self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
         
-    def forward(self, qkv, p=None, key_padding_mask=None, edge_index_list=None, num_nodes_list=None, attn_mask=None):
+    def forward(self, qkv, p=None, key_padding_mask=None, edge_index_list=None, 
+                num_nodes_list=None, perturb_one_hot=None):
         x = qkv
         if self.use_PE:
             assert p is not None, "Positional encoding tensor must be provided when use_PE is True."
@@ -721,7 +720,10 @@ class FlashTransformerEncoderLayer(nn.Module):
             
             # mask attention weights or not
             if self.use_attn_mask:
-                x = x + self.self_attention(q, k, v, edge_index_list=edge_index_list, num_nodes_list=num_nodes_list)
+                x = x + self.self_attention(q, k, v, 
+                                            edge_index_list=edge_index_list, 
+                                            num_nodes_list=num_nodes_list,
+                                            perturb_one_hot=perturb_one_hot)
             else:
                 x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
             
@@ -735,7 +737,10 @@ class FlashTransformerEncoderLayer(nn.Module):
                 q, k, v = self.wqkv(x)
             
             if self.use_attn_mask:
-                x = x + self.self_attention(q, k, v, edge_index_list=edge_index_list, num_nodes_list=num_nodes_list)
+                x = x + self.self_attention(q, k, v, 
+                                            edge_index_list=edge_index_list, 
+                                            num_nodes_list=num_nodes_list,
+                                            perturb_one_hot=perturb_one_hot)
             else:
                 x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
 

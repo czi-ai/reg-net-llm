@@ -12,12 +12,11 @@ from scGraphLLM.transformer_modules import *
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
-        #self.gnn_encoder = GNN(**config.model_config.gnn_config)
 
-        self.link_prediction_head = LinkPredictHead(config.model_config.node_embedding_dim * 2, 1)
+        #self.link_prediction_head = LinkPredictHead(config.model_config.node_embedding_dim * 2, 1)
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
                                                  config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
-        self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
+        #self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
@@ -27,20 +26,20 @@ class LitScGraphLLM(pl.LightningModule):
     
     def _step(self, batch, batch_idx):
         learned_cell_embedding,  target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
-        predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
+        #predicted_gene_id= self.gene_prediction_head(learned_cell_embedding) 
         predicted_rank_id= self.rank_prediction_head(learned_cell_embedding)
         gene_mask_locs, rank_mask_locs, both_mask_locs = mask_locs
         ## technically we could run the only/both together in a single pass, but this way we can track each one separately
-        L_mlm_geneonly = self.mlm_loss(predicted_gene_id, target_gene_ids, gene_mask_locs)
-        L_mlm_geneboth = self.mlm_loss(predicted_gene_id, target_gene_ids, both_mask_locs)
+        #L_mlm_geneonly = self.mlm_loss(predicted_gene_id, target_gene_ids, gene_mask_locs)
+        #L_mlm_geneboth = self.mlm_loss(predicted_gene_id, target_gene_ids, both_mask_locs)
 
         target_rank_ids = target_rank_ids - NUM_GENES ## shift the rank indices to start from 0
         L_mlm_rankonly = self.mlm_loss(predicted_rank_id, target_rank_ids, rank_mask_locs)
         L_mlm_rankboth = self.mlm_loss(predicted_rank_id, target_rank_ids, both_mask_locs)
-        L_g = self.link_pred_loss(learned_cell_embedding, mask_locs[0], edge_index_list) # only for gene masks
-        loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth + L_g
-        #loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth
-        gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
+        #L_g = self.link_pred_loss(learned_cell_embedding, mask_locs[0], edge_index_list) # only for gene masks
+        #loss = L_mlm_geneonly + L_mlm_geneboth + L_mlm_rankonly + L_mlm_rankboth + L_g
+        loss = L_mlm_rankonly + L_mlm_rankboth
+        #gene_pp = self.pseudo_perp(predicted_gene_id, target_gene_ids, gene_mask_locs | both_mask_locs)
         rank_pp = self.pseudo_perp(predicted_rank_id, target_rank_ids, rank_mask_locs | both_mask_locs)
         if type(batch) == dict:
             subset = batch["dataset_name"][0]
@@ -48,13 +47,13 @@ class LitScGraphLLM(pl.LightningModule):
             subset = batch.dataset_name[0]
 
         self.log(f'{subset}_loss', loss, batch_size=1, add_dataloader_idx=False)
-        self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly, batch_size=gene_mask_locs.sum(), add_dataloader_idx=False)
-        self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False) 
+        #self.log(f'{subset}_mlm_geneonly_loss', L_mlm_geneonly, batch_size=gene_mask_locs.sum(), add_dataloader_idx=False)
+        #self.log(f'{subset}_mlm_geneboth_loss', L_mlm_geneboth, batch_size=(gene_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False) 
         self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly, batch_size=rank_mask_locs.sum(), add_dataloader_idx=False)
         self.log(f'{subset}_mlm_rankboth_loss', L_mlm_rankboth, batch_size=(rank_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False )
-        self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1, add_dataloader_idx=False)
+        #self.log(f"{subset}_gene_perplexity", gene_pp, batch_size=1, add_dataloader_idx=False)
         self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1, add_dataloader_idx=False)
-        self.log(f"{subset}_link_pred_loss", L_g, batch_size=(rank_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False)
+        #self.log(f"{subset}_link_pred_loss", L_g, batch_size=(rank_mask_locs|both_mask_locs).sum(), add_dataloader_idx=False)
         return loss
         
     def training_step(self, batch, batch_idx):
@@ -130,9 +129,6 @@ class LitScGraphLLM(pl.LightningModule):
             # Return zero loss if there are no valid masked nodes
             return torch.tensor(0.0, device=device)
 
-    def alignment_loss():
-        pass
-
     def pseudo_perp(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
         
         masked_predictions = predicted_gene_id[mask_locs, :] ## because we record the location of the masked tokens, we cna retrieve just the masked tokens, and collapse the first dimension, ie mapping from n x r x G to m x G where m is the number of masked tokens
@@ -154,7 +150,9 @@ class LitScGraphLLM(pl.LightningModule):
         optimizer = optim_fn(self.parameters(), **self.optim_config.args)
         return optimizer
 
-
+# -------------------------
+# Pre-training Model
+# -------------------------
 
 class GDTransformer(LitScGraphLLM):
     def __init__(self, config):
@@ -171,7 +169,8 @@ class GDTransformer(LitScGraphLLM):
                     self.tconfig.batch_first,
                     use_attn_mask=self.tconfig.use_attn_mask,
                     use_PE=self.tconfig.use_pe,
-                    use_flash_attn=self.tconfig.use_flash_attn
+                    use_flash_attn=self.tconfig.use_flash_attn,
+                    fine_tuning=self.tconfig.fine_tuning,
                 )
         else:
             self.transformer_encoder = nn.ModuleList()
@@ -186,12 +185,13 @@ class GDTransformer(LitScGraphLLM):
                         self.tconfig.batch_first,
                         use_attn_mask=self.tconfig.use_attn_mask,
                         use_PE=self.tconfig.use_pe,
-                        use_flash_attn=self.tconfig.use_flash_attn
+                        use_flash_attn=self.tconfig.use_flash_attn,
+                        fine_tuning=self.tconfig.fine_tuning,
                     )   
                 )
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
                                                  config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
-        self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
+        #self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
@@ -227,3 +227,93 @@ class GDTransformer(LitScGraphLLM):
                                                num_nodes_list=num_nodes_list)
         
         return combined_embedding, orig_gene_id, orig_rank_id, mask_locs, edge_index_list, num_nodes_list
+
+
+# ------------------------------
+# Fine-Tuning Perturbation Model
+# ------------------------------
+class Perturb_GDTransformer(GDTransformer):
+    def __init__(self, config):
+        super().__init__(config)
+        self.expression_pred_head = RobertaLMHead(
+            config.model_config.node_embedding_dim * 2, 1
+        )
+        self.optim_config = config.optim_config
+        
+        # Freeze encoder weights if specified
+        if config.model_config.freeze_encoder:
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
+
+    def forward(self, batch):
+        x_c = batch["ctrl_exp"]
+        x_p = batch["perturb_exp"]
+        r_p = batch['perturb_one_hot']
+        edge_index_list = batch["edge_index"]
+        num_nodes_list = batch["num_nodes"]
+        pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None
+        
+        ctrl_exp_embedding = self.node_embedding(x_c)
+        
+        if self.tconfig.num_encoder_layers == 1:
+            pert_exp_embedding = self.transformer_encoder(ctrl_exp_embedding, p=pe, 
+                                                     edge_index_list=edge_index_list, 
+                                                     num_nodes_list=num_nodes_list,
+                                                     perturb_one_hot=r_p)
+        else:
+            for encoder_layer in self.transformer_encoder:
+                pert_exp_embedding = encoder_layer(ctrl_exp_embedding, p=pe, 
+                                               edge_index_list=edge_index_list, 
+                                               num_nodes_list=num_nodes_list,
+                                               perturb_one_hot=r_p)
+        x_p_hat = self.expression_pred_head(pert_exp_embedding).squeeze()
+        assert x_p_hat.shape == x_p.shape
+        return x_c, x_p, x_p_hat
+    
+    def MMD(self, x_p, x_p_hat, bandwidth=1.0):
+        gamma = 1.0 / (2 * bandwidth**2)
+        yy = torch.cdist(x_p, x_p, p=2)**2
+        xx = torch.cdist(x_p_hat, x_p_hat, p=2)**2
+        xy = torch.cdist(x_p, x_p_hat, p=2)**2
+        
+        # embed with RBF
+        k_xx = torch.exp(-gamma * xx)
+        k_yy = torch.exp(-gamma * yy)
+        k_xy = torch.exp(-gamma * xy)
+        
+        return k_xx.mean() + k_yy.mean() - 2 * k_xy.mean()
+    
+    def ATE_alignment(self, x_c, x_p, x_p_hat):
+        # expectation over cells
+        ate_gt = torch.abs(x_p - x_c).mean()
+        ate_pred = torch.abs(x_p_hat - x_c).mean()
+        return 1 - torch.dot(ate_gt, ate_pred) / (torch.norm(ate_gt) * torch.norm(ate_pred))
+        
+    def fine_tune_loss(self, x_c, x_p, x_p_hat, bandwidth=1.0):
+        mmd = self.MMD(x_p, x_p_hat, bandwidth)
+        ate_align = self.ATE_alignment(x_c, x_p, x_p_hat)
+        loss = mmd + ate_align
+        return loss, mmd, ate_align
+        
+    def training_step(self, batch, batch_idx):
+        x_c, x_p, x_p_hat = self(batch)
+        loss, mmd, ate_align = self.fine_tune_loss(x_c, x_p, x_p_hat)
+        self.log("train_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("mmd_train", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("ATE_align_train", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x_c, x_p, x_p_hat = self(batch)
+        loss, mmd, ate_align = self.fine_tune_loss(x_c, x_p, x_p_hat)
+        self.log("val_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("mmd_val", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("ATE_align_val", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        return loss
+    
+    def configure_optimizers(self):
+        optim_fn = self.optim_config["optimizer"]
+        optimizer = optim_fn(self.parameters(), **self.optim_config.args)
+        return optimizer
+
+
