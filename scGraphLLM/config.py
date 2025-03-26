@@ -624,8 +624,10 @@ graph_kernel_attn_4096 = Config({
         "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
-        "log_every_n_steps" : 1,
+        "log_every_n_steps" : 50,
         "val_check_interval":0.05,
+        "num_nodes":  1,
+        "strategy" :"ddp_find_unused_parameters_true",
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints
                                 "every_n_train_steps" : 1000 # Save every 5000 training steps
