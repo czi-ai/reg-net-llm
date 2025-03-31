@@ -256,6 +256,13 @@ def main(args):
     data.var.set_index("symbol_id")
     data.var_names = data.var["symbol_id"]
 
+    # convert to raw counts
+    # counts = sc.AnnData(
+    #     X=csc_matrix(adata.layers["counts"].astype(int)),
+    #     obs=adata.obs[["n_counts"]],
+    #     var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
+    # )
+
     if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
         sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
 

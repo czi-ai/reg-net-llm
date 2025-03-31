@@ -31,13 +31,15 @@ def main(args):
 
     tokenizer = TranscriptomeTokenizer(
         model_input_size=2048,
-        nproc=1
+        nproc=1,
+        # token_dictionary_file=join(geneformer_dir, "geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl")
     )
     tokenizer.tokenize_data(
         data_directory=args.counts_dir, 
         output_directory=args.gf_out_dir,
         output_prefix="", 
-        file_format="h5ad"
+        file_format="h5ad",
+        mask_fraction=args.mask_fraction
     )
 
     embex = EmbExtractor(
@@ -51,14 +53,16 @@ def main(args):
         token_dictionary_file=join(geneformer_dir, "geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl")
     )
 
-    embeddings, token_gene_dict, seq_lengths, input_ids_list = embex.extract_embs(
+    embeddings, data = embex.extract_embs(
         model_directory=join(geneformer_dir, "gf-6L-30M-i2048"),
         input_data_file=join(dirname(args.gf_out_dir), "geneformer.dataset"),
-        output_directory=args.out_dir, # (not used)  
+        output_directory=args.out_dir, # not used
         output_prefix=""
     )
+    seq_lengths = data["length"]
+    input_ids_list = data["input_ids"]
 
-    id_gene_map_vectorized = np.vectorize(lambda x: token_gene_dict.get(x))
+    id_gene_map_vectorized = np.vectorize(lambda x: embex.token_gene_dict.get(x))
     input_genes = [id_gene_map_vectorized(np.array(ids)) for ids in input_ids_list]
 
      # load aracne network
@@ -78,13 +82,30 @@ def main(args):
         })[[REG_VALS, TAR_VALS]].to_numpy().T
         edges[i] = edges_i
 
-    np.savez(
-        file=join(args.out_dir, "embedding.npz"), 
-        x=embeddings,
-        seq_lengths=seq_lengths,
-        edges=edges, 
-        allow_pickle=True
-    )
+    if args.mask_fraction == 0:
+        np.savez(
+            file=join(args.out_dir, "embedding.npz"), 
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            edges=edges, 
+            allow_pickle=True
+        )
+    else:
+        masks = {}
+        for i, mask in enumerate(data["masked_gene_index"]):
+            masks[i] = mask
+        expression = {}
+        for i, expr in enumerate(data["original_expression_values"]):
+            expression[i] = expr
+        np.savez(       
+            file=join(args.out_dir, "embedding.npz"), 
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            edges=edges,
+            masks=masks,
+            expression=expression,
+            allow_pickle=True
+        )
 
 
 if __name__ == "__main__":
@@ -92,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--aracne_dir", type=str, required=True)
+    parser.add_argument("--mask_fraction", type=float, default=0.0)
     parser.add_argument("--sample_n_cells", type=int, default=None)
     args = parser.parse_args()
 

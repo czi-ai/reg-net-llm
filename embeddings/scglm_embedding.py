@@ -47,6 +47,7 @@ parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--use_masked_edges", action="store_true")
+parser.add_argument("--mask_ratio", type=float, default=0.15)
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
@@ -189,7 +190,7 @@ def main(args):
         cache_dir=args.all_data_dir,
         dataset_name="cells",
         debug=False,
-        mask_fraction=0
+        mask_fraction=0.15
     )
     
     dataloader = torch.utils.data.DataLoader(
@@ -217,7 +218,7 @@ def main(args):
                 edges_list.append([e.cpu().numpy() for e in batch["edge_index"]])
                 # idendify edges to mask for each cell
                 # random edge mask returns a tuple (non_masked_edge_index, masked_edge_index)
-                random_edge_masks = [random_edge_mask(edge_index) for edge_index in batch["edge_index"]]
+                random_edge_masks = [random_edge_mask(edge_index, mask_ratio=args.mask_ratio) for edge_index in batch["edge_index"]]
                 non_masked_edge_inices = [edge_mask[0] for edge_mask in random_edge_masks]
                 masked_edge_indices = [edge_mask[1] for edge_mask in random_edge_masks]
                 batch["edge_index"] = non_masked_edge_inices
