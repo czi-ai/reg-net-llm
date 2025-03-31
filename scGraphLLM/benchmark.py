@@ -89,6 +89,7 @@ class GeneEmbeddingDatasetWithEdgeMasks(GeneEmbeddingDataset):
         super().__init__(paths)
         self.mask_ratio = mask_ratio
         self.generate_edge_masks = generate_edge_masks
+        self.mask_ratio = mask_ratio
 
         if not generate_edge_masks:
             embedding = [np.load(path, allow_pickle=True) for path in self.paths]
@@ -300,7 +301,8 @@ def fine_tune_pl(
         train_dataloader, 
         task, 
         save_dir, 
-        lr, 
+        lr,
+        weight_decay,
         num_epochs, 
         max_num_batches,
         val_check_interval,
@@ -340,7 +342,8 @@ def fine_tune_pl(
     model = FineTuneModule(
         model=ft_model, 
         task=task,
-        lr=lr
+        lr=lr,
+        weight_decay=weight_decay
     )
     trainer.fit(
         model=model, 
@@ -481,7 +484,7 @@ def main(args):
         if args.task == "link":
             embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
         elif args.task == "mgm":
-            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked_002/embedding.npz"
+            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked_0.45/embedding.npz"
     elif args.model == "scgpt":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
     elif args.model == "scf":
@@ -514,8 +517,16 @@ def main(args):
         val_dataset = GeneEmbeddingDataset(paths=val_paths)
         collate_fn = embedding_collate_fn
     elif args.task == "mgm":
-        train_dataset = GeneEmbeddingDatasetWithEdgeMasks(train_paths, generate_edge_masks=args.generate_edge_masks)
-        val_dataset = GeneEmbeddingDatasetWithEdgeMasks(val_paths, generate_edge_masks=args.generate_edge_masks)
+        train_dataset = GeneEmbeddingDatasetWithEdgeMasks(
+            paths=train_paths, 
+            generate_edge_masks=args.generate_edge_masks,
+            mask_ratio=args.mask_ratio
+        )
+        val_dataset = GeneEmbeddingDatasetWithEdgeMasks(
+            paths=val_paths, 
+            generate_edge_masks=args.generate_edge_masks,
+            mask_ratio=args.mask_ratio
+        )
         collate_fn = partial(embedding_collate_fn, masked_edges=True)
 
     print_dataset_info("Train", train_dataset)
@@ -551,6 +562,7 @@ def main(args):
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         lr=args.lr,
+        weight_decay=args.weight_decay,
         max_num_batches=args.max_num_batches,
         val_check_interval=args.val_check_interval,
         num_epochs=args.num_epochs,
@@ -575,7 +587,11 @@ def main(args):
     if args.task == "link":
         test_dataset = GeneEmbeddingDataset(paths=test_paths)
     elif args.task == "mgm":
-        test_dataset = GeneEmbeddingDatasetWithEdgeMasks(test_paths, generate_edge_masks=args.generate_edge_masks)
+        test_dataset = GeneEmbeddingDatasetWithEdgeMasks(
+            paths=test_paths, 
+            generate_edge_masks=args.generate_edge_masks,
+            mask_ratio=args.mask_ratio
+        )
 
     print_dataset_info("Test", test_dataset)
     info["test_embedding_tensor"] = test_dataset.x.shape
@@ -633,9 +649,11 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm"])
     parser.add_argument("--generate_edge_masks", action="store_true")
+    parser.add_argument("--mask_ratio", type=float, default=0.15)
     parser.add_argument("--use_gat", action="store_true")
-    parser.add_argument("--lr", type=float, default=1e-5)
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-1)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--max_num_batches", type=int, default=None)
     parser.add_argument("--num_epochs", type=int, default=500)
     parser.add_argument("--patience", type=int, default=5)
