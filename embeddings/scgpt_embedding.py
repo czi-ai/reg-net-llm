@@ -38,7 +38,6 @@ parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
 
 sys.path.append(args.scgpt_rootdir)
-from scgpt.tasks.cell_emb import embed_data
 from scgpt.data_collator import DataCollator
 from scgpt.model import TransformerModel
 from scgpt.tokenizer import GeneVocab
@@ -131,6 +130,8 @@ def get_batch_embeddings(
         pad_token_id=vocab[model_configs["pad_token"]],
         pad_value=model_configs["pad_value"],
         do_mlm=False,
+        # do_mlm=True, #FIXME
+        # mlm_probability=0.95,
         do_binning=True,
         max_length=max_length,
         sampling=True,

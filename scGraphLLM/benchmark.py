@@ -44,7 +44,7 @@ def send_to_gpu(data):
     else:
         return data  # If not a tensor or list/dict, leave unchanged
 
-class GeneEmbeddingDataset(torch.utils.data.Dataset):
+class EmbeddingDataset(torch.utils.data.Dataset):
     def __init__(self, paths):
         self.paths = paths 
         for path in self.paths:
@@ -57,18 +57,17 @@ class GeneEmbeddingDataset(torch.utils.data.Dataset):
         self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
         self.max_seq_length = np.max(self.seq_lengths)
         self.x = concatenate_embeddings([emb["x"] for emb in embedding])
-        self.edges = self.aggregate_edges_dict(embedding)
+        self.edges = self.aggregate_embedding_dicts(embedding)
 
-    def aggregate_edges_dict(self, embedding, edges_key="edges"):
-        edges_dict = {}
+    def aggregate_embedding_dicts(self, embedding, key="edges"):
+        res = {}
         i = 0
         for emb in embedding:
-            edges = emb[edges_key].item()
-            n_samples = len(edges)
-            for j,e in edges.items():
-                edges_dict[i+j] = e
-            i += n_samples
-        return edges_dict
+            d = emb[key].item()
+            for j,e in d.items():
+                res[i+j] = e
+            i += len(d)
+        return res
 
     @property
     def embedding_dim(self):
@@ -84,7 +83,22 @@ class GeneEmbeddingDataset(torch.utils.data.Dataset):
             "edges": torch.tensor(self.edges[idx])
         }
 
-class GeneEmbeddingDatasetWithEdgeMasks(GeneEmbeddingDataset):
+
+class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
+    def __init__(self, paths):
+        super().__init__(paths)
+        embedding = [np.load(path, allow_pickle=True) for path in self.paths]
+        self.masked_genes = self.aggregate_embedding_dicts(embedding, key="masks")
+        self.expression = self.aggregate_embedding_dicts(embedding, key="expression")
+    
+    def __getitem__(self, idx):
+        item = super().__getitem__(idx)
+        item["masked_genes"] = torch.tensor(self.masked_genes[idx])
+        item["expression"] = torch.tensor(self.expression[idx])
+        return item
+    
+
+class EmbeddingDatasetWithEdgeMasks(EmbeddingDataset):
     def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False):
         super().__init__(paths)
         self.mask_ratio = mask_ratio
@@ -93,8 +107,8 @@ class GeneEmbeddingDatasetWithEdgeMasks(GeneEmbeddingDataset):
 
         if not generate_edge_masks:
             embedding = [np.load(path, allow_pickle=True) for path in self.paths]
-            self.masked_edges = self.aggregate_edges_dict(embedding, edges_key="masked_edges")
-            self.non_masked_edges = self.aggregate_edges_dict(embedding, edges_key="non_masked_edges")
+            self.masked_edges = self.aggregate_embedding_dicts(embedding, key="masked_edges")
+            self.non_masked_edges = self.aggregate_embedding_dicts(embedding, key="non_masked_edges")
             
             mean_perc_masked_edges = np.mean([
                 self.masked_edges[k].shape[1] / self.edges[k].shape[1]
@@ -254,10 +268,13 @@ class FineTuneModule(pl.LightningModule):
         self.weight_decay = weight_decay
         self.model.to(self.device)
         self.task = task
+        assert self.task in {"link", "mgm", "mlm"}
     
     def training_step(self, batch, batch_idx):
-        loss, _, _ = self._step(batch)
-        self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
+        if self.task == "link" or self.task == "mgm":
+            loss, _, _ = self._step(batch)
+            self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
+        # elif self.task == "mlm":
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -288,6 +305,9 @@ class FineTuneModule(pl.LightningModule):
                 non_masked_edge_index_list=batch["non_masked_edges"],
                 use_bce_loss=True
             )
+        elif self.task == "mlm":
+            pass
+            # loss, y, yhat = mlm_loss()
         return loss, preds, labels
 
     def configure_optimizers(self):
@@ -511,18 +531,23 @@ def main(args):
     val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
     test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
 
+
+    train_paths = ["/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd8_t_cells/embeddings/geneformer/test_gene_masks/embedding.npz"]
+    val_paths = train_paths
+    test_paths = train_paths
+
     print("Loading Train and Validation Data...")
     if args.task == "link":
-        train_dataset = GeneEmbeddingDataset(paths=train_paths)
-        val_dataset = GeneEmbeddingDataset(paths=val_paths)
+        train_dataset = EmbeddingDatasetWithGeneMasks(paths=train_paths)
+        val_dataset = EmbeddingDatasetWithGeneMasks(paths=val_paths)
         collate_fn = embedding_collate_fn
     elif args.task == "mgm":
-        train_dataset = GeneEmbeddingDatasetWithEdgeMasks(
+        train_dataset = EmbeddingDatasetWithEdgeMasks(
             paths=train_paths, 
             generate_edge_masks=args.generate_edge_masks,
             mask_ratio=args.mask_ratio
         )
-        val_dataset = GeneEmbeddingDatasetWithEdgeMasks(
+        val_dataset = EmbeddingDatasetWithEdgeMasks(
             paths=val_paths, 
             generate_edge_masks=args.generate_edge_masks,
             mask_ratio=args.mask_ratio
@@ -548,13 +573,19 @@ def main(args):
         collate_fn=collate_fn
     )   
 
-    predictor = LinkPredictor(
-        in_channels=train_dataset.embedding_dim,
-        hidden_dim=train_dataset.embedding_dim,
-        embed_dim=train_dataset.embedding_dim,
-        use_gat=args.use_gat
-    )
-    
+    if args.task in {"link", "mgm"}:
+        predictor = LinkPredictor(
+            in_channels=train_dataset.embedding_dim,
+            hidden_dim=train_dataset.embedding_dim,
+            embed_dim=train_dataset.embedding_dim,
+            use_gat=args.use_gat
+        )
+    else:
+        # predictor = MaskedGenePredictor(
+
+        # )
+        pass
+        
     print(f"Fine tuning link predictor...\n {predictor}")
     best_model: FineTuneModule = fine_tune_pl(
         ft_model=predictor,
@@ -585,9 +616,9 @@ def main(args):
 
     print("Loading Test Data...")
     if args.task == "link":
-        test_dataset = GeneEmbeddingDataset(paths=test_paths)
+        test_dataset = EmbeddingDatasetWithGeneMasks(paths=test_paths)
     elif args.task == "mgm":
-        test_dataset = GeneEmbeddingDatasetWithEdgeMasks(
+        test_dataset = EmbeddingDatasetWithEdgeMasks(
             paths=test_paths, 
             generate_edge_masks=args.generate_edge_masks,
             mask_ratio=args.mask_ratio

@@ -330,9 +330,7 @@ def main(args):
             REG_VALS: lambda df: df[REG_VALS].map(local_gene_to_node_index),
             TAR_VALS: lambda df: df[TAR_VALS].map(local_gene_to_node_index),
         })[[REG_VALS, TAR_VALS]].to_numpy().T
-        edges[i] = edges_i
-
-    pass   
+        edges[i] = edges_i  
 
     np.savez(
         file=join(args.out_dir, "embedding.npz"), 
