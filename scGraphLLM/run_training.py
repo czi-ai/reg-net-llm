@@ -46,7 +46,7 @@ def collate_fn(batch):
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
 # filesystem = os.environ["WHEREAMI"]
 user = os.environ["USER"]
-filesystem = f"/hpc/mydata/{user}"
+filesystem = f"/hpc/mydata/{user}/scGraphLLM/"
 ## ^This makes it easier to switch between different machines;  WHEREAMI is set in the .bashrc file and is the location of where we store repos; 
 ## on manitou its /manitou/pmg/users/vss2134, exxmini its /data/vss2134, aws its /data and so on 
 
@@ -106,8 +106,8 @@ def main(args):
     root_dir = f"{filesystem}/GLM/model_out"
     run_dir = Path(f"{root_dir}/{version}")
     ## don't overwrite existing runs
-    if run_dir.exists() and (mode not in {"resume", "validate"}):
-        raise NotImplementedError(f"run_dir {str(run_dir)} already exists, bad input ")
+    # if run_dir.exists() and (mode not in {"resume", "validate"}):
+    #     raise NotImplementedError(f"run_dir {str(run_dir)} already exists, bad input ")
     run_dir.mkdir(exist_ok=True, parents=True)
 
     mconfig["slurm_jobid"] = os.getenv("SLURM_JOBID")
@@ -144,9 +144,9 @@ def main(args):
         if "checkpoint_config" in trainer_conf:
             check_point_conf = trainer_conf['checkpoint_config']
             check_point_conf["dirpath"] = f"{run_dir}/checkpoints/"
-            check_point_conf["filename"] = f"{{epoch}}-{{step}}"
+            check_point_conf["filename"] = f"{{epoch}}-{{step}}.ckpt"
             callbacks.append(ModelCheckpoint(**check_point_conf)) # Locally save checkpoint
-            # callbacks.append(SaveModelEveryNSteps(check_point_conf["every_n_train_steps"])) # wandb save checkpoint
+            
 
         if "early_stopping" in trainer_conf:
             callbacks.append(EarlyStopping(**trainer_conf['early_stopping']))

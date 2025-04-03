@@ -25,12 +25,14 @@ class Config(dict):
 node_hyperparams = Config({
     "num_ranks": NUM_RANKS, 
     "num_genes": NUM_GENES, 
-    "node_embedding_dim": 128 
+    "node_embedding_dim": 128,
+    "num_hvgs": 1024,
+    "freeze_encoder": False
 })
 
 transformer_dim = Config({
     "input_dim": 2*node_hyperparams.node_embedding_dim,
-    "feed_dim": 256
+    "feed_dim": 512
 })
 
 vanilla_config = Config({
@@ -72,13 +74,14 @@ vanilla_6L_config = Config({
 graph_kernel_attn_config = Config({
     "transformer_dim": transformer_dim,
     "num_heads": 8,
-    "num_encoder_layers": 1,
+    "num_encoder_layers": 12,
     "activation": "gelu",
     "dropout": 0.1,
     "batch_first": True,
     "use_pe": False,
     "use_attn_mask": True,
-    "use_flash_attn": True
+    "use_flash_attn": True,
+    "fine_tuning": False
 })
 
 graph_kernel_attn_3L_config = Config({
@@ -110,10 +113,10 @@ vanilla_manitou = Config({
     "model_config": node_hyperparams, # prediction_head_config
     "transformer_config": vanilla_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/pilot_cache_4096/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/pilot_manitou/valHOG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/pilot_cache_4096/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/pilot_cache_4096/valHOG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],
@@ -433,14 +436,14 @@ graph_kernel_attn_manitou = Config({
         "test": [
             ],
         "run_test":False, 
-        "num_workers": 1,
-        "batch_size": 16
+        "num_workers": 8,
+        "batch_size": 8
     }),
     "trainer_config":Config({
-        "max_epochs" : 100,
+        "max_epochs" : 10,
         "accelerator" : "gpu",
-        "max_time": "03:00:00:00",
-        "devices" : 1,
+        "max_time": "05:00:00:00",
+        "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 1,
@@ -605,29 +608,31 @@ graph_kernel_attn_4096 = Config({
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096_META/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096/valHOG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096_META/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096_META/valHOG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],
         "run_test":False, 
-        "num_workers": 1,
-        "batch_size": 16
+        "num_workers": 8,
+        "batch_size": 8
     }),
     "trainer_config":Config({
-        "max_epochs" : 100,
+        "max_epochs" : 10,
         "accelerator" : "gpu",
-        "max_time": "01:00:00:00",
-        "devices" : 1,
+        "max_time": "05:00:00:00",
+        "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
-        "log_every_n_steps" : 1,
+        "log_every_n_steps" : 50,
         "val_check_interval":0.05,
+        "num_nodes":  1,
+        "strategy" :"ddp_find_unused_parameters_true",
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints
-                                "every_n_train_steps" : 5000 # Save every 5000 training steps
+                                "every_n_train_steps" : 1000 # Save every 5000 training steps
                             }
     }),
     "loss_config":Config({
