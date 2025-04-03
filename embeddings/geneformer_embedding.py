@@ -15,6 +15,49 @@ geneformer_dir = dirname(dirname(abspath(importlib.util.find_spec("geneformer").
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
 
+def mask_values(sparse_mat, mask_prob=0.15, mask_value=0):
+    """
+    Masks each nonzero value in a sparse matrix with a given probability.
+
+    Parameters:
+        sparse_mat (scipy.sparse.spmatrix): Input sparse matrix.
+        mask_prob (float): Probability of masking each nonzero value (default: 0.15).
+        mask_value (float): Value to use for masking (default: 0, suitable for sparse).
+
+    Returns:
+        scipy.sparse.spmatrix: Masked sparse matrix with the same format.
+    """
+    sparse_mat = sparse_mat.tocoo()
+    mask = np.random.rand(len(sparse_mat.data)) < mask_prob
+    masked_indices = (sparse_mat.row[mask], sparse_mat.col[mask])
+    sparse_mat.data[mask] = mask_value
+
+    return sparse_mat.tocsr(), masked_indices
+
+def get_masked_gene_expressions(masked_indices, adata):
+    """
+    Iterates through each row and returns the genes (columns) that were masked in each row.
+
+    Parameters:
+        masked_indices (tuple of arrays): Indices of the masked entries (row_indices, col_indices).
+        sparse_mat (scipy.sparse.spmatrix): The original sparse matrix.
+
+    Returns:
+        masked_genes_by_row (list of lists): List where each element is a list of masked gene indices (columns) for each row.
+    """
+    row_indices, col_indices = masked_indices
+    masked_genes = {}
+    masked_gene_expressions = {}
+    # Iterate through all rows
+    for i in range(adata.shape[0]):
+        # Find the indices where the row is involved in masking
+        row_masked_indices = np.where(row_indices == i)[0]
+        masked_genes_index = col_indices[row_masked_indices].tolist()
+        masked_genes[i] = adata.var_names[masked_genes_index].tolist()
+        masked_gene_expressions[i] = adata[i, masked_genes[i]].X.toarray().flatten()
+
+    return masked_genes, masked_gene_expressions
+
 def main(args):
     # get counts as annoted data
     adata = sc.read_h5ad(args.cells_path)
@@ -27,6 +70,12 @@ def main(args):
         obs=adata.obs[["n_counts"]],
         var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
     )
+
+    if args.mask_fraction is not None:
+        X_masked, masked_indices = mask_values(counts.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
+        counts.X = X_masked
+        masked_genes, masked_gene_expressions = get_masked_gene_expressions(masked_indices, adata)
+
     counts.write_h5ad(args.counts_path)
 
     tokenizer = TranscriptomeTokenizer(
@@ -38,8 +87,7 @@ def main(args):
         data_directory=args.counts_dir, 
         output_directory=args.gf_out_dir,
         output_prefix="", 
-        file_format="h5ad",
-        mask_fraction=args.mask_fraction
+        file_format="h5ad"
     )
 
     embex = EmbExtractor(
@@ -65,7 +113,7 @@ def main(args):
     id_gene_map_vectorized = np.vectorize(lambda x: embex.token_gene_dict.get(x))
     input_genes = [id_gene_map_vectorized(np.array(ids)) for ids in input_ids_list]
 
-     # load aracne network
+    # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
 
     # get edges for each cell
@@ -82,7 +130,7 @@ def main(args):
         })[[REG_VALS, TAR_VALS]].to_numpy().T
         edges[i] = edges_i
 
-    if args.mask_fraction == 0:
+    if args.mask_fraction is None:
         np.savez(
             file=join(args.out_dir, "embedding.npz"), 
             x=embeddings,
@@ -90,22 +138,26 @@ def main(args):
             edges=edges, 
             allow_pickle=True
         )
-    else:
-        masks = {}
-        for i, mask in enumerate(data["masked_gene_index"]):
-            masks[i] = mask
-        expression = {}
-        for i, expr in enumerate(data["original_expression_values"]):
-            expression[i] = expr
-        np.savez(       
-            file=join(args.out_dir, "embedding.npz"), 
-            x=embeddings,
-            seq_lengths=seq_lengths,
-            edges=edges,
-            masks=masks,
-            expression=expression,
-            allow_pickle=True
-        )
+        return
+    
+    assert len(masked_genes) == len(input_genes)
+    masks = {}
+    for i in range(len(masked_genes)):
+        input_genes_i = input_genes[i]
+        masked_genes_i = masked_genes[i]
+        masked_gene_emb_index = pd.Series(input_genes_i).pipe(lambda x: x[x.isin(masked_genes_i)].index.to_list())
+        masks[i] = masked_gene_emb_index
+
+    
+    np.savez(       
+        file=join(args.out_dir, "embedding.npz"), 
+        x=embeddings,
+        seq_lengths=seq_lengths,
+        edges=edges,
+        masks=masks,
+        expression=masked_gene_expressions,
+        allow_pickle=True
+    )
 
 
 if __name__ == "__main__":
@@ -113,8 +165,10 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--aracne_dir", type=str, required=True)
-    parser.add_argument("--mask_fraction", type=float, default=0.0)
+    parser.add_argument("--mask_fraction", type=float, default=None)
+    parser.add_argument("--mask_value", type=float, default=1e-4)
     parser.add_argument("--sample_n_cells", type=int, default=None)
+    parser.add_argument("--max_n_genes", type=int, default=1200)
     args = parser.parse_args()
 
     args.cells_path = join(args.data_dir, "cells.h5ad")
