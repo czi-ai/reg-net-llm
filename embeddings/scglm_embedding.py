@@ -78,6 +78,7 @@ def collate_fn(batch):
 
     return data
 
+# TODO: merge with other run_save_function
 def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit, valsg_split_ratio, cell_type, min_genes_per_graph=MIN_GENES_PER_GRAPH, skipped=0, ncells=0, verbose=False):
     
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
@@ -244,6 +245,7 @@ def main(args):
 
 
     print("Saving emeddings...")
+    # TODO: 1. Write embedding for each cell to embedding cache directory
     if args.use_masked_edges:
         masked_edges = get_edges_dict(masked_edges_list)
         non_masked_edges = get_edges_dict(non_masked_edges_list)
@@ -259,9 +261,9 @@ def main(args):
     else:  
         np.savez(
             file=args.emb_path, 
-            x=embeddings,
-            seq_lengths=seq_lengths,
-            edges=edges,
+            x=embeddings, #tensor
+            seq_lengths=seq_lengths,# tensor
+            edges=edges,# dict
             allow_pickle=True
         )
 
@@ -282,6 +284,7 @@ if __name__ == "__main__":
     args.ranks_path = join(args.data_dir, "rank_raw.csv")
     args.emb_path = join(args.out_dir, "embedding.npz")
     args.cache_dir = join(args.out_dir, "cache")
+    args.emb_cache_dir = join(args.out_dir, "emb_cache")
     args.all_data_dir = join(args.cache_dir, "all")
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.all_data_dir, exist_ok=True)

@@ -45,6 +45,7 @@ def send_to_gpu(data):
         return data  # If not a tensor or list/dict, leave unchanged
 
 class GeneEmbeddingDataset(torch.utils.data.Dataset):
+    # TODO: optionally provide directories with cached embeddings
     def __init__(self, paths):
         self.paths = paths 
         for path in self.paths:
@@ -53,11 +54,21 @@ class GeneEmbeddingDataset(torch.utils.data.Dataset):
         # Load data based on paths   
         for path in paths:
             assert os.path.exists(path), f"File not found: {path} in provided paths list."
+
         embedding = [np.load(path, allow_pickle=True) for path in self.paths]
         self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
         self.max_seq_length = np.max(self.seq_lengths)
         self.x = concatenate_embeddings([emb["x"] for emb in embedding])
         self.edges = self.aggregate_edges_dict(embedding)
+
+        ## directories = ["monocyte_emneddings", "t_cell_embeddings"]
+        # / monocyte_0, monocyte_1,...
+        # / t_cell_0, t_cell_1,...
+        # 0 -> monocyte_0,
+        # 1 -> monocyte_1
+        # 2 -> t_cell_0
+        # 3 -> t_cell_1
+
 
     def aggregate_edges_dict(self, embedding, edges_key="edges"):
         edges_dict = {}
@@ -476,6 +487,7 @@ def main(args):
     # pytorch lightning seed
     pl.seed_everything(args.random_seed, workers=True)
 
+    # TODO: change according to using cached embeddings or not
     print("Loading dataset...")
     if args.model == "scglm":
         if args.task == "link":
