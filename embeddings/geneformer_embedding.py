@@ -15,7 +15,7 @@ geneformer_dir = dirname(dirname(abspath(importlib.util.find_spec("geneformer").
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
 
-def mask_values(sparse_mat, mask_prob=0.15, mask_value=0):
+def mask_values(sparse_mat, mask_prob=0.15, mask_value=0, seed=12345):
     """
     Masks each nonzero value in a sparse matrix with a given probability.
 
@@ -28,7 +28,7 @@ def mask_values(sparse_mat, mask_prob=0.15, mask_value=0):
         scipy.sparse.spmatrix: Masked sparse matrix with the same format.
     """
     sparse_mat = sparse_mat.tocoo()
-    mask = np.random.rand(len(sparse_mat.data)) < mask_prob
+    mask = np.random.default_rng(seed).random(len(sparse_mat.data)) < mask_prob
     masked_indices = (sparse_mat.row[mask], sparse_mat.col[mask])
     sparse_mat.data[mask] = mask_value
 
@@ -52,22 +52,26 @@ def get_masked_gene_expressions(masked_indices, adata):
     for i in range(adata.shape[0]):
         # Find the indices where the row is involved in masking
         row_masked_indices = np.where(row_indices == i)[0]
-        masked_genes_index = col_indices[row_masked_indices].tolist()
+        masked_genes_index = sorted(col_indices[row_masked_indices].tolist())
+        # cell_id = adata.obs_names[i]
         masked_genes[i] = adata.var_names[masked_genes_index].tolist()
         masked_gene_expressions[i] = adata[i, masked_genes[i]].X.toarray().flatten()
-
     return masked_genes, masked_gene_expressions
 
 def main(args):
     # get counts as annoted data
     adata = sc.read_h5ad(args.cells_path)
-    
+    # sort by n_counts, necessary because geneformer's embeddging extractor equivalently sorts by sequence length
+    # this way the input cell order and output cell order are the same
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
-        sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+        sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=123456, copy=False)
+
+    adata = adata[adata.obs["n_counts"].sort_values(ascending=False).index]
+    adata.obs["cell_id"] = adata.obs_names.values
 
     counts = sc.AnnData(
         X=csc_matrix(adata.layers["counts"].astype(int)),
-        obs=adata.obs[["n_counts"]],
+        obs=adata.obs[["n_counts", "cell_id"]],
         var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
     )
 
@@ -81,7 +85,9 @@ def main(args):
     tokenizer = TranscriptomeTokenizer(
         model_input_size=2048,
         nproc=1,
-        # token_dictionary_file=join(geneformer_dir, "geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl")
+        special_token=False,
+        custom_attr_name_dict={"cell_id": "cell_id"},
+        token_dictionary_file=join(geneformer_dir, "geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl")
     )
     tokenizer.tokenize_data(
         data_directory=args.counts_dir, 
@@ -107,8 +113,16 @@ def main(args):
         output_directory=args.out_dir, # not used
         output_prefix=""
     )
+    
+    # reorder data and embeddings according to cell ids in adata
+    cell_id_to_index = {cell_id: i for i, cell_id in enumerate(data["cell_id"])}
+    reordered_indices = [cell_id_to_index[cell_id] for cell_id in adata.obs["cell_id"]]
+    data = data.select(reordered_indices)
+    embeddings = embeddings[reordered_indices,:,:]
+
     seq_lengths = data["length"]
     input_ids_list = data["input_ids"]
+    # cell_ids = data["cell_id"]
 
     id_gene_map_vectorized = np.vectorize(lambda x: embex.token_gene_dict.get(x))
     input_genes = [id_gene_map_vectorized(np.array(ids)) for ids in input_ids_list]
@@ -147,7 +161,6 @@ def main(args):
         masked_genes_i = masked_genes[i]
         masked_gene_emb_index = pd.Series(input_genes_i).pipe(lambda x: x[x.isin(masked_genes_i)].index.to_list())
         masks[i] = masked_gene_emb_index
-
     
     np.savez(       
         file=join(args.out_dir, "embedding.npz"), 
