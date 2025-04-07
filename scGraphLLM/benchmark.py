@@ -14,7 +14,7 @@ import lightning.pytorch as pl
 
 from scGraphLLM.data import *
 from scGraphLLM.GNN_modules import GATEncoder 
-from scGraphLLM.MLP_modules import LinkPredictHead
+from scGraphLLM.MLP_modules import LinkPredictHead, RobertaLMHead
 from scGraphLLM._globals import *
 # from scGraphLLM.flash_transformer import GDTransformer
 from scGraphLLM.config import *
@@ -89,12 +89,12 @@ class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
         super().__init__(paths)
         embedding = [np.load(path, allow_pickle=True) for path in self.paths]
         self.masked_genes = self.aggregate_embedding_dicts(embedding, key="masks")
-        self.expression = self.aggregate_embedding_dicts(embedding, key="expression")
+        self.expression = self.aggregate_embedding_dicts(embedding, key="masked_expressions")
     
     def __getitem__(self, idx):
         item = super().__getitem__(idx)
         item["masked_genes"] = torch.tensor(self.masked_genes[idx])
-        item["expression"] = torch.tensor(self.expression[idx])
+        item["masked_expression"] = torch.tensor(self.expression[idx])
         return item
     
 
@@ -143,12 +143,16 @@ def concatenate_embeddings(x_list):
     return np.concatenate(x_list_padded, axis=0)
 
 
-def embedding_collate_fn(batch, masked_edges=False):
+def embedding_collate_fn(batch, masked_genes=False, masked_edges=False):
     collated = {
         "x": torch.stack([item["x"] for item in batch]),
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
     }
+    
+    if masked_genes:
+        collated["masked_genes"] = [item["masked_genes"] for item in batch]
+        collated["masked_expression"] = [item["masked_expression"] for item in batch]
 
     if masked_edges:
         collated["masked_edges"] = [item["masked_edges"] for item in batch]
@@ -260,6 +264,21 @@ def generalized_link_pred_loss(
     return loss, all_outputs, all_labels
 
 
+def masked_gene_expression_pred_loss(
+        predictor: nn.Module, 
+        node_embedding: torch.Tensor,
+        masked_genes: Dict,
+        masked_expression: torch.Tensor,
+        device="cuda"
+    ):
+    yhat = predictor(node_embedding).squeeze()
+    masked_index = torch.tensor([(i, idx.item()) for i, indices in enumerate(masked_genes) for idx in indices])
+    yhat_masked = yhat[masked_index[:,0], masked_index[:,1]]
+    y_masked = torch.cat(masked_expression)
+    loss = nn.MSELoss()(yhat_masked, y_masked)
+    return loss, yhat_masked, y_masked
+
+
 class FineTuneModule(pl.LightningModule):
     def __init__(self, model, task, lr=1e-3, weight_decay=1e-4):
         super().__init__()
@@ -273,8 +292,9 @@ class FineTuneModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         if self.task == "link" or self.task == "mgm":
             loss, _, _ = self._step(batch)
-            self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
-        # elif self.task == "mlm":
+        elif self.task == "mlm":
+            loss, _, _ = self._step(batch)
+        self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -288,7 +308,7 @@ class FineTuneModule(pl.LightningModule):
 
     def _step(self, batch):
         if self.task == "link":
-            loss, preds, labels = generalized_link_pred_loss(
+            return generalized_link_pred_loss(
                 predictor=self.model,
                 node_embedding=batch["x"].to(self.device),
                 seq_lengths=batch["seq_lengths"],
@@ -296,7 +316,7 @@ class FineTuneModule(pl.LightningModule):
                 use_bce_loss=False
             )
         elif self.task == "mgm":
-            loss, preds, labels = generalized_link_pred_loss(
+            return generalized_link_pred_loss(
                 predictor=self.model,
                 node_embedding=batch["x"].to(self.device), 
                 seq_lengths=batch["seq_lengths"],
@@ -306,9 +326,12 @@ class FineTuneModule(pl.LightningModule):
                 use_bce_loss=True
             )
         elif self.task == "mlm":
-            pass
-            # loss, y, yhat = mlm_loss()
-        return loss, preds, labels
+            return masked_gene_expression_pred_loss(
+                self.model,
+                node_embedding=batch["x"],
+                masked_genes=batch["masked_genes"],
+                masked_expression=batch["masked_expression"]
+            )
 
     def configure_optimizers(self):
         return {
@@ -538,8 +561,8 @@ def main(args):
 
     print("Loading Train and Validation Data...")
     if args.task == "link":
-        train_dataset = EmbeddingDatasetWithGeneMasks(paths=train_paths)
-        val_dataset = EmbeddingDatasetWithGeneMasks(paths=val_paths)
+        train_dataset = EmbeddingDataset(train_paths)
+        val_dataset = EmbeddingDataset(val_paths)
         collate_fn = embedding_collate_fn
     elif args.task == "mgm":
         train_dataset = EmbeddingDatasetWithEdgeMasks(
@@ -553,6 +576,10 @@ def main(args):
             mask_ratio=args.mask_ratio
         )
         collate_fn = partial(embedding_collate_fn, masked_edges=True)
+    elif args.task == "mlm":
+        train_dataset = EmbeddingDatasetWithGeneMasks(train_paths)
+        val_dataset = EmbeddingDatasetWithGeneMasks(val_paths)
+        collate_fn = partial(embedding_collate_fn, masked_genes=True)
 
     print_dataset_info("Train", train_dataset)
     print_dataset_info("Validation", val_dataset)
@@ -580,11 +607,11 @@ def main(args):
             embed_dim=train_dataset.embedding_dim,
             use_gat=args.use_gat
         )
-    else:
-        # predictor = MaskedGenePredictor(
-
-        # )
-        pass
+    elif args.task == "mlm":
+        predictor = RobertaLMHead(
+            embed_dim=train_dataset.embedding_dim, 
+            output_dim=1
+        )
         
     print(f"Fine tuning link predictor...\n {predictor}")
     best_model: FineTuneModule = fine_tune_pl(
@@ -616,13 +643,15 @@ def main(args):
 
     print("Loading Test Data...")
     if args.task == "link":
-        test_dataset = EmbeddingDatasetWithGeneMasks(paths=test_paths)
+        test_dataset = EmbeddingDataset(test_paths)
     elif args.task == "mgm":
         test_dataset = EmbeddingDatasetWithEdgeMasks(
             paths=test_paths, 
             generate_edge_masks=args.generate_edge_masks,
             mask_ratio=args.mask_ratio
         )
+    elif args.task == "mlm":
+        test_dataset = EmbeddingDatasetWithGeneMasks(test_paths)
 
     print_dataset_info("Test", test_dataset)
     info["test_embedding_tensor"] = test_dataset.x.shape
@@ -678,7 +707,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
-    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm"])
+    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "mlm"])
     parser.add_argument("--generate_edge_masks", action="store_true")
     parser.add_argument("--mask_ratio", type=float, default=0.15)
     parser.add_argument("--use_gat", action="store_true")

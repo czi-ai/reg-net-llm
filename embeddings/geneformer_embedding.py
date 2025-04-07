@@ -59,6 +59,15 @@ def get_masked_gene_expressions(masked_indices, adata):
     return masked_genes, masked_gene_expressions
 
 def main(args):
+    # initialize tokenizer
+    tokenizer = TranscriptomeTokenizer(
+        model_input_size=2048,
+        nproc=1,
+        special_token=False,
+        custom_attr_name_dict={"cell_id": "cell_id"},
+        token_dictionary_file=join(geneformer_dir, "geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl")
+    )
+
     # get counts as annoted data
     adata = sc.read_h5ad(args.cells_path)
     # sort by n_counts, necessary because geneformer's embeddging extractor equivalently sorts by sequence length
@@ -68,6 +77,9 @@ def main(args):
 
     adata = adata[adata.obs["n_counts"].sort_values(ascending=False).index]
     adata.obs["cell_id"] = adata.obs_names.values
+
+    # filter out unrecognized genes by the tokenizer
+    adata = adata[:, adata.var_names.isin(tokenizer.gene_median_dict.keys())]
 
     counts = sc.AnnData(
         X=csc_matrix(adata.layers["counts"].astype(int)),
@@ -82,13 +94,7 @@ def main(args):
 
     counts.write_h5ad(args.counts_path)
 
-    tokenizer = TranscriptomeTokenizer(
-        model_input_size=2048,
-        nproc=1,
-        special_token=False,
-        custom_attr_name_dict={"cell_id": "cell_id"},
-        token_dictionary_file=join(geneformer_dir, "geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl")
-    )
+    
     tokenizer.tokenize_data(
         data_directory=args.counts_dir, 
         output_directory=args.gf_out_dir,
@@ -120,9 +126,8 @@ def main(args):
     data = data.select(reordered_indices)
     embeddings = embeddings[reordered_indices,:,:]
 
-    seq_lengths = data["length"]
     input_ids_list = data["input_ids"]
-    # cell_ids = data["cell_id"]
+    seq_lengths = [len(input_ids) for input_ids in input_ids_list]
 
     id_gene_map_vectorized = np.vectorize(lambda x: embex.token_gene_dict.get(x))
     input_genes = [id_gene_map_vectorized(np.array(ids)) for ids in input_ids_list]
@@ -155,12 +160,13 @@ def main(args):
         return
     
     assert len(masked_genes) == len(input_genes)
-    masks = {}
+    masks, masked_expressions = {}, {}
     for i in range(len(masked_genes)):
         input_genes_i = input_genes[i]
         masked_genes_i = masked_genes[i]
-        masked_gene_emb_index = pd.Series(input_genes_i).pipe(lambda x: x[x.isin(masked_genes_i)].index.to_list())
-        masks[i] = masked_gene_emb_index
+        masked_input_genes = pd.Series(input_genes_i).pipe(lambda x: x[x.isin(masked_genes_i)])
+        masks[i] = masked_input_genes.index.to_list()
+        masked_expressions[i] = adata[i, masked_input_genes].X.toarray().flatten()        
     
     np.savez(       
         file=join(args.out_dir, "embedding.npz"), 
@@ -168,7 +174,7 @@ def main(args):
         seq_lengths=seq_lengths,
         edges=edges,
         masks=masks,
-        expression=masked_gene_expressions,
+        masked_expressions=masked_expressions,
         allow_pickle=True
     )
 
