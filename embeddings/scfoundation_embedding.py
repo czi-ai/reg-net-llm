@@ -19,6 +19,8 @@ import scipy.sparse
 from scipy.sparse import issparse
 import scanpy as sc
 
+from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions
+
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
 ensg2hugo = gene_names_map.set_index("ensg.values")["hugo.values"].to_dict()
@@ -38,6 +40,8 @@ parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--scf_rootdir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
+parser.add_argument("--mask_fraction", type=float, default=None)
+parser.add_argument("--mask_value", type=float, default=1e-4)
 args = parser.parse_args()
 
 # scFoundation imports
@@ -251,10 +255,14 @@ def load_model(model_path, version, output_type, rootdir):
 def main(args):
     # Load cells & translate to human symbol gene names
     data = sc.read_h5ad(args.cells_path)
-    data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
-    data = data[:, ~data.var["symbol_id"].isna()]
-    data.var.set_index("symbol_id")
-    data.var_names = data.var["symbol_id"]
+
+    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
+        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+
+    if args.mask_fraction is not None:
+        data_original = data.copy()
+        X_masked, masked_indices = mask_values(data.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
+        data.X = X_masked
 
     # convert to raw counts
     # counts = sc.AnnData(
@@ -263,8 +271,10 @@ def main(args):
     #     var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
     # )
 
-    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
-        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+    data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
+    data = data[:, ~data.var["symbol_id"].isna()]
+    data.var.set_index("symbol_id")
+    data.var_names = data.var["symbol_id"]
 
     data_df = data.to_df()
 
@@ -318,27 +328,29 @@ def main(args):
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
+    edges = get_locally_indexed_edges(genes_ensg, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
 
-    # get edges for each cell
-    edges = {}
-    for i, genes_i in enumerate(genes_ensg):
-        local_gene_to_node_index = {gene: i for i,gene in enumerate(genes_i)}
-        edges_i = network[
-            network[REG_VALS].isin(genes_i) & 
-            network[TAR_VALS].isin(genes_i)
-        ].assign(**{
-            REG_VALS: lambda df: df[REG_VALS].map(local_gene_to_node_index),
-            TAR_VALS: lambda df: df[TAR_VALS].map(local_gene_to_node_index),
-        })[[REG_VALS, TAR_VALS]].to_numpy().T
-        edges[i] = edges_i  
-
-    np.savez(
+    if args.mask_fraction is None:
+        np.savez(
+            file=join(args.out_dir, "embedding.npz"), 
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            edges=edges, 
+            allow_pickle=True
+        )
+        return
+    
+    masks, masked_expressions = get_locally_indexed_masks_expressions(data_original, masked_indices, genes_ensg)
+    np.savez(       
         file=join(args.out_dir, "embedding.npz"), 
         x=embeddings,
         seq_lengths=seq_lengths,
-        edges=edges, 
+        edges=edges,
+        masks=masks,
+        masked_expressions=masked_expressions,
         allow_pickle=True
-    )
+    )                
+    
 
 if __name__ == "__main__":
     args.cells_path = join(args.data_dir, "cells.h5ad")

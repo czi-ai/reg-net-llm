@@ -16,6 +16,7 @@ from typing import Optional, Union
 from os.path import join, dirname, abspath
 import warnings
 warnings.filterwarnings("ignore")
+from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -35,6 +36,8 @@ parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--scgpt_rootdir", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
+parser.add_argument("--mask_fraction", type=float, default=None)
+parser.add_argument("--mask_value", type=float, default=1e-4)
 args = parser.parse_args()
 
 sys.path.append(args.scgpt_rootdir)
@@ -340,20 +343,27 @@ def embed_data(
 
 def main(args):
     data: sc.AnnData = sc.read_h5ad(args.cells_path)
+    
+    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
+        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+
+    if args.mask_fraction is not None:
+        data_original = data.copy()
+        X_masked, masked_indices = mask_values(data.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
+        data.X = X_masked
+
+    # translate to human symbol
     data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
     data = data[:, ~data.var["symbol_id"].isna()]
     data.var.set_index("symbol_id")
     data.var_names = data.var["symbol_id"]
-
-    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
-        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
 
     embeddings, symbol_ids, id_symbol_map = embed_data(
         adata_or_file=data,
         model_dir=args.model_dir,
         gene_col="index",
         embedding_mode="raw",
-        max_length=1200,
+        max_length=2048,
         batch_size=32,
         obs_to_save=None,
         device="cuda",
@@ -369,35 +379,35 @@ def main(args):
     id_gene_map_vectorized = np.vectorize(lambda x: id_symbol_map.get(x))
     genes_symbol = id_gene_map_vectorized(symbol_ids)
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
-    
+
     assert np.sum(genes_symbol == "cls") == 0
     max_seq_length = embeddings.shape[1]
     seq_lengths = [np.where(seq == '<pad>')[0][0] if np.any(seq == '<pad>') else max_seq_length for seq in genes_symbol]
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
-    
-    # get edges for each cell
-    edges = {}
-    for i, genes_i in enumerate(genes_ensg):
-        local_gene_to_node_index = {gene: i for i,gene in enumerate(genes_i)}
-        edges_i = network[
-            network[REG_VALS].isin(genes_i) & 
-            network[TAR_VALS].isin(genes_i)
-        ].assign(**{
-            REG_VALS: lambda df: df[REG_VALS].map(local_gene_to_node_index),
-            TAR_VALS: lambda df: df[TAR_VALS].map(local_gene_to_node_index),
-        })[[REG_VALS, TAR_VALS]].to_numpy().T
-        edges[i] = edges_i
+    edges = get_locally_indexed_edges(genes_ensg, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
 
-    np.savez(
+    if args.mask_fraction is None:
+        np.savez(
+            file=join(args.out_dir, "embedding.npz"), 
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            edges=edges, 
+            allows_pickle=True
+        )
+        return
+    
+    masks, masked_expressions = get_locally_indexed_masks_expressions(data_original, masked_indices, genes_ensg)                
+    np.savez(       
         file=join(args.out_dir, "embedding.npz"), 
         x=embeddings,
         seq_lengths=seq_lengths,
-        edges=edges, 
+        edges=edges,
+        masks=masks,
+        masked_expressions=masked_expressions,
         allow_pickle=True
     )
-
 
 if __name__ == "__main__":
 

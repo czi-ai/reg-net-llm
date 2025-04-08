@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from anndata import AnnData
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
@@ -23,13 +24,12 @@ import warnings
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
 from scGraphLLM.preprocess import rank
+from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
 warnings.filterwarnings("ignore")
 
-from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
-
-
+from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -48,11 +48,11 @@ parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--use_masked_edges", action="store_true")
 parser.add_argument("--mask_ratio", type=float, default=0.15)
+parser.add_argument("--mask_fraction", type=float, default=0.15)
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
 
-from torch.nn.utils.rnn import pad_sequence
 
 def collate_fn(batch):
     data = {
@@ -168,9 +168,9 @@ def main(args):
 
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+
     
-    print(f"Tokenizing and caching data...")
-    # ranks = pd.read_csv(join(args.data_dir, "rank_raw.csv"))
+    
     ranks, _ = rank(adata, n_bins=250, rank_by_z_score=True)
     run_save_(
         network=network, 
@@ -190,7 +190,7 @@ def main(args):
         cache_dir=args.all_data_dir,
         dataset_name="cells",
         debug=False,
-        mask_fraction=0.15
+        mask_fraction=0.1
     )
     
     dataloader = torch.utils.data.DataLoader(
@@ -240,7 +240,6 @@ def main(args):
                 mode="constant", constant_values=0)
         for emb in embedding_list
     ], axis=0)
-    
     edges = get_edges_dict(edges_list)
 
 

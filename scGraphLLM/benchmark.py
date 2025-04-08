@@ -25,9 +25,17 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset, DataLoader, random_split
 
-from sklearn.metrics import roc_curve, auc
-from sklearn.metrics import precision_recall_curve
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import (
+    roc_curve, 
+    auc,
+    precision_recall_curve,
+    average_precision_score,
+    mean_absolute_error, 
+    mean_squared_error, 
+    mean_absolute_percentage_error, 
+    r2_score
+)
+from scipy.stats import pearsonr, spearmanr
 import tqdm
 import matplotlib.pyplot as plt
 import random
@@ -179,6 +187,22 @@ class LinkPredictor(nn.Module):
         return self.link_predictor(x_i, x_j)
 
 
+class MaskedGeneExpressionPredictor(nn.Module):
+    def __init__(self, embed_dim, output_dim=1):
+        super().__init__()
+        self.roberta_head = RobertaLMHead(embed_dim, output_dim)
+        self.mask_embedding = nn.Embedding(2, embed_dim)  # 0 = unmasked, 1 = masked
+
+    def forward(self, node_embedding: torch.Tensor, mask: torch.Tensor):
+        """
+        node_embedding: (B, G, D) - B=batch, G=genes, D=embed_dim
+        mask_status: (B, G) - LongTensor with values 0 (unmasked) or 1 (masked)
+        """
+        mask_emb = self.mask_embedding(mask)  # (B, G, D)
+        combined = node_embedding + mask_emb
+        return self.roberta_head(combined)
+
+
 def generalized_link_pred_loss(
     predictor: LinkPredictor,
     node_embedding,
@@ -271,9 +295,12 @@ def masked_gene_expression_pred_loss(
         masked_expression: torch.Tensor,
         device="cuda"
     ):
-    yhat = predictor(node_embedding).squeeze()
-    masked_index = torch.tensor([(i, idx.item()) for i, indices in enumerate(masked_genes) for idx in indices])
-    yhat_masked = yhat[masked_index[:,0], masked_index[:,1]]
+    mask_index = torch.tensor([(i, idx.item()) for i, indices in enumerate(masked_genes) for idx in indices])
+    mask = torch.zeros(len(masked_genes), node_embedding.shape[1], dtype=torch.int, device=device)
+    mask[mask_index[:,0], mask_index[:,1]] = 1
+    
+    yhat = predictor(node_embedding, mask).squeeze()
+    yhat_masked = yhat[mask_index[:,0], mask_index[:,1]]
     y_masked = torch.cat(masked_expression)
     loss = nn.MSELoss()(yhat_masked, y_masked)
     return loss, yhat_masked, y_masked
@@ -290,10 +317,7 @@ class FineTuneModule(pl.LightningModule):
         assert self.task in {"link", "mgm", "mlm"}
     
     def training_step(self, batch, batch_idx):
-        if self.task == "link" or self.task == "mgm":
-            loss, _, _ = self._step(batch)
-        elif self.task == "mlm":
-            loss, _, _ = self._step(batch)
+        loss, _, _ = self._step(batch)
         self.log("train_loss", loss, batch_size=batch["x"].size(0), prog_bar=True, on_epoch=True, on_step=False)
         return loss
     
@@ -303,8 +327,8 @@ class FineTuneModule(pl.LightningModule):
 
     def predict_step(self, batch, batch_idx):
         """Handles predictions during inference."""
-        _, preds, labels = self._step(batch)
-        return {"preds": preds, "labels": labels}
+        _, yhat, y = self._step(batch)
+        return {"yhat": yhat, "y": y}
 
     def _step(self, batch):
         if self.task == "link":
@@ -441,37 +465,47 @@ def random_edge_mask(edge_index, mask_ratio=0.15):
     return non_masked_edge_index, masked_edge_index
 
 
-def predict_links(model: FineTuneModule, dataloader, max_num_batches=None):    
+def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):    
     model.eval().to("cuda")
-    all_preds = []
-    all_labels = []
+    yhat = []
+    y = []
 
     n_b = 0
     for batch in tqdm.tqdm(dataloader, leave=False):
         batch = send_to_gpu(batch)
         result = model.predict_step(batch, batch_idx=None)
-        preds = result["preds"]
-        labels = result["labels"]
-        all_preds.extend(preds.cpu().detach().numpy())
-        all_labels.extend(labels.cpu().detach().numpy())
+        yhat_batch = result["yhat"]
+        y_batch = result["y"]
+        yhat.extend(yhat_batch.cpu().detach().numpy())
+        y.extend(y_batch.cpu().detach().numpy())
         n_b += 1
         if max_num_batches is not None and n_b >= max_num_batches:
             break
-    
-    # AUROC
-    fpr, tpr, _ = roc_curve(all_labels, all_preds)
-    auc_score = auc(fpr, tpr)
-    
-    # PR
-    p, r, _ = precision_recall_curve(all_labels, all_preds)
-    apr = average_precision_score(all_labels, all_preds)
 
-    # Sample sizes
-    n_pos = np.sum(np.array(all_labels) == 1)
-    n_neg = np.sum(np.array(all_labels) == 0)
-    
-    return fpr, tpr, auc_score, p, r, apr, n_pos, n_neg
+    if task in {"link", "mgm"}:
+        # AUROC
+        fpr, tpr, _ = roc_curve(y, yhat)
+        auc_score = auc(fpr, tpr)
+        
+        # PR
+        p, r, _ = precision_recall_curve(y, yhat)
+        apr = average_precision_score(y, yhat)
 
+        # Sample sizes
+        n_pos = np.sum(np.array(y) == 1)
+        n_neg = np.sum(np.array(y) == 0)
+        
+        return fpr, tpr, auc_score, p, r, apr, n_pos, n_neg
+    
+    elif task == "mlm": 
+        mae = mean_absolute_error(y, yhat)
+        mse = mean_squared_error(y, yhat)
+        mape = mean_absolute_percentage_error(y, yhat)
+        r2 = r2_score(y, yhat)
+        pear = pearsonr(y, yhat)[0]
+        spear = spearmanr(y, yhat)[0]
+
+        return y, yhat, mae, mse, mape, r2, pear, spear
 
 
 def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, recall_train, apr_train,
@@ -502,6 +536,32 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
     ax[1].set_ylabel("Precision")
     ax[1].set_title("Precision-Recall Curve")
     ax[1].legend()
+
+    if save_path is not None:
+        fig.savefig(save_path)
+        
+    return fig, ax
+
+
+def plot_expression_prediction(y, yhat, r2, save_path=None):
+    fig, ax = plt.subplots(figsize=(14, 14))
+    ax.scatter(y, yhat, alpha=0.6, edgecolor='k', label='Predictions')
+
+        # Reference line: y = x
+    min_val = min(np.min(y), np.min(yhat))
+    max_val = max(np.max(y), np.max(yhat))
+    ax.plot([min_val, max_val], [min_val, max_val], '--', label='Perfect prediction (y = x)')
+
+    ax.text(0.95, 0.05, f"R² = {r2:.3f}", transform=ax.transAxes,
+                fontsize=20, verticalalignment='bottom', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.6))
+
+
+    # Labels and formatting
+    ax.set_xlabel("Actual Expression", fontsize=20)
+    ax.set_ylabel("Predicted Expression", fontsize=20)
+    ax.set_title("Predicted vs Actual Expression", fontsize=25)
+    ax.legend(loc='upper left', fontsize=15)
 
     if save_path is not None:
         fig.savefig(save_path)
@@ -554,11 +614,6 @@ def main(args):
     val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
     test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
 
-
-    train_paths = ["/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd8_t_cells/embeddings/geneformer/test_gene_masks/embedding.npz"]
-    val_paths = train_paths
-    test_paths = train_paths
-
     print("Loading Train and Validation Data...")
     if args.task == "link":
         train_dataset = EmbeddingDataset(train_paths)
@@ -608,8 +663,8 @@ def main(args):
             use_gat=args.use_gat
         )
     elif args.task == "mlm":
-        predictor = RobertaLMHead(
-            embed_dim=train_dataset.embedding_dim, 
+        predictor = MaskedGeneExpressionPredictor(
+            embed_dim=train_dataset.embedding_dim,
             output_dim=1
         )
         
@@ -628,11 +683,11 @@ def main(args):
         save_dir=args.model_save_dir
     )
 
-    print("Making Inference with link predictor...")
-    fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train, n_pos_train, n_neg_train = predict_links(
-        best_model, train_dataloader, max_num_batches=None
+    print("Making Inference with predictor...")
+    result_train = predict(
+        best_model, train_dataloader, max_num_batches=None, task=args.task
     )
-
+    
     # Free up memory by deleting datasets and dataloaders
     del train_dataset, val_dataset, train_dataloader, val_dataloader
     gc.collect()  # Run garbage collection to release Python memory
@@ -663,43 +718,78 @@ def main(args):
         collate_fn=collate_fn
     )
     
-    fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test, n_pos_test, n_neg_test = predict_links(
-        best_model, test_dataloader, max_num_batches=None
+    result_test = predict(
+        best_model, test_dataloader, max_num_batches=None, task=args.task
     )
 
-    save_path = join(args.res_dir, "roc_prc.png")
-    print(f"Saving plot to: {save_path}")
-    plot_auc_roc_pr(
-        fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train,
-        fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test,
-        save_path=save_path
-    )
+    if args.task in {"link", "mgm"}:
+        fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train, n_pos_train, n_neg_train = result_train
+        fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test, n_pos_test, n_neg_test = result_test
 
-    save_data_path = join(args.res_dir, "roc_prc_data.npz")
-    print(f"Saving roc prc data to: {save_data_path}")
-    np.savez(save_data_path,
-        # Test metrics
-        fpr_test=fpr_test,
-        tpr_test=tpr_test,
-        auc_score_test=auc_score_test,
-        p_test=p_test,
-        r_test=r_test,
-        apr_test=apr_test,
-        n_pos_test=n_pos_test,
-        n_neg_test=n_neg_test,
-        # Train metrics
-        fpr_train=fpr_train,
-        tpr_train=tpr_train,
-        auc_score_train=auc_score_train,
-        p_train=p_train,
-        r_train=r_train,
-        apr_train=apr_train,
-        n_pos_train=n_pos_train,
-        n_neg_train=n_neg_train
-    )
+        save_path = join(args.res_dir, "roc_prc.png")
+        print(f"Saving plot to: {save_path}")
+        plot_auc_roc_pr(
+            fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train,
+            fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test,
+            save_path=save_path
+        )
+
+        save_data_path = join(args.res_dir, "roc_prc_data.npz")
+        print(f"Saving roc prc data to: {save_data_path}")
+        np.savez(save_data_path,
+            # Test metrics
+            fpr_test=fpr_test,
+            tpr_test=tpr_test,
+            auc_score_test=auc_score_test,
+            p_test=p_test,
+            r_test=r_test,
+            apr_test=apr_test,
+            n_pos_test=n_pos_test,
+            n_neg_test=n_neg_test,
+            # Train metrics
+            fpr_train=fpr_train,
+            tpr_train=tpr_train,
+            auc_score_train=auc_score_train,
+            p_train=p_train,
+            r_train=r_train,
+            apr_train=apr_train,
+            n_pos_train=n_pos_train,
+            n_neg_train=n_neg_train
+        )
+
+    elif args.task == "mlm":
+        y_train, yhat_train, mae_train, mse_train, mape_train, r2_train, pear_train, spear_train = result_train
+        y_test, yhat_test, mae_test, mse_test, mape_test, r2_test, pear_test, spear_test = result_test
+        
+        save_path = join(args.res_dir, "scatter_test_pred.png")
+        print(f"Saving plot to: {save_path}")
+        plot_expression_prediction(y_test, yhat_test, r2=r2_test, save_path=save_path)
+
+        save_data_path = join(args.res_dir, "mlm_data.npz")
+        print(f"Saving performance data to: {save_data_path}")
+        np.savez(save_data_path,
+            # Test metrics
+            y_test=y_test,
+            yhat_test=yhat_test,
+            mse_test=mse_test,
+            mae_test=mae_test,
+            mape_test=mape_test,
+            r2_test=r2_test,
+            pear_test=pear_test,
+            spear_test=spear_test,
+            # Train metrics
+            y_train=y_train,
+            yhat_train=yhat_train,
+            mse_train=mse_train,
+            mae_train=mae_train,
+            mape_train=mape_train,
+            r2_train=r2_train,
+            pear_train=pear_train,
+            spear_train=spear_train
+        )
 
     with open(args.info_path, "w") as file:
-        json.dump(info, file, indent=4)
+            json.dump(info, file, indent=4)
 
 
 if __name__ == "__main__":
