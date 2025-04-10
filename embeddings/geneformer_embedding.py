@@ -83,6 +83,7 @@ def main(args):
 
     input_ids_list = data["input_ids"]
     seq_lengths = [len(input_ids) for input_ids in input_ids_list]
+    max_seq_length = max(seq_lengths)
 
     id_gene_map_vectorized = np.vectorize(lambda x: embex.token_gene_dict.get(x))
     input_genes = [id_gene_map_vectorized(np.array(ids)) for ids in input_ids_list]
@@ -91,12 +92,21 @@ def main(args):
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
     edges = get_locally_indexed_edges(input_genes, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
 
+    # get original expression
+    expression = np.concatenate([
+        np.pad(adata[i, genes].X.toarray(), 
+               pad_width=((0,0), (0, max_seq_length - len(genes))), 
+               mode="constant", constant_values=0)
+        for i, genes in enumerate(input_genes)
+    ], axis=0)
+
     if args.mask_fraction is None:
         np.savez(
             file=join(args.out_dir, "embedding.npz"), 
             x=embeddings,
             seq_lengths=seq_lengths,
-            edges=edges, 
+            expression=expression,
+            edges=edges,
             allow_pickle=True
         )
         return

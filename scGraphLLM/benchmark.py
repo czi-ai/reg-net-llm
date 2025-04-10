@@ -52,6 +52,7 @@ def send_to_gpu(data):
     else:
         return data  # If not a tensor or list/dict, leave unchanged
 
+
 class EmbeddingDataset(torch.utils.data.Dataset):
     def __init__(self, paths):
         self.paths = paths 
@@ -64,8 +65,18 @@ class EmbeddingDataset(torch.utils.data.Dataset):
         embedding = [np.load(path, allow_pickle=True) for path in self.paths]
         self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
         self.max_seq_length = np.max(self.seq_lengths)
-        self.x = concatenate_embeddings([emb["x"] for emb in embedding])
         self.edges = self.aggregate_embedding_dicts(embedding)
+        self.x = np.concatenate([
+            np.pad(emb["x"], pad_width=((0, 0), (0, self.max_seq_length - emb["x"].shape[1]), (0, 0)), 
+                   mode="constant", constant_values=0)
+            for emb in embedding
+        ], axis=0)
+        self.expression = np.concatenate([
+            np.pad(emb["expression"], pad_width=((0,0), (0, self.max_seq_length - emb["expression"].shape[1])),
+                   mode="constant", constant_values=0)
+            for emb in embedding
+        ], axis=0)
+
 
     def aggregate_embedding_dicts(self, embedding, key="edges"):
         res = {}
@@ -87,10 +98,16 @@ class EmbeddingDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return {
             "x": torch.tensor(self.x[idx]), 
+            "expression": torch.tensor(self.expression[idx]),
             "seq_lengths": torch.tensor(self.seq_lengths[idx]),
             "edges": torch.tensor(self.edges[idx])
         }
 
+class EmbeddingDatasetWithExpression(EmbeddingDataset):
+    def __init__(self, paths):
+        super().__init__(paths)
+        embeddings = [np.load(path, allow_pickle=True) for path in self.paths]
+        
 
 class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
     def __init__(self, paths):
@@ -154,6 +171,7 @@ def concatenate_embeddings(x_list):
 def embedding_collate_fn(batch, masked_genes=False, masked_edges=False):
     collated = {
         "x": torch.stack([item["x"] for item in batch]),
+        "expression": torch.stack([item["expression"] for item in batch]),
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
     }
@@ -305,6 +323,20 @@ def masked_gene_expression_pred_loss(
     loss = nn.MSELoss()(yhat_masked, y_masked)
     return loss, yhat_masked, y_masked
 
+def gene_expression_pred_loss(
+        predictor: nn.Module, 
+        node_embedding: torch.Tensor,
+        expression: torch.Tensor,
+        seq_lengths: torch.Tensor
+    ):
+    device = node_embedding.device
+    mask = torch.arange(node_embedding.shape[1], device=device).unsqueeze(0) < seq_lengths.unsqueeze(1)
+    pred = predictor(node_embedding).squeeze() # B, L
+    yhat = pred[mask]
+    y = expression[mask]
+    loss = nn.MSELoss()(yhat, y)
+    return loss, yhat, y
+
 
 class FineTuneModule(pl.LightningModule):
     def __init__(self, model, task, lr=1e-3, weight_decay=1e-4):
@@ -314,7 +346,7 @@ class FineTuneModule(pl.LightningModule):
         self.weight_decay = weight_decay
         self.model.to(self.device)
         self.task = task
-        assert self.task in {"link", "mgm", "mlm"}
+        assert self.task in {"link", "mgm", "expr", "mlm"}
     
     def training_step(self, batch, batch_idx):
         loss, _, _ = self._step(batch)
@@ -348,6 +380,13 @@ class FineTuneModule(pl.LightningModule):
                 masked_edge_index_list=batch["masked_edges"],
                 non_masked_edge_index_list=batch["non_masked_edges"],
                 use_bce_loss=True
+            )
+        elif self.task == "expr":
+            return gene_expression_pred_loss(
+                self.model,
+                node_embedding=batch["x"],
+                expression=batch["expression"],
+                seq_lengths=batch["seq_lengths"]
             )
         elif self.task == "mlm":
             return masked_gene_expression_pred_loss(
@@ -497,7 +536,7 @@ def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):
         
         return fpr, tpr, auc_score, p, r, apr, n_pos, n_neg
     
-    elif task == "mlm": 
+    elif task in {"expr", "mlm"}: 
         mae = mean_absolute_error(y, yhat)
         mse = mean_squared_error(y, yhat)
         mape = mean_absolute_percentage_error(y, yhat)
@@ -615,7 +654,7 @@ def main(args):
     test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
 
     print("Loading Train and Validation Data...")
-    if args.task == "link":
+    if args.task in {"link", "expr"}:
         train_dataset = EmbeddingDataset(train_paths)
         val_dataset = EmbeddingDataset(val_paths)
         collate_fn = embedding_collate_fn
@@ -662,6 +701,11 @@ def main(args):
             embed_dim=train_dataset.embedding_dim,
             use_gat=args.use_gat
         )
+    elif args.task == "expr":
+        predictor = RobertaLMHead(
+            embed_dim=train_dataset.embedding_dim,
+            output_dim=1
+        )
     elif args.task == "mlm":
         predictor = MaskedGeneExpressionPredictor(
             embed_dim=train_dataset.embedding_dim,
@@ -697,7 +741,7 @@ def main(args):
         torch.cuda.empty_cache()
 
     print("Loading Test Data...")
-    if args.task == "link":
+    if args.task in {"link", "expr"}:
         test_dataset = EmbeddingDataset(test_paths)
     elif args.task == "mgm":
         test_dataset = EmbeddingDatasetWithEdgeMasks(
@@ -757,7 +801,7 @@ def main(args):
             n_neg_train=n_neg_train
         )
 
-    elif args.task == "mlm":
+    elif args.task in {"mlm", "expr"}:
         y_train, yhat_train, mae_train, mse_train, mape_train, r2_train, pear_train, spear_train = result_train
         y_test, yhat_test, mae_test, mse_test, mape_test, r2_test, pear_test, spear_test = result_test
         
@@ -797,7 +841,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
-    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "mlm"])
+    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm"])
     parser.add_argument("--generate_edge_masks", action="store_true")
     parser.add_argument("--mask_ratio", type=float, default=0.15)
     parser.add_argument("--use_gat", action="store_true")

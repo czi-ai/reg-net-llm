@@ -48,7 +48,8 @@ parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--use_masked_edges", action="store_true")
 parser.add_argument("--mask_ratio", type=float, default=0.15)
-parser.add_argument("--mask_fraction", type=float, default=0.15)
+parser.add_argument("--mask_fraction", type=float, default=None)
+parser.add_argument("--mask_value", type=float, default=1e-4)
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
@@ -158,17 +159,30 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
         
     return (skipped, ncells)
 
-
+def get_edges_dict(edges_list):
+    edges = {}
+    i = 0
+    for lst in edges_list:
+        for e in lst:
+            edges[i] = e
+            i += 1
+    return edges
 
 def main(args):
     
     adata = sc.read_h5ad(args.cells_path)
-    global_gene_to_node = pd.read_csv(args.gene_index_path).set_index("gene_name")["idx"].to_dict()
+    global_gene_df = pd.read_csv(args.gene_index_path)
+    global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
+    global_node_to_gene = global_gene_df.set_index("idx")["gene_name"].to_dict()
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
 
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
 
+    if args.mask_fraction is not None:
+        adata_original = adata.copy()
+        X_masked, masked_indices = mask_values(adata.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
+        adata.X = X_masked
     
     
     ranks, _ = rank(adata, n_bins=250, rank_by_z_score=True)
@@ -190,7 +204,7 @@ def main(args):
         cache_dir=args.all_data_dir,
         dataset_name="cells",
         debug=False,
-        mask_fraction=0.1
+        mask_fraction=0.0
     )
     
     dataloader = torch.utils.data.DataLoader(
@@ -212,6 +226,7 @@ def main(args):
     masked_edges_list = []
     non_masked_edges_list = []
     seq_lengths = []
+    input_gene_ids_list = []
     with torch.no_grad():
         for batch in dataloader:
             if args.use_masked_edges:
@@ -221,27 +236,39 @@ def main(args):
                 random_edge_masks = [random_edge_mask(edge_index, mask_ratio=args.mask_ratio) for edge_index in batch["edge_index"]]
                 non_masked_edge_inices = [edge_mask[0] for edge_mask in random_edge_masks]
                 masked_edge_indices = [edge_mask[1] for edge_mask in random_edge_masks]
-                batch["edge_index"] = non_masked_edge_inices
-                embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
-                embedding_list.append(embedding.cpu().numpy())
-                seq_lengths.append(batch["num_nodes"])
                 masked_edges_list.append(masked_edge_indices)
                 non_masked_edges_list.append(non_masked_edge_inices)
+                batch["edge_index"] = non_masked_edge_inices
+                embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
             else:
                 embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
-                embedding_list.append(embedding.cpu().numpy())
                 edges_list.append([e.cpu().numpy() for e in edge_index_list])
-                seq_lengths.append(batch["num_nodes"])
+            input_gene_ids_list.append(target_gene_ids.cpu().numpy())
+            embedding_list.append(embedding.cpu().numpy())
+            seq_lengths.append(batch["num_nodes"])
 
     seq_lengths = np.concatenate(seq_lengths, axis=0)
     max_seq_length = max(seq_lengths)
+    edges = get_edges_dict(edges_list)
     embeddings = np.concatenate([
         np.pad(emb, pad_width=((0, 0), (0, max_seq_length - emb.shape[1]), (0, 0)), 
-                mode="constant", constant_values=0)
+               mode="constant", constant_values=0)
         for emb in embedding_list
+    ], axis=0) 
+    input_gene_ids = np.concatenate([
+        np.pad(gene_ids, pad_width=((0, 0), (0, max_seq_length - gene_ids.shape[1])), 
+               mode="constant", constant_values=global_gene_to_node['<PAD>'])
+        for gene_ids in input_gene_ids_list
     ], axis=0)
-    edges = get_edges_dict(edges_list)
+    input_genes = np.vectorize(global_node_to_gene.get)(input_gene_ids)
 
+    # get original expression
+    expression = np.concatenate([
+        np.pad(adata[i, genes[:seq_lengths[i]]].X.toarray(), 
+               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
+               mode="constant", constant_values=0)
+        for i, genes in enumerate(input_genes)
+    ], axis=0)
 
     print("Saving emeddings...")
     if args.use_masked_edges:
@@ -256,24 +283,28 @@ def main(args):
             non_masked_edges=non_masked_edges,
             allow_pickle=True
         )
-    else:  
+        return
+    elif args.mask_fraction is None:  
         np.savez(
             file=args.emb_path, 
             x=embeddings,
+            expression=expression,
             seq_lengths=seq_lengths,
             edges=edges,
             allow_pickle=True
         )
-
-
-def get_edges_dict(edges_list):
-    edges = {}
-    i = 0
-    for lst in edges_list:
-        for e in lst:
-            edges[i] = e
-            i += 1
-    return edges
+        return
+    
+    masks, masked_expressions = get_locally_indexed_masks_expressions(adata_original, masked_indices, input_genes)                
+    np.savez(       
+        file=join(args.out_dir, "embedding.npz"), 
+        x=embeddings,
+        seq_lengths=seq_lengths,
+        edges=edges,
+        masks=masks,
+        masked_expressions=masked_expressions,
+        allow_pickle=True
+    )
 
 
 if __name__ == "__main__":
