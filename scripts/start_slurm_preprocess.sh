@@ -7,7 +7,7 @@ Z_SCORE_EXPRESSION=true # When creating the expression bins, use the expression 
 ARACNE_TOP_N_HVG="" # Take the top n most highly variable genes (HVGs) for preprocessing: 1024, 2048, 4096, etc
 ARACNE_PATH="" # Path to the compiled ARACNe3 algorithm (i.e. /hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release)
 REGULATORS_PATH="" # Path to the regulators file (i.e. /hpc/projects/group.califano/GLM/data/regulators.txt)
-INDEX_VARS="" # Set of adata.obs columns to consider in grouping steps: "condition" for CellxGene, "gene gene_id transcript" for Replogle
+INDEX_VARS="" # Set of adata.obs columns to consider in grouping steps: "null" for CellxGene, "gene gene_id transcript" for Replogle
 DATASET="" # Dataset name - cellxgene will be treated differently to other datasets
 PERTURBED=false # Is this a perturbation dataset? In this case the expression binning will not take place as normalized raw expression data is what is desired for our purposes
 JOB_OUT_DIR="" # Where to store all log files from this parallelization process
@@ -78,6 +78,20 @@ sbatch --array=1-${FILE_COUNT} --output=${JOB_OUT_DIR}/slurm_out_%A/array_job_%A
 
 : <<'END_COMMENT'
 
+# CellxGene preprocessing command
+source start_slurm_preprocess.sh \
+    --raw-data-dir "/hpc/archives/group.califano/cell_type_all" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/cxg_single_cell_clean" \
+    --z-score-expression \
+    --aracne-top-n-hvg 4096 \
+    --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
+    --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
+    --index-vars "null" \
+    --dataset "cell_x_gene" \
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/cxg/4096"
+
+
+
 # replogle_full_raw: full replogle data file
 # replogle_raw: full replogle data split into 10 files - all in the same partition: equivalent to one large file when preprocessing
 # replogle_raw_partitioned: replogle data split into 10 separate partitions: for parallel processing and lower memory requirements
@@ -86,8 +100,8 @@ sbatch --array=1-${FILE_COUNT} --output=${JOB_OUT_DIR}/slurm_out_%A/array_job_%A
 
 # Replogle preprocessing command (as one)
 source start_slurm_preprocess.sh \
-    --raw-data-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/replogle_raw" \
-    --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/replogle_clean" \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_raw" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_clean" \
     --z-score-expression \
     --aracne-top-n-hvg "null" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
@@ -100,8 +114,8 @@ source start_slurm_preprocess.sh \
 
 # Replogle preprocessing command (in 10x200k cells partitions)
 source start_slurm_preprocess.sh \
-    --raw-data-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/replogle_raw_partitioned" \
-    --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/replogle_clean_partitioned" \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_raw_partitioned" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_clean_partitioned" \
     --z-score-expression \
     --aracne-top-n-hvg "null" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
@@ -110,5 +124,18 @@ source start_slurm_preprocess.sh \
     --dataset "replogle" \
     --perturbed \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/partitioned"
+
+# Replogle 200k single partition subset
+source start_slurm_preprocess.sh \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_200k_raw" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_200k_clean" \
+    --z-score-expression \
+    --aracne-top-n-hvg "null" \
+    --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
+    --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
+    --index-vars "gene_id" \
+    --dataset "replogle" \
+    --perturbed \
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/200k"
 
 END_COMMENT

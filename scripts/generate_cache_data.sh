@@ -1,6 +1,7 @@
 #!/bin/bash
-#SBATCH --partition=cpu
-#SBATCH --time=1-00:00:00
+#SBATCH --partition=preempted
+#SBATCH --requeue
+#SBATCH --time=2-00:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=512G
 #SBATCH --job-name=Generating_LLM_Data
@@ -25,9 +26,9 @@ python ../scGraphLLM/data.py \
     --aracane-outdir-md $ARACNE_OUTDIR_MD \
     --gene-to-node-file $GENE_TO_NODE_FILE \
     --cache-dir $CACHE_DIR \
-    --perturbed $PERTURBED \
+    --perturbed "$PERTURBED" \
     --gene_id $GENE_ID \
     --single-index $SLURM_ARRAY_TASK_ID
 
-#-- SBATCH --partition=preempted
-#-- SBATCH --requeue
+# #-- SBATCH --partition=preempted
+# #-- SBATCH --requeue

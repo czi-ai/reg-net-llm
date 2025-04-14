@@ -38,7 +38,7 @@ def load(file):
     with open(file, "rb") as ifl:
         return pickle.load(ifl)
 
-def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells, perturbed=False, gene_id="gene_id"):
+def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells):
     aracne_out = i[0]
     msplit = i[1]
     cell_type = aracne_out.split("/")[-2]
@@ -48,31 +48,9 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
     network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
     network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
     
-    bins = pd.read_csv(str(Path(aracne_out).parents[0]) + "/bin_raw.csv") + 2 # keep only genes in the network, and offset the bins by 2 to account for the special tokens, so 2 now corresponds to bin 0 (ZERO_IDX)
+    bins = pd.read_csv(str(Path(aracne_out).parents[0]) + "/binned_expression.csv") + 2 # keep only genes in the network, and offset the bins by 2 to account for the special tokens, so 2 now corresponds to bin 0 (ZERO_IDX)
     common_genes = list(set(network_genes).intersection(set(bins.columns)))
     bins = bins.loc[:, common_genes] # Keep only genes that are also in network (no change expected - they should be the same)
-    
-    if perturbed:
-        prt_dataset = ad.read(str(Path(aracne_out).parents[0]) + "/cells.h5ad", backed="r") # Get perturbation dataset - only raw/un-binned expression data is used for perturbation
-        assert all(prt_dataset.var.index.isin(INCLUDED_ENSG)) # Make sure ALL the genes (columns) in the dataset are genes we are able to tokenize
-
-        # Below, any cells where gene_id is 'nan' are discarded
-        gene_ids = prt_dataset.obs[gene_id] # Get the perturbed gene ids
-        control_mask = (gene_ids == "non-targeting") # Mask accounting for cells with non-targeting intervention
-        perturbed_mask = gene_ids.isin(prt_dataset.var.index).to_numpy() # Mask accounting for cells with perturbed genes that are included in our dataset
-
-        control_cells = prt_dataset[control_mask] # Get the control cells from the perturbation dataset
-        perturbed_cells = prt_dataset[perturbed_mask] # Get the perturbed cells from the perturbation dataset
-
-        print("Number of control cells:", control_cells.shape[0])
-        print("Number of perturbed cells:", perturbed_cells.shape[0])
-        
-        # Create one-hot vectors for each perturbed cell -> '1' corresponds to perturbed gene
-        perturbations = perturbed_cells.obs["gene_id"].reset_index(drop=True) # Series object of perturbation for each cell (after filtering cells)
-        one_hot_perturbations = np.zeros((perturbed_cells.shape), dtype=int)  # Initialize one-hot matrix with all zero
-        for i, gene in enumerate(perturbations): # Iterate through each cell in the perturbed_cell dataset
-            one_hot_perturbations[i, perturbed_cells.var.index.get_loc(gene)] = 1 # Set "1" in appropriate positions
-
 
     for i in range(bins.shape[0]):
         if ncells % 1000 == 0:
@@ -124,24 +102,11 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
         edge_weights = torch.tensor(np.array(edges['mi.values']))
         node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
         
-        
-        
-        
-        
-        if perturbed:
-            cell_perturbation = torch.tensor(prts_one_hot[i], dtype=torch.int) # Get the perturbation corresponding to this cell
-            data = Data(
-                x=node_indices, 
-                edge_index=edge_list, 
-                edge_weight=edge_weights,
-                cell_perturbation=cell_perturbation
-            )
-        else:
-            data = Data(
-                x=node_indices, 
-                edge_index=edge_list, 
-                edge_weight=edge_weights
-            )
+        data = Data(
+            x=node_indices, 
+            edge_index=edge_list, 
+            edge_weight=edge_weights
+        )
         
         torch.save(data, outfile)
         ncells += 1
@@ -228,8 +193,8 @@ def run_save_perturbed(i, global_gene_to_node, cache_dir, overwrite, valsg_split
                 network["regulator.values"].isin(cell.index) & network["target.values"].isin(cell.index)
             ]
 
-            #local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-            local_gene_to_node_index = global_gene_to_node
+            local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+            # local_gene_to_node_index = global_gene_to_node
             # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
             # so edge index is local to each graph for each cell. 
             # cell.index defines the order of the nodes in the graph
@@ -286,10 +251,8 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
                 print("Caching perturbation data...")
                 skipped, ncells = run_save_perturbed(aracne_outdir_info[0], global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells, perturbed=perturbed, gene_id=gene_id)
             else:
+                print("Caching data...")
                 skipped, ncells = run_save(aracne_outdir_info[0], global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
-        # else:
-        #     for i in aracne_outdir_info:
-        #         skipped, ncells = run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
 
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")
@@ -450,7 +413,7 @@ class PerturbationDataset(torchDataset):
             aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
             global_gene_to_node_file (str): path to file that maps gene name to integer index 
             cache_dir (str): path to directory where the processed data will be stored
-        """   
+        """ 
         print(cache_dir)     
         self.debug = debug
         self.cached_files_perturbed = [cache_dir+"/" + f for f in os.listdir(f"{cache_dir}/perturbed") if f.endswith(".pt")]
@@ -467,7 +430,7 @@ class PerturbationDataset(torchDataset):
     def __getitem__(self, idx, mask_fraction = 0.1):        
         ######## CONTROL CELL ########
         # Get cell from the control population
-        control_idx = = random.randrange(0, self.num_control) # Get a random index
+        control_idx = random.randrange(0, self.num_control) # Get a random index
         control_cell = torch.load(self.cached_files_control[idx], weights_only=False) # Select random control cell
         control_node_indices = control_cell.x
         
@@ -515,7 +478,7 @@ class PerturbationDataset(torchDataset):
 class PerturbationDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
         super().__init__()
-        self.data_config = data_config            
+        self.data_config = data_config
         self.train_ds = PerturbationDataset(**data_config.train)
         self.val_ds = [PerturbationDataset(**val) for val in data_config.val]
         
@@ -527,7 +490,7 @@ class PerturbationDataModule(pl.LightningDataModule):
         if data_config.run_test:
             self.test_ds = [PerturbationDataset(**test) for test in data_config.test]
     
-    def perturbation_collate_fn(batch):
+    def perturbation_collate_fn(self, batch):
         control = { 
             "orig_gene_id" : [],
             "orig_rank_indices" : [],
@@ -586,7 +549,7 @@ if __name__ == "__main__":
     parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")
     parser.add_argument("--cache-dir", type=str, help="Directory to store the processed data")
     parser.add_argument("--num-proc", type=int, help="Number of processes to use", default=1)
-    parser.add_argument("--perturbed", type=bool, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
+    parser.add_argument("--perturbed", type=str, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
     parser.add_argument("--gene_id", type=str, help="For perturbation ONLY: column in dataset.obs corresponding to the perturbed gene_id (ENSEMBL symbol notation)", default=None)
     parser.add_argument("--single-index", type=int, help="Index in --aracane-outdir-md to path to specific cell-type aracne for single cell-type caching (mainly used with parallelization)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run in debug mode")
@@ -594,6 +557,11 @@ if __name__ == "__main__":
     single_index = args.single_index-1 # SLURM starts counting at 1 not 0
     debug = args.debug
     num_proc = int(args.num_proc)
+    
+    if args.perturbed == "true":
+        args.perturbed = True
+    else:
+        args.perturbed = False
     
     # Read the data directories and their associated dataset label (train, valSG, valHG)
     aracane_metadata = pd.read_csv(args.aracane_outdir_md, names = ["aracne_out", "split"]).values

@@ -602,7 +602,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--dataset", type=str, default="cell_x_gene")
-    parser.add_argument("--perturbed", type=bool, default=False) 
+    parser.add_argument("--perturbed", type=str, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--steps", nargs="+", default=["preprocess", "binnify", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
@@ -613,7 +613,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
-    parser.add_argument("--sample_index_vars", nargs="+", default=None)
+    parser.add_argument("--sample_index_vars", nargs="+", default=["dataset_id", "donor_id", "tissue"])
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
@@ -636,6 +636,14 @@ if __name__ == "__main__":
     parser.add_argument("--parallel", action="store_true")
     parser.add_argument("--n_cores", type=int, default=os.cpu_count())
     args = parser.parse_args()
+    
+    if args.perturbed == "true":
+        args.perturbed = True
+    else:
+        args.perturbed = False
+    
+    if args.sample_index_vars == ["null"]:
+        args.sample_index_vars = ["dataset_id", "donor_id", "tissue"]
     
     # define paths 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
