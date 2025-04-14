@@ -469,10 +469,8 @@ def make_metacells(
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank(cells, n_bins, rank_by_z_score=False, save_path=None):    
-    # Get the z-score test statistic   
-    df = cells.to_df()
-    
+def rank_cells(df, n_bins, rank_by_z_score):
+
     if rank_by_z_score:
         mean_expr = df.mean(axis=1) # Get the mean of each gene
         std_expr = df.std(axis=1)
@@ -485,20 +483,31 @@ def rank(cells, n_bins, rank_by_z_score=False, save_path=None):
     
     # Rank the z-scores into separate "expression bins" that represent the expression of each gene 
     # relative to itself across this set of cells
-    df_ranked = df.rank(axis=1, method="first", ascending=False).replace(np.nan, 0)
+    df_ranked = df.rank(axis=1, method="first", ascending=True).replace(np.nan, 0) - 1
     for i in range(df_ranked.shape[0]): # Iterate through rows (single cells)
         row = df_ranked.iloc[i].to_numpy(dtype=int)
         non_zero = row.nonzero()
         if len(row[non_zero]) != 0: # Make sure row is not all zeros/nans (expressionless)
-            if len(row[non_zero]) < n_bins-1:
-                n_bins = len(row[non_zero])+1
+            operative_n_bins = n_bins
+            if len(row[non_zero]) < operative_n_bins-1:
+                operative_n_bins = len(row[non_zero])+1
             # "Binnify" the rankings
-            bins = np.quantile(row[non_zero], np.linspace(0, 1, n_bins-1))
+            bins = np.quantile(row[non_zero], np.linspace(0, 1, operative_n_bins-1))
             bindices = np.digitize(row[non_zero], bins)
             rank_bins[i, non_zero] = bindices
 
     # Convert the binned ranks to a pandas dataframe
-    ranks = pd.DataFrame(rank_bins, columns=df.columns)
+    ranks = pd.DataFrame(rank_bins, columns=df.columns, index=df.index)
+
+    return ranks
+
+
+def rank(cells, n_bins, rank_by_z_score=False, save_path=None):    
+    # Get the z-score test statistic   
+    df = cells.to_df()
+    
+    ranks = rank_cells(df, n_bins, rank_by_z_score)
+    
     # Save ranks_raw.csv file to cell-type-specific directory
     if save_path is not None:
         ranks.to_csv(save_path, index=False, header=True)
@@ -515,7 +524,6 @@ def rank(cells, n_bins, rank_by_z_score=False, save_path=None):
     }
 
     return ranks, rank_info
-
 
 def main(args):
     logger.info(f"Preprocessing cells on {date.today()} with the following configuration:")

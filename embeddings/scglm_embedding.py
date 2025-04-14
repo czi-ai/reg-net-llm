@@ -79,10 +79,26 @@ def collate_fn(batch):
     return data
 
 # TODO: merge with other run_save_function
-def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit, valsg_split_ratio, cell_type, min_genes_per_graph=MIN_GENES_PER_GRAPH, skipped=0, ncells=0, verbose=False):
+def run_save_(
+        network, 
+        ranks,
+        global_gene_to_node, 
+        cache_dir, 
+        overwrite, 
+        msplit, 
+        valsg_split_ratio, 
+        cell_type, 
+        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+        skipped=0, 
+        ncells=0, 
+        expressed_genes_only=False,
+        verbose=False,
+
+    ):
     
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
 
+    # make special tokens negative to avoid shifting ranks
     ranks = ranks + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
     network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
     common_genes = list(set(network_genes).intersection(set(ranks.columns)))
@@ -110,6 +126,7 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
         cell = ranks.iloc[i, :]
         zero_expression_rank = cell.max()
         # print(f"Number of cells of zero expression rank {(cell == zero_expression_rank).sum()}")
+        # cell = cell[cell != 0]
         cell = cell[cell != zero_expression_rank] + NUM_GENES ## offset the ranks by global number of genes - this lets the same 
         # VS:
         # keep graph static across batches 
