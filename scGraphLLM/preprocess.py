@@ -53,6 +53,7 @@ CELL_TYPE = "cell_type"
 TISSUE = "tissue"
 
 genes_names = pd.read_csv("/hpc/projects/group.califano/GLM/data/gene-name-map.csv", index_col=0)
+hugo_to_ensg = genes_names.set_index("hugo.values")["ensg.values"].to_dict()
 ENSG_PROTEIN_CODING = set(genes_names["ensg.values"])
 
 
@@ -311,6 +312,7 @@ def preprocess_data(
 
     # apply filters
     adata = adata[adata.obs["pct_counts_mt"] < mito_thres]
+    adata = adata[:,~adata.var["mt"]]
     sc.pp.filter_cells(adata, min_counts=umi_min)
     sc.pp.filter_cells(adata, max_counts=umi_max)
     
@@ -354,57 +356,75 @@ def make_aracne_counts(
         max_n_sample=500, 
         min_perc_nz=0.001,
         top_n_hvg=None,
+        groupby_var="cluster",
         regulators=["tf", "cotf"],
         aracne_dir=None
     ):
     """Make counts ARACNe inference for each cluster
     """
     regulators = get_regulators(types=regulators)
-    clusters = dict()
-    genes = set()
-    for key in adata.obs["cluster"].unique():
-        cluster = adata[adata.obs["cluster"] == key,:].copy()
-        
-        # enforce top_n_hvg
-        if top_n_hvg is not None:
-            hvg = sc.pp.highly_variable_genes(cluster, flavor="seurat", n_top_genes=top_n_hvg, inplace=False, subset=True)
+    if groupby_var is not None:
+        clusters = dict()
+        genes = set()
+        for key in adata.obs[groupby_var].unique():
+            cluster = adata[adata.obs[groupby_var] == key,:].copy()
+            cluster = aracne_preprocess(min_perc_nz, top_n_hvg, regulators, cluster)
+            if cluster.shape[0] > max_n_sample:
+                sc.pp.subsample(cluster, n_obs=max_n_sample)
+            elif cluster.shape[0] < min_n_sample:
+                logger.info(f"Cluster {key} has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
+                continue
+            clusters[key] = cluster.shape
+            genes = genes.union(cluster.var_names.tolist())
+            logger.info(f"Cluster {key} has {cluster.shape[0]:,} cells and {cluster.shape[1]:,} genes for ARACNe inference")
             
-            hvg_union_regs = hvg_union_regs = set(hvg.index.to_list()).union(set(regulators))
-            cluster = cluster[:, cluster.var_names.isin(hvg_union_regs)]
-        else:
-            perc_nz = cluster.X.sum(axis=0) / cluster.shape[1]
-            cluster = cluster[:, perc_nz > min_perc_nz]
+            # save
+            write_adata_to_csv_buffered(
+                cluster, 
+                sep="\t", 
+                file=join(aracne_dir, f"counts_{key}.tsv"), 
+                buffer_size=int(min_n_sample/2))
+            del cluster
 
-        # enforce sample bounds
-        if cluster.shape[0] > max_n_sample:
+        # write all
+        aracne_adata = adata[adata.obs["cluster"].isin(clusters), adata.var_names.isin(genes)]
+    else:
+        aracne_adata = aracne_preprocess(adata, min_perc_nz, top_n_hvg, regulators)
+        if aracne_adata.shape[0] > max_n_sample:
             sc.pp.subsample(cluster, n_obs=max_n_sample)
-        elif cluster.shape[0] < min_n_sample:
-            logger.info(f"Cluster {key} has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
-            continue
-        clusters[key] = cluster.shape
-        genes = genes.union(cluster.var_names.tolist())
-        logger.info(f"Cluster {key} has {cluster.shape[0]:,} cells and {cluster.shape[1]:,} genes for ARACNe inference")
-        
-        # save
-        write_adata_to_csv_buffered(
-            cluster, 
-            sep="\t", 
-            file=join(aracne_dir, f"counts_{key}.tsv"), 
-            buffer_size=int(min_n_sample/2))
-        del cluster
+        elif aracne_adata.shape[0] < min_n_sample:
+            logger.info(f"Data has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
+            raise ValueError
 
-    # write all 
-    aracne_adata = adata[adata.obs["cluster"].isin(clusters), adata.var_names.isin(genes)]
     write_adata_to_csv_buffered(
         aracne_adata, 
         sep="\t", 
         file=join(aracne_dir, f"counts.tsv"), 
         buffer_size=1000)
+    
+    if groupby_var is not None:
+        return {
+            "count": len(clusters),
+            "size": clusters
+        }
+    else:
+        return {
+            "count": 1,
+            "size": aracne_adata.shape
+        }
 
-    return {
-        "count": len(clusters),
-        "size": clusters
-    }
+def aracne_preprocess(adata, min_perc_nz, top_n_hvg, regulators):
+    """
+    Apply processing before ARACNe Inference
+    """
+    if top_n_hvg is not None and adata.shape[1] > top_n_hvg:
+        hvg = sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=top_n_hvg, inplace=False, subset=True)     
+        hvg_union_regs = set(hvg.index.to_list()).union(set(regulators))
+        adata = adata[:, adata.var_names.isin(hvg_union_regs)]
+    else:
+        perc_nz = adata.X.sum(axis=0) / adata.shape[1]
+        adata = adata[:, perc_nz > min_perc_nz]
+    return adata
 
 
 def get_clusters(adata, random_state, qc=True):
@@ -428,40 +448,56 @@ def make_metacells(
         groupby_var="cluster",
         qc=True):
     """Make meta cells within clusters"""
-    assert groupby_var in adata.obs.columns, f"Making metacells requires group by var {groupby_var}"
-    groups = adata.obs[groupby_var].value_counts()
-    metacells = {}
-    for name in groups.index:
-        cluster = adata[adata.obs[groupby_var] == name].copy()
-        try:
-            sc.pp.scale(cluster)
-            pyviper.pp.repr_metacells(
-                cluster, 
-                counts=None,
-                pca_slot="X_pca", 
-                dist_slot="corr_dist", 
-                size=int(groups[name] * compression) if size is None else size, 
-                min_median_depth=target_depth, 
-                clusters_slot=None,
-                key_added=f"metacells",
-                seed=random_state,
-                verbose=False
-            )
-            metacells[name] = cluster.uns["metacells"]
-            metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
-        except Exception as e:
-            logger.info(f"(!) ----> Cluster {name} metacell processing FAILED! {e}")
-        else:
-            logger.info(f"Cluster {name} metacell processing succeeded!")
-        finally:
-            del cluster
-    
-    metacells_array = pd.concat([metacells.get(name) for name in sorted(metacells.keys())]).to_numpy()
-    metacells_clusters = sum([[name] * metacells.get(name).shape[0] for name in sorted(metacells.keys())], [])
-    metacells_obs = pd.DataFrame({"cluster": metacells_clusters})
-    metacells_adata = sc.AnnData(metacells_array)
-    metacells_adata.obs = metacells_obs
-    metacells_adata.var = adata.var
+    if groupby_var is not None:
+        assert groupby_var in adata.obs.columns, f"Making metacells requires group by var {groupby_var}"
+        groups = adata.obs[groupby_var].value_counts()
+        metacells = {}
+        for name in groups.index:
+            cluster = adata[adata.obs[groupby_var] == name].copy()
+            try:
+                sc.pp.scale(cluster)
+                pyviper.pp.repr_metacells(
+                    cluster, 
+                    counts=None,
+                    pca_slot="X_pca", 
+                    dist_slot="corr_dist", 
+                    size=int(groups[name] * compression) if size is None else size, 
+                    min_median_depth=target_depth, 
+                    clusters_slot=None,
+                    key_added=f"metacells",
+                    seed=random_state,
+                    verbose=False
+                )
+                metacells[name] = cluster.uns["metacells"]
+                metacells[name].attrs["sparsity"] = calculate_sparsity(metacells[name])
+            except Exception as e:
+                logger.info(f"(!) ----> Cluster {name} metacell processing FAILED! {e}")
+            else:
+                logger.info(f"Cluster {name} metacell processing succeeded!")
+            finally:
+                del cluster
+        
+        metacells_array = pd.concat([metacells.get(name) for name in sorted(metacells.keys())]).to_numpy()
+        metacells_clusters = sum([[name] * metacells.get(name).shape[0] for name in sorted(metacells.keys())], [])
+        metacells_obs = pd.DataFrame({groupby_var: metacells_clusters})
+        metacells_adata = sc.AnnData(metacells_array)
+        metacells_adata.obs = metacells_obs
+        metacells_adata.var = adata.var
+    else:
+        sc.pp.scale(adata)
+        pyviper.pp.repr_metacells(
+            adata, 
+            counts=None,
+            pca_slot="X_pca", 
+            dist_slot="corr_dist", 
+            size=int(len(adata) * compression) if size is None else size, 
+            min_median_depth=target_depth, 
+            clusters_slot=None,
+            key_added=f"metacells",
+            seed=random_state,
+            verbose=False
+        )
+        metacells_adata = sc.AnnData(adata.uns["metacells"], var=adata.var)
     
     if save_path is not None:
         metacells_adata.write_h5ad(save_path)
@@ -522,19 +558,28 @@ def main(args):
     logger.info(json.dumps(args.__dict__, indent=4))
     info = {"config": args.__dict__}
 
-    if "preprocess" in args.steps:
-        adata = load_data(args.data_path, var_index_name=args.var_index_name)
-        qc_initial = qc_metrics_dict(adata)
-        info["initial"] = qc_initial
-        logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
-        
-        # CellXGene specific processing
-        if args.dataset == "cell_x_gene":
-            adata = adata[adata.obs["is_primary_data"],:]
-            adata.obs.reset_index(inplace=True)
-            adata.var.reset_index(inplace=True)
-            check_index(adata.var, "feature_id")
+    # Load data
+    adata = load_data(args.data_path, var_index_name=args.var_index_name)
+    qc_initial = qc_metrics_dict(adata)
+    info["initial"] = qc_initial
+    logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
+    
+    # Dataset-specific processing
+    if args.dataset == "cell_x_gene":
+        adata = adata[adata.obs["is_primary_data"],:]
+        adata.obs.reset_index(inplace=True)
+        adata.var.reset_index(inplace=True)
+        check_index(adata.var, "feature_id")
+    elif args.dataset == "mye":
+        counts = sc.AnnData(X=adata.X, obs=adata.obs)
+        counts.var_names = adata.var_names
+        counts.X = np.expm1(adata.X).astype(int)
+        adata = counts
+        adata.var["ensembl_id"] = adata.var_names.map(hugo_to_ensg)
+        adata = adata[:,~adata.var["ensembl_id"].isna()]
+        adata.var.set_index("ensembl_id", inplace=True)
 
+    if "preprocess" in args.steps:
         adata, qc_processed = preprocess_data(
             adata=adata, 
             mito_thres=args.mito_thres, 
@@ -545,44 +590,47 @@ def main(args):
         ) 
         info["preprocessed"] = qc_processed
         logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
+    else:
+        logger.info(f"'preprocess' not in steps, skipping preprocessing...")
 
+    if "samples" in args.steps:
         samples, qc_samples = get_samples(
             adata=adata,
             index_vars=args.sample_index_vars
         )
         info["samples"] = qc_samples
         logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
+    else:
+        logger.info(f"'samples' not in steps, skipping detection of samples...")
 
+    if "clusters" in args.steps:
         qc_cluster = get_clusters(
             adata, 
             random_state=args.random_state
         )
         info["clusters"] = qc_cluster
         logger.info(f"Detected {qc_cluster['count']} clusters")
-        
-        # Save preprocessed data
-        adata.write_h5ad(args.cells_path)
+    else:
+        logger.info(f"'clusters' not in steps, skipping detection of clusters...")
+    
+    # Preprocessed cells
+    adata.write_h5ad(args.cells_path)
 
+    if "metacells" in args.steps:
         metacells, qc_metacells = make_metacells(
             adata=adata,
             target_depth=args.metacells_target_depth,
             compression=args.metacells_compression,
             size=args.metacells_size,
             target_sum=args.target_sum,
-            groupby_var="sample_id" if args.aracne_by_sample else "cluster",
+            groupby_var=args.groupby_var,
             save_path=(args.meta_path if args.save_metacells else None),
             random_state=args.random_state
         )
         info["metacells"] = qc_metacells
         logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
     else:
-        adata = sc.read_h5ad(args.cells_path)
-        qc_adata = qc_metrics_dict(adata)
-        logger.info(f"Loaded {adata.shape[0]:,} processed cells with sparsity = {qc_adata['sparsity']:2f}")  
-
-        metacells = sc.read_h5ad(args.meta_path)
-        qc_metacells = qc_metrics_dict(metacells)
-        logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
+        logger.info(f"'metacells' not in steps, skipping generation of metacells...")
 
     if "rank" in args.steps:
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
@@ -593,20 +641,24 @@ def main(args):
             save_path=args.ranks_path
         )
         info["ranks"] = qc_rank
+    else:
+        logger.info(f"'rank' not in steps, skipping ranking...")
     
     if "aracne" in args.steps:
-        # aracne_cells = metacells if args.aracne_metacells else args.
         qc_aracne = make_aracne_counts(
-            adata=metacells,
+            adata=metacells if "metacells" in args.steps else adata,
             min_n_sample=args.aracne_min_n,
             max_n_sample=args.aracne_max_n,
             min_perc_nz=args.aracne_min_perc_nz,
             top_n_hvg=args.aracne_top_n_hvg,
             regulators=args.aracne_regulators,
+            groupby_var=args.groupby_var,
             aracne_dir=args.aracne_dir
         )
         info["aracne"] = qc_aracne
-        logger.info(f"{qc_aracne['count']} clusters have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
+        logger.info(f"{qc_aracne['count']} cluster(s) have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
+    else:
+        logger.info(f"'aracne' not in steps, skipping making counts for ARACNe...")
 
     with open(args.info_path, "w") as file:
         json.dump(info, file, indent=4)
@@ -629,7 +681,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--dataset", type=str, default="cell_x_gene")
     parser.add_argument("--out_dir", type=str, required=True)
-    parser.add_argument("--steps", nargs="+", default=["preprocess", "rank", "aracne"])
+    parser.add_argument("--steps", nargs="+", default=["preprocess", "samples", "clusters", "metacells", "rank", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
@@ -639,11 +691,10 @@ if __name__ == "__main__":
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
     parser.add_argument("--sample_index_vars", nargs="+")
+    parser.add_argument("--groupby_var", type=str, default=None, help="`cluster`, `sample_id`, or any variable already in obs, None for no grouping")
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
-    parser.add_argument("--aracne_with_metacells", action="store_true")
-    parser.add_argument("--aracne_by_sample", action="store_true")
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
     parser.add_argument("--aracne_min_perc_nz", type=float, default=0.01)

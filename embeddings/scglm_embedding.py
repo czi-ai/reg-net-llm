@@ -20,6 +20,7 @@ from tqdm import tqdm
 from typing import Optional, Union
 from os.path import join, dirname, abspath
 import warnings
+warnings.filterwarnings("ignore")
 
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
@@ -27,9 +28,7 @@ from scGraphLLM.preprocess import rank
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
-warnings.filterwarnings("ignore")
-
-from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions
+from utils import *
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -40,6 +39,7 @@ hugo2ensg_vectorized = np.vectorize(hugo2ensg.get)
 
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
+MI_VALS = "mi.values"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, required=True)
@@ -81,14 +81,21 @@ def collate_fn(batch):
     return data
 
 def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit, valsg_split_ratio, cell_type, min_genes_per_graph=MIN_GENES_PER_GRAPH, skipped=0, ncells=0, verbose=False):
-    
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
 
-    ranks = ranks + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
-    network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
+    # FIXME: we are exluding genes that don't appear in the network... should be union not intersection
+    # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
+    ranks = ranks + 2
+
+    # remove unknown genes
+    ranks = ranks[ranks.columns[ranks.columns.isin(global_gene_to_node)]]
+    # remove edges due to unknown genes
+    network = network[network[REG_VALS].isin(global_gene_to_node) & network[TAR_VALS].isin(global_gene_to_node)]
+
+    network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
     common_genes = list(set(network_genes).intersection(set(ranks.columns)))
-    
     ranks = ranks.loc[:, common_genes]
+
     for i in range(ranks.shape[0]):
         if ncells % 1000 == 0:
             print(f"Processed {ncells} cells", end="\r")
@@ -108,7 +115,7 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
             ncells+=1
             continue
         
-        cell = ranks.iloc[i, :]
+        cell: pd.Series = ranks.iloc[i, :]
         zero_expression_rank = cell.max()
         # print(f"Number of cells of zero expression rank {(cell == zero_expression_rank).sum()}")
         cell = cell[cell != zero_expression_rank] + NUM_GENES ## offset the ranks by global number of genes - this lets the same 
@@ -123,8 +130,8 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
 
         # Subset network to only include genes in the cell
         network_cell = network[
-            network["regulator.values"].isin(cell.index) & 
-            network["target.values"].isin(cell.index)
+            network[REG_VALS].isin(cell.index) & 
+            network[TAR_VALS].isin(cell.index)
         ]
 
         local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
@@ -134,13 +141,13 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
         # cell.index defines the order of the nodes in the graph
         with warnings.catch_warnings(): # Suppress annoying pandas warnings
             warnings.simplefilter("ignore") 
-            edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
-            edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
-            edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
+            edges = network_cell[[REG_VALS, TAR_VALS, MI_VALS]]
+            edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
+            edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
 
-        edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
-        edge_weights = torch.tensor(np.array(edges['mi.values']))
-        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
+        edge_list = torch.tensor(np.array(edges[[TAR_VALS, TAR_VALS]])).T
+        edge_weights = torch.tensor(np.array(edges[MI_VALS]))
+        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
         data = Data(
             x=node_indices, 
             edge_index=edge_list, 
@@ -215,7 +222,7 @@ def main(args):
     )
     
     # Load model
-    model = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_manitou)
+    model: GDTransformer = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_manitou)
     
     # Get embeddings
     print(f"Performing forward pass...")
