@@ -37,11 +37,19 @@ def main(args):
     # filter out unrecognized genes by the tokenizer
     adata = adata[:, adata.var_names.isin(tokenizer.gene_median_dict.keys())]
 
-    counts = sc.AnnData(
-        X=csc_matrix(adata.layers["counts"].astype(int)),
-        obs=adata.obs[["n_counts", "cell_id"]],
-        var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
-    )
+    if "counts" in adata.layers:
+        counts = sc.AnnData(
+            X=csc_matrix(adata.layers["counts"].astype(int)),
+            obs=adata.obs[["n_counts", "cell_id"]],
+            var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
+        )
+    else:
+        counts = sc.AnnData(
+            X=csc_matrix(np.expm1(adata.X)),
+            obs=adata.obs[["cell_id"]],
+            var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
+        )
+        counts.obs["n_counts"] = np.array(counts.X.sum(axis=1)).flatten()
 
     if args.mask_fraction is not None:
         X_masked, masked_indices = mask_values(counts.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
@@ -49,7 +57,6 @@ def main(args):
 
     counts.write_h5ad(args.counts_path)
 
-    
     tokenizer.tokenize_data(
         data_directory=args.counts_dir, 
         output_directory=args.gf_out_dir,
@@ -100,6 +107,14 @@ def main(args):
         for i, genes in enumerate(input_genes)
     ], axis=0)
 
+    # retain requested metadata
+    metadata = {}
+    for var in args.retain_obs_vars:
+        try:
+            metadata[var] = adata.obs[var]
+        except KeyError:
+            print(f"Key {var} not in observational metadata...")
+
     if args.mask_fraction is None:
         np.savez(
             file=join(args.out_dir, "embedding.npz"), 
@@ -107,6 +122,7 @@ def main(args):
             seq_lengths=seq_lengths,
             expression=expression,
             edges=edges,
+            metadata=metadata,
             allow_pickle=True
         )
         return
@@ -120,6 +136,7 @@ def main(args):
         edges=edges,
         masks=masks,
         masked_expressions=masked_expressions,
+        metadata=metadata,
         allow_pickle=True
     )
 
@@ -131,6 +148,7 @@ if __name__ == "__main__":
     parser.add_argument("--aracne_dir", type=str, required=True)
     parser.add_argument("--mask_fraction", type=float, default=None)
     parser.add_argument("--mask_value", type=float, default=1e-4)
+    parser.add_argument("--retain_obs_vars", nargs="+", default=[])
     parser.add_argument("--sample_n_cells", type=int, default=None)
     parser.add_argument("--max_n_genes", type=int, default=1200)
     args = parser.parse_args()

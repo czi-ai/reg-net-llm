@@ -133,8 +133,6 @@ def get_batch_embeddings(
         pad_token_id=vocab[model_configs["pad_token"]],
         pad_value=model_configs["pad_value"],
         do_mlm=False,
-        # do_mlm=True, #FIXME
-        # mlm_probability=0.95,
         do_binning=True,
         max_length=max_length,
         sampling=True,

@@ -50,6 +50,7 @@ parser.add_argument("--use_masked_edges", action="store_true")
 parser.add_argument("--mask_ratio", type=float, default=0.15)
 parser.add_argument("--mask_fraction", type=float, default=None)
 parser.add_argument("--mask_value", type=float, default=1e-4)
+parser.add_argument("--retain_obs_vars", nargs="+", default=[])
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 args = parser.parse_args()
@@ -145,7 +146,7 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
             edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
             edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
 
-        edge_list = torch.tensor(np.array(edges[[TAR_VALS, TAR_VALS]])).T
+        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
         edge_weights = torch.tensor(np.array(edges[MI_VALS]))
         node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
         data = Data(
@@ -268,7 +269,6 @@ def main(args):
         for gene_ids in input_gene_ids_list
     ], axis=0)
     input_genes = np.vectorize(global_node_to_gene.get)(input_gene_ids)
-
     # get original expression
     expression = np.concatenate([
         np.pad(adata[i, genes[:seq_lengths[i]]].X.toarray(), 
@@ -276,6 +276,14 @@ def main(args):
                mode="constant", constant_values=0)
         for i, genes in enumerate(input_genes)
     ], axis=0)
+
+    # retain requested metadata
+    metadata = {}
+    for var in args.retain_obs_vars:
+        try:
+            metadata[var] = adata.obs[var]
+        except KeyError:
+            print(f"Key {var} not in observational metadata...")
 
     print("Saving emeddings...")
     if args.use_masked_edges:
@@ -288,6 +296,7 @@ def main(args):
             edges=edges,
             masked_edges=masked_edges,
             non_masked_edges=non_masked_edges,
+            metadata=metadata,
             allow_pickle=True
         )
         return
@@ -298,6 +307,7 @@ def main(args):
             expression=expression,
             seq_lengths=seq_lengths,
             edges=edges,
+            metadata=metadata,
             allow_pickle=True
         )
         return
@@ -310,6 +320,7 @@ def main(args):
         edges=edges,
         masks=masks,
         masked_expressions=masked_expressions,
+        metadata=metadata,
         allow_pickle=True
     )
 
