@@ -2,6 +2,8 @@ import json
 import os 
 from os.path import join, abspath, dirname
 from typing import Union
+from collections.abc import Iterable
+from collections import defaultdict
 import sys
 import gc
 from argparse import ArgumentParser
@@ -33,8 +35,13 @@ from sklearn.metrics import (
     mean_absolute_error, 
     mean_squared_error, 
     mean_absolute_percentage_error, 
-    r2_score
+    r2_score,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score
 )
+from sklearn.preprocessing import LabelEncoder
 from scipy.stats import pearsonr, spearmanr
 import tqdm
 import matplotlib.pyplot as plt
@@ -54,14 +61,15 @@ def send_to_gpu(data):
 
 
 class EmbeddingDataset(torch.utils.data.Dataset):
-    def __init__(self, paths):
-        self.paths = paths 
-        for path in self.paths:
-            assert os.path.exists(path), f"File not found: {path} in provided paths list."
-        
-        # Load data based on paths   
+    def __init__(self, paths, with_expression=False, with_metadata=False, target_metadata_key=None, label_encoder=None):
+        self.paths = paths
+        self.with_expression = with_expression
+        self.target_metadata_key = target_metadata_key
+        self.with_metadata = True if self.target_metadata_key is not None else with_metadata
+
         for path in paths:
             assert os.path.exists(path), f"File not found: {path} in provided paths list."
+
         embedding = [np.load(path, allow_pickle=True) for path in self.paths]
         self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
         self.max_seq_length = np.max(self.seq_lengths)
@@ -71,12 +79,34 @@ class EmbeddingDataset(torch.utils.data.Dataset):
                    mode="constant", constant_values=0)
             for emb in embedding
         ], axis=0)
-        self.expression = np.concatenate([
-            np.pad(emb["expression"], pad_width=((0,0), (0, self.max_seq_length - emb["expression"].shape[1])),
-                   mode="constant", constant_values=0)
-            for emb in embedding
-        ], axis=0)
 
+        if self.with_expression:
+            self.expression = np.concatenate([
+                np.pad(emb["expression"], pad_width=((0,0), (0, self.max_seq_length - emb["expression"].shape[1])),
+                    mode="constant", constant_values=0)
+                for emb in embedding
+            ], axis=0)
+
+        if self.with_metadata:
+            metadata = defaultdict(list)
+            for emb in embedding:
+                meta = emb["metadata"].item()
+                for key, value in meta.items():
+                    assert len(value) == emb["x"].shape[0]
+                    metadata[key].extend(value)
+            self.metadata = metadata
+
+            if self.target_metadata_key is not None:
+                assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"  
+                if label_encoder is None:
+                    self.label_encoder = LabelEncoder()
+                    self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
+                elif isinstance(label_encoder, LabelEncoder):
+                    self.label_encoder = label_encoder
+                    self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
+                else:
+                    raise ValueError("label_encoder must be None or a label encoder")
+                self.num_classes = len(self.label_encoder.classes_)
 
     def aggregate_embedding_dicts(self, embedding, key="edges"):
         res = {}
@@ -96,22 +126,26 @@ class EmbeddingDataset(torch.utils.data.Dataset):
         return len(self.x)
 
     def __getitem__(self, idx):
-        return {
-            "x": torch.tensor(self.x[idx]), 
-            "expression": torch.tensor(self.expression[idx]),
+        item = {
+            "x": torch.tensor(self.x[idx]),
             "seq_lengths": torch.tensor(self.seq_lengths[idx]),
             "edges": torch.tensor(self.edges[idx])
         }
 
-class EmbeddingDatasetWithExpression(EmbeddingDataset):
-    def __init__(self, paths):
-        super().__init__(paths)
-        embeddings = [np.load(path, allow_pickle=True) for path in self.paths]
+        if self.with_expression:
+            item["expression"] = torch.tensor(self.expression[idx])
+
+        if self.with_metadata:
+            item["metadata"] = {k: self.metadata[k][idx] for k in self.metadata}
         
+        if self.target_metadata_key is not None:
+            item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
+
+        return item
 
 class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
-    def __init__(self, paths):
-        super().__init__(paths)
+    def __init__(self, paths, **kwargs):
+        super().__init__(paths, **kwargs)
         embedding = [np.load(path, allow_pickle=True) for path in self.paths]
         self.masked_genes = self.aggregate_embedding_dicts(embedding, key="masks")
         self.expression = self.aggregate_embedding_dicts(embedding, key="masked_expressions")
@@ -124,8 +158,8 @@ class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
     
 
 class EmbeddingDatasetWithEdgeMasks(EmbeddingDataset):
-    def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False):
-        super().__init__(paths)
+    def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False, **kwargs):
+        super().__init__(paths, **kwargs)
         self.mask_ratio = mask_ratio
         self.generate_edge_masks = generate_edge_masks
         self.mask_ratio = mask_ratio
@@ -168,13 +202,21 @@ def concatenate_embeddings(x_list):
     return np.concatenate(x_list_padded, axis=0)
 
 
-def embedding_collate_fn(batch, masked_genes=False, masked_edges=False):
+def embedding_collate_fn(batch, expression=False, metadata=False, target_label=False, masked_genes=False, masked_edges=False):
     collated = {
         "x": torch.stack([item["x"] for item in batch]),
-        "expression": torch.stack([item["expression"] for item in batch]),
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
     }
+
+    if expression:
+        collated["expression"] = torch.stack([item["expression"] for item in batch])
+    
+    if metadata:
+        collated["metadata"] = {k: [item["metadata"][k] for item in batch] for k in batch[0]["metadata"].keys()}
+
+    if target_label:
+        collated["y"] = torch.stack([item["y"] for item in batch])
     
     if masked_genes:
         collated["masked_genes"] = [item["masked_genes"] for item in batch]
@@ -203,7 +245,45 @@ class LinkPredictor(nn.Module):
         x_i = node_embeddings[edge_pairs[0]]
         x_j = node_embeddings[edge_pairs[1]]
         return self.link_predictor(x_i, x_j)
+    
 
+class CellClassifier(nn.Module):
+    def __init__(self, input_dim, num_classes, num_layers=1, use_gat=False, lr=1e-3, hidden_dim=None):
+        super().__init__()
+        self.lr = lr
+        self.hidden_dim = hidden_dim or input_dim
+        self.use_gat = use_gat
+        self.encoder = GATEncoder(input_dim, self.hidden_dim, self.hidden_dim) if self.use_gat else None
+
+        layers = []
+        in_dim = self.encoder.out_channels if self.use_gat else input_dim
+        hidden_dim = self.hidden_dim
+
+        for i in range(num_layers - 1):
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.GELU())
+            in_dim = hidden_dim
+
+        layers.append(nn.Linear(in_dim, num_classes))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x, edge_index_list=None):
+        # x: [B, N, D], edge_index_list: List of [2, E]
+        if self.use_gat:
+            B, N, D = x.shape
+            x = x.view(B * N, D)
+            
+            # build batched edge_index
+            edge_indices = []
+            for i, ei in enumerate(edge_index_list):
+                edge_indices.append(ei + i * N)
+            edge_index = torch.cat(edge_indices, dim=1)
+
+            x = self.encoder(x, edge_index)
+            x = x.view(B, N, -1)
+
+        x_pooled = x.mean(dim=1)
+        return self.net(x_pooled)
 
 class MaskedGeneExpressionPredictor(nn.Module):
     def __init__(self, embed_dim, output_dim=1):
@@ -337,6 +417,19 @@ def gene_expression_pred_loss(
     loss = nn.MSELoss()(yhat, y)
     return loss, yhat, y
 
+def cell_classification_loss(
+        predictor,
+        node_embedding,
+        edge_index_list,
+        labels,
+        seq_lengths=None,
+        device="cuda"):
+    logits = predictor(node_embedding, edge_index_list)
+    labels = labels.to(device)
+    loss = F.cross_entropy(logits, labels)
+    preds = torch.argmax(logits, dim=1)
+    return loss, preds, labels
+
 
 class FineTuneModule(pl.LightningModule):
     def __init__(self, model, task, lr=1e-3, weight_decay=1e-4):
@@ -346,7 +439,7 @@ class FineTuneModule(pl.LightningModule):
         self.weight_decay = weight_decay
         self.model.to(self.device)
         self.task = task
-        assert self.task in {"link", "mgm", "expr", "mlm"}
+        assert self.task in {"link", "mgm", "cls", "expr", "mlm"}
     
     def training_step(self, batch, batch_idx):
         loss, _, _ = self._step(batch)
@@ -366,7 +459,7 @@ class FineTuneModule(pl.LightningModule):
         if self.task == "link":
             return generalized_link_pred_loss(
                 predictor=self.model,
-                node_embedding=batch["x"].to(self.device),
+                node_embedding=batch["x"],
                 seq_lengths=batch["seq_lengths"],
                 edge_index_list=batch["edges"],
                 use_bce_loss=False
@@ -374,12 +467,20 @@ class FineTuneModule(pl.LightningModule):
         elif self.task == "mgm":
             return generalized_link_pred_loss(
                 predictor=self.model,
-                node_embedding=batch["x"].to(self.device), 
+                node_embedding=batch["x"], 
                 seq_lengths=batch["seq_lengths"],
                 edge_index_list=batch["edges"],
                 masked_edge_index_list=batch["masked_edges"],
                 non_masked_edge_index_list=batch["non_masked_edges"],
                 use_bce_loss=True
+            )
+        elif self.task == "cls":
+            return cell_classification_loss(
+                predictor=self.model,
+                node_embedding=batch["x"],
+                edge_index_list=batch["edges"],
+                seq_lengths=batch["seq_lengths"],
+                labels=batch["y"]
             )
         elif self.task == "expr":
             return gene_expression_pred_loss(
@@ -545,7 +646,28 @@ def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):
         spear = spearmanr(y, yhat)[0]
 
         return y, yhat, mae, mse, mape, r2, pear, spear
+    
+    if task == "cls":
+        pre_w = precision_score(y, yhat, average="weighted")
+        rec_w = recall_score(y, yhat, average="weighted")
+        f1_w = f1_score(y, yhat, average="weighted")
+        acc = accuracy_score(y, yhat)
 
+        pre_mic = precision_score(y, yhat, average="micro")
+        rec_mic = recall_score(y, yhat, average="micro")
+        f1_mic = f1_score(y, yhat, average="micro")
+
+        pre_mac = precision_score(y, yhat, average="macro")
+        rec_mac = recall_score(y, yhat, average="macro")
+        f1_mac = f1_score(y, yhat, average="macro")
+
+        # convert labels
+        label_encoder: LabelEncoder = dataloader.dataset.label_encoder
+        y = label_encoder.inverse_transform(y)
+        yhat = label_encoder.inverse_transform(yhat)
+
+        return y, yhat, acc, pre_w, rec_w, f1_w
+    
 
 def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, recall_train, apr_train,
                     fpr_test, tpr_test, auc_score_test, precision_test, recall_test, apr_test, 
@@ -649,15 +771,43 @@ def main(args):
         "monocyte-derived_dendritic_cells",
         "nk_cells"
     ]
-    train_paths = [embedding_path_format.format(cell_type) for cell_type in train_cell_types]
-    val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
-    test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
+    # train_paths = [embedding_path_format.format(cell_type) for cell_type in train_cell_types]
+    # val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
+    # test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
+
+    train_paths = [
+        "/hpc/mydata/rowan.cassius/data/scGPT/mye/ref/cell_type/Macro_LYVE1/embeddings/geneformer/test/embedding.npz",
+        "/hpc/mydata/rowan.cassius/data/scGPT/mye/ref/cell_type/Macro_NLRP3/embeddings/geneformer/test/embedding.npz"
+    ]
+    val_paths = train_paths
+    test_paths = train_paths
 
     print("Loading Train and Validation Data...")
     if args.task in {"link", "expr"}:
         train_dataset = EmbeddingDataset(train_paths)
         val_dataset = EmbeddingDataset(val_paths)
         collate_fn = embedding_collate_fn
+    elif args.task == "expr":
+        train_dataset = EmbeddingDataset(
+            paths=train_paths,
+            with_expression=True
+        )
+        val_dataset = EmbeddingDataset(
+            paths=val_paths,
+            with_expression=True
+        )
+        collate_fn = partial(embedding_collate_fn, expression=True)
+    elif args.task == "cls":
+        train_dataset = EmbeddingDataset(
+            paths=train_paths,
+            target_metadata_key=args.target
+        )
+        val_dataset = EmbeddingDataset(
+            paths=val_paths,
+            target_metadata_key=args.target,
+            label_encoder=train_dataset.label_encoder
+        )
+        collate_fn=partial(embedding_collate_fn, target_label=True)
     elif args.task == "mgm":
         train_dataset = EmbeddingDatasetWithEdgeMasks(
             paths=train_paths, 
@@ -701,6 +851,12 @@ def main(args):
             embed_dim=train_dataset.embedding_dim,
             use_gat=args.use_gat
         )
+    elif args.task == "cls":
+        predictor = CellClassifier(
+            input_dim=train_dataset.embedding_dim,
+            num_classes=train_dataset.num_classes,
+            use_gat=args.use_gat
+        )
     elif args.task == "expr":
         predictor = RobertaLMHead(
             embed_dim=train_dataset.embedding_dim,
@@ -733,6 +889,7 @@ def main(args):
     )
     
     # Free up memory by deleting datasets and dataloaders
+    label_encoder = train_dataset.label_encoder
     del train_dataset, val_dataset, train_dataloader, val_dataloader
     gc.collect()  # Run garbage collection to release Python memory
 
@@ -741,8 +898,19 @@ def main(args):
         torch.cuda.empty_cache()
 
     print("Loading Test Data...")
-    if args.task in {"link", "expr"}:
+    if args.task == "link":
         test_dataset = EmbeddingDataset(test_paths)
+    elif args.task == "expr":
+        test_dataset = EmbeddingDataset(
+            paths=test_paths,
+            with_expression=True
+        )
+    elif args.task == "cls":
+        test_dataset = EmbeddingDataset(
+            paths=test_paths,
+            target_metadata_key=args.target,
+            label_encoder=label_encoder
+        )
     elif args.task == "mgm":
         test_dataset = EmbeddingDatasetWithEdgeMasks(
             paths=test_paths, 
@@ -761,7 +929,6 @@ def main(args):
         shuffle=False,
         collate_fn=collate_fn
     )
-    
     result_test = predict(
         best_model, test_dataloader, max_num_batches=None, task=args.task
     )
@@ -831,9 +998,31 @@ def main(args):
             pear_train=pear_train,
             spear_train=spear_train
         )
+    elif args.task == "cls":
+        y_train, yhat_train, acc_train, pre_train, rec_train, f1_train = result_train
+        y_test, yhat_test, acc_test, pre_test, rec_test, f1_test = result_train
+
+        save_data_path = join(args.res_dir, "cls_data.npz")
+        print(f"Saving classification performance data to: {save_data_path}")
+        np.savez(save_data_path,
+            # Train metrics
+            y_train=y_train,
+            yhat_train=yhat_train,
+            acc_train=acc_train,
+            pre_train=pre_train,
+            rec_train=rec_train,
+            f1_train=f1_train,
+            # Test Metrics
+            y_test=y_test,
+            yhat_test=yhat_test,
+            acc_test=acc_test,
+            pre_test=pre_test,
+            rec_test=rec_test,
+            f1_test=f1_test
+        )
 
     with open(args.info_path, "w") as file:
-            json.dump(info, file, indent=4)
+        json.dump(info, file, indent=4)
 
 
 if __name__ == "__main__":
@@ -841,7 +1030,8 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
-    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm"])
+    parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm", "cls"])
+    parser.add_argument("--target", type=str, default=None)
     parser.add_argument("--generate_edge_masks", action="store_true")
     parser.add_argument("--mask_ratio", type=float, default=0.15)
     parser.add_argument("--use_gat", action="store_true")
