@@ -1,5 +1,6 @@
 import json
 import os 
+import glob
 from os.path import join, abspath, dirname
 from typing import Union
 from collections.abc import Iterable
@@ -59,89 +60,163 @@ def send_to_gpu(data):
     else:
         return data  # If not a tensor or list/dict, leave unchanged
 
-
-class EmbeddingDataset(torch.utils.data.Dataset):
+class EmbeddingDataset(Dataset):
     def __init__(self, paths, with_expression=False, with_metadata=False, target_metadata_key=None, label_encoder=None):
-        self.paths = paths
         self.with_expression = with_expression
         self.target_metadata_key = target_metadata_key
         self.with_metadata = True if self.target_metadata_key is not None else with_metadata
+        self.label_encoder = label_encoder
+        self.cache_mode = False
+        self.samples = []
 
-        for path in paths:
-            assert os.path.exists(path), f"File not found: {path} in provided paths list."
+        # Determine if paths are cache directories or .npz files
+        if all(os.path.isdir(p) for p in paths):
+            self.cache_mode = True
+            self._load_cache_dirs(paths)
+        elif all(os.path.isfile(p) and p.endswith('.npz') for p in paths):
+            self._load_npz_files(paths)
+        else:
+            raise ValueError("All paths must be either directories (for cache mode) or .npz files.")
 
-        embedding = [np.load(path, allow_pickle=True) for path in self.paths]
-        self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embedding], axis=0)
+    def _load_cache_dirs(self, dirs):
+        for dir_path in dirs:
+            pt_files = sorted(glob.glob(os.path.join(dir_path, 'emb_*.pt')))
+            for pt_file in pt_files:
+                self.samples.append(pt_file)
+
+        # Load metadata if required
+        self.max_seq_length = -1
+        if self.target_metadata_key is not None or self.with_metadata:
+            self.metadata = defaultdict(list)
+            for pt_file in self.samples:
+                data = torch.load(pt_file)
+                meta = data.get('metadata', {})
+                for key, value in meta.items():
+                    self.metadata[key].append(value)
+                if data["seq_lengths"] > self.max_seq_length:
+                    self.max_seq_length = data["seq_lengths"]
+
+            if self.target_metadata_key is not None:
+                if self.target_metadata_key not in self.metadata:
+                    raise ValueError(f"Target key {self.target_metadata_key} not in metadata")
+                if self.label_encoder is None:
+                    self.label_encoder = LabelEncoder()
+                    self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
+                elif isinstance(self.label_encoder, LabelEncoder):
+                    self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
+                else:
+                    raise ValueError("label_encoder must be None or a LabelEncoder instance")
+            
+
+    def _load_npz_files(self, paths):
+        embeddings = [np.load(p, allow_pickle=True) for p in paths]
+        self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embeddings], axis=0)
         self.max_seq_length = np.max(self.seq_lengths)
-        self.edges = self.aggregate_embedding_dicts(embedding)
+        self.edges = self.aggregate_embedding_dicts(embeddings)
         self.x = np.concatenate([
-            np.pad(emb["x"], pad_width=((0, 0), (0, self.max_seq_length - emb["x"].shape[1]), (0, 0)), 
+            np.pad(emb["x"], pad_width=((0, 0), (0, self.max_seq_length - emb["x"].shape[1]), (0, 0)),
                    mode="constant", constant_values=0)
-            for emb in embedding
+            for emb in embeddings
         ], axis=0)
 
         if self.with_expression:
             self.expression = np.concatenate([
-                np.pad(emb["expression"], pad_width=((0,0), (0, self.max_seq_length - emb["expression"].shape[1])),
-                    mode="constant", constant_values=0)
-                for emb in embedding
+                np.pad(emb["expression"], pad_width=((0, 0), (0, self.max_seq_length - emb["expression"].shape[1])),
+                       mode="constant", constant_values=0)
+                for emb in embeddings
             ], axis=0)
 
         if self.with_metadata:
             metadata = defaultdict(list)
-            for emb in embedding:
+            for emb in embeddings:
                 meta = emb["metadata"].item()
                 for key, value in meta.items():
                     assert len(value) == emb["x"].shape[0]
                     metadata[key].extend(value)
+                del meta
             self.metadata = metadata
 
             if self.target_metadata_key is not None:
-                assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"  
-                if label_encoder is None:
+                assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"
+                if self.label_encoder is None:
                     self.label_encoder = LabelEncoder()
                     self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
-                elif isinstance(label_encoder, LabelEncoder):
-                    self.label_encoder = label_encoder
+                elif isinstance(self.label_encoder, LabelEncoder):
                     self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
                 else:
-                    raise ValueError("label_encoder must be None or a label encoder")
-                self.num_classes = len(self.label_encoder.classes_)
+                    raise ValueError("label_encoder must be None or a LabelEncoder instance")
 
-    def aggregate_embedding_dicts(self, embedding, key="edges"):
+    def aggregate_embedding_dicts(self, embeddings, key="edges"):
         res = {}
         i = 0
-        for emb in embedding:
+        for emb in embeddings:
             d = emb[key].item()
-            for j,e in d.items():
-                res[i+j] = e
+            for j, e in d.items():
+                res[i + j] = e
             i += len(d)
         return res
 
     @property
     def embedding_dim(self):
-        return self.x.shape[2]
-       
+        if self.cache_mode:
+            sample = torch.load(self.samples[0])
+            return sample['x'].shape[1]
+        else:
+            return self.x.shape[2]
+
+    @property
+    def shape(self):
+        return (int(len(self)), int(self.max_seq_length), int(self.embedding_dim))
+
+    @property
+    def num_classes(self):
+        if self.label_encoder is None:
+            return None
+        return len(self.label_encoder.classes_)
+
     def __len__(self):
-        return len(self.x)
+        if self.cache_mode:
+            return len(self.samples)
+        else:
+            return len(self.x)
 
     def __getitem__(self, idx):
-        item = {
-            "x": torch.tensor(self.x[idx]),
-            "seq_lengths": torch.tensor(self.seq_lengths[idx]),
-            "edges": torch.tensor(self.edges[idx])
-        }
+        if self.cache_mode:
+            data = torch.load(self.samples[idx])
+            item = {
+                "x": torch.tensor(data["x"]),
+                "seq_lengths": torch.tensor(data["seq_lengths"]),
+                "edges": torch.tensor(data["edges"])
+            }
 
-        if self.with_expression:
-            item["expression"] = torch.tensor(self.expression[idx])
+            if self.with_expression and "expression" in data:
+                item["expression"] = torch.tensor(data["expression"])
 
-        if self.with_metadata:
-            item["metadata"] = {k: self.metadata[k][idx] for k in self.metadata}
-        
-        if self.target_metadata_key is not None:
-            item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
+            if self.with_metadata and "metadata" in data:
+                item["metadata"] = data["metadata"]
 
-        return item
+            if self.target_metadata_key is not None:
+                item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
+
+            return item
+        else:
+            item = {
+                "x": torch.tensor(self.x[idx]),
+                "seq_lengths": torch.tensor(self.seq_lengths[idx]),
+                "edges": torch.tensor(self.edges[idx])
+            }
+
+            if self.with_expression:
+                item["expression"] = torch.tensor(self.expression[idx])
+
+            if self.with_metadata:
+                item["metadata"] = {k: self.metadata[k][idx] for k in self.metadata}
+
+            if self.target_metadata_key is not None:
+                item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
+
+            return item
+
 
 class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
     def __init__(self, paths, **kwargs):
@@ -193,24 +268,16 @@ class EmbeddingDatasetWithEdgeMasks(EmbeddingDataset):
         return item
 
 
-def concatenate_embeddings(x_list):
-    max_seq_length = max(x.shape[1] for x in x_list)
-    x_list_padded = [
-        np.pad(x, pad_width=((0, 0), (0, max_seq_length - x.shape[1]), (0, 0)), mode="constant", constant_values=0)
-        for x in x_list
-    ]
-    return np.concatenate(x_list_padded, axis=0)
-
-
 def embedding_collate_fn(batch, expression=False, metadata=False, target_label=False, masked_genes=False, masked_edges=False):
     collated = {
-        "x": torch.stack([item["x"] for item in batch]),
+        # "x": torch.stack([item["x"] for item in batch]),
+        "x": pad_sequence([item["x"] for item in batch], batch_first=True, padding_value=0),
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
     }
 
     if expression:
-        collated["expression"] = torch.stack([item["expression"] for item in batch])
+        collated["expression"] = pad_sequence([item["expression"] for item in batch], batch_first=True, padding_value=0)
     
     if metadata:
         collated["metadata"] = {k: [item["metadata"][k] for item in batch] for k in batch[0]["metadata"].keys()}
@@ -731,8 +798,7 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
 
 
 def print_dataset_info(name, dataset):
-    num_cells, seq_length, embedding_size = dataset.x.shape
-    print(f"{name} Dataset: Number of cells: {num_cells:,}, Sequence length: {seq_length:,}, Embedding size: {embedding_size:,}")
+    print(f"{name} Dataset: Number of cells: {len(dataset):,}, Max sequence length: {dataset.max_seq_length:,}, Embedding size: {dataset.embedding_dim:,}")
 
 
 def main(args):
@@ -775,15 +841,22 @@ def main(args):
     # val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
     # test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
 
+    # # cache dirs
     train_paths = [
-        "/hpc/mydata/rowan.cassius/data/scGPT/mye/ref/cell_type/Macro_LYVE1/embeddings/geneformer/test/embedding.npz",
-        "/hpc/mydata/rowan.cassius/data/scGPT/mye/ref/cell_type/Macro_NLRP3/embeddings/geneformer/test/embedding.npz"
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/test_cache/cached_embeddings"
+        for cell_type in ("Macro_NLRP3", "Macro_LYVE1", "cDC2_CXCR4hi")
     ]
+    
+    # # npz files
+    # train_paths = [
+    #     f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/test_no_cache/embedding.npz"
+    #     for cell_type in ("Macro_NLRP3", "Macro_LYVE1", "cDC2_CXCR4hi")
+    # ]
     val_paths = train_paths
     test_paths = train_paths
 
     print("Loading Train and Validation Data...")
-    if args.task in {"link", "expr"}:
+    if args.task == "link":
         train_dataset = EmbeddingDataset(train_paths)
         val_dataset = EmbeddingDataset(val_paths)
         collate_fn = embedding_collate_fn
@@ -827,8 +900,8 @@ def main(args):
 
     print_dataset_info("Train", train_dataset)
     print_dataset_info("Validation", val_dataset)
-    info["train_embedding_tensor"] = train_dataset.x.shape
-    info["val_embedding_tensor"] = val_dataset.x.shape
+    info["train_embedding_tensor"] = train_dataset.shape
+    info["val_embedding_tensor"] = val_dataset.shape
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -921,7 +994,7 @@ def main(args):
         test_dataset = EmbeddingDatasetWithGeneMasks(test_paths)
 
     print_dataset_info("Test", test_dataset)
-    info["test_embedding_tensor"] = test_dataset.x.shape
+    info["test_embedding_tensor"] = test_dataset.shape
 
     test_dataloader = DataLoader(
         test_dataset,
