@@ -6,7 +6,7 @@ from scipy.sparse import csc_matrix
 import os
 from os.path import join, dirname, abspath
 from geneformer import TranscriptomeTokenizer, EmbExtractor
-from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions
+from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions, save_embedding
 
 import importlib.util
 import os
@@ -111,34 +111,37 @@ def main(args):
     metadata = {}
     for var in args.retain_obs_vars:
         try:
-            metadata[var] = adata.obs[var]
+            metadata[var] = adata.obs[var].tolist()
         except KeyError:
             print(f"Key {var} not in observational metadata...")
 
     if args.mask_fraction is None:
-        np.savez(
-            file=join(args.out_dir, "embedding.npz"), 
+        save_embedding(
+            file=args.emb_path,
+            cache=args.cache,
+            cache_dir=args.emb_cache,
             x=embeddings,
             seq_lengths=seq_lengths,
             expression=expression,
             edges=edges,
-            metadata=metadata,
-            allow_pickle=True
+            metadata=metadata
         )
         return
 
-    masks, masked_expressions = get_locally_indexed_masks_expressions(adata, masked_indices, input_genes)        
-
-    np.savez(       
-        file=join(args.out_dir, "embedding.npz"), 
+    masks, masked_expressions = get_locally_indexed_masks_expressions(adata, masked_indices, input_genes)
+    save_embedding(
+        file=args.emb_path,
+        cache=args.cache,
+        cache_dir=args.emb_cache,
         x=embeddings,
         seq_lengths=seq_lengths,
+        expression=expression,
         edges=edges,
-        masks=masks,
-        masked_expressions=masked_expressions,
         metadata=metadata,
-        allow_pickle=True
+        masks=masks,
+        masked_expressions=masked_expressions
     )
+    
 
 
 if __name__ == "__main__":
@@ -151,14 +154,19 @@ if __name__ == "__main__":
     parser.add_argument("--retain_obs_vars", nargs="+", default=[])
     parser.add_argument("--sample_n_cells", type=int, default=None)
     parser.add_argument("--max_n_genes", type=int, default=1200)
+    parser.add_argument("--cache", action="store_true")
     args = parser.parse_args()
 
     args.cells_path = join(args.data_dir, "cells.h5ad")
     args.gf_out_dir = join(args.out_dir, "geneformer")
     args.counts_dir = join(args.data_dir, "counts")
     args.counts_path = join(args.counts_dir, "counts.h5ad")
+    args.emb_path = join(args.out_dir, "embedding.npz")
+    args.emb_cache = join(args.out_dir, "cached_embeddings")
 
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.counts_dir, exist_ok=True)
+    if args.cache:
+        os.makedirs(args.emb_cache, exist_ok=True)
 
     main(args)

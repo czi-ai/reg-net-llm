@@ -391,7 +391,7 @@ def make_aracne_counts(
     else:
         aracne_adata = aracne_preprocess(adata, min_perc_nz, top_n_hvg, regulators)
         if aracne_adata.shape[0] > max_n_sample:
-            sc.pp.subsample(cluster, n_obs=max_n_sample)
+            sc.pp.subsample(aracne_adata, n_obs=max_n_sample)
         elif aracne_adata.shape[0] < min_n_sample:
             logger.info(f"Data has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
             raise ValueError
