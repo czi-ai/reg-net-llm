@@ -21,12 +21,14 @@ from scGraphLLM.MLP_modules import LinkPredictHead, RobertaLMHead
 from scGraphLLM._globals import *
 # from scGraphLLM.flash_transformer import GDTransformer
 from scGraphLLM.config import *
+from scGraphLLM.eval_config import EMBEDDING_DATASETS, SPLIT_CONFIGS
+
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, Subset, DataLoader, random_split
 
 from sklearn.metrics import (
     roc_curve, 
@@ -729,7 +731,10 @@ def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):
         f1_mac = f1_score(y, yhat, average="macro")
 
         # convert labels
-        label_encoder: LabelEncoder = dataloader.dataset.label_encoder
+        ds = dataloader.dataset
+        while isinstance(ds, Subset):
+            ds = ds.dataset
+        label_encoder: LabelEncoder = ds.label_encoder
         y = label_encoder.inverse_transform(y)
         yhat = label_encoder.inverse_transform(yhat)
 
@@ -801,6 +806,73 @@ def print_dataset_info(name, dataset):
     print(f"{name} Dataset: Number of cells: {len(dataset):,}, Max sequence length: {dataset.max_seq_length:,}, Embedding size: {dataset.embedding_dim:,}")
 
 
+def split_dataset(dataset, ratio_config=(None, None, None), metadata_config=None,  seed=42):
+    """
+    Function for splitting a dataset into train, validation and test subsets 
+    according to metadata values and/or randomly.
+    """
+    if ratio_config != (None, None, None):
+        specified_ratios = [r for r in ratio_config if r is not None]
+        if specified_ratios and not abs(sum(specified_ratios) - 1.0) < 1e-6:
+            raise ValueError("Specified ratios must sum to 1.0.")
+
+    # Validate that each split is defined by either metadata or ratio, but not both
+    if metadata_config:
+        key, split_values = metadata_config
+        for i, (values, ratio) in enumerate(zip(split_values, ratio_config)):
+            split = ["train", "val", "test"][i]
+            if (values is None) and (ratio is None):
+                raise ValueError(f"Split {split} has neither metadata values nor ratio specified. Please specify only one.")
+            elif (values is None) and (ratio is not None):
+                pass
+            elif (values is not None) and (ratio is None):
+                pass
+            elif (values is not None) and (ratio is not None):
+                raise ValueError(f"Split {split} has both metadata values and a ratio specified. Please specify only one.")
+        
+        # Check for overlapping metadata values across splits
+        all_values = [value for values in split_values if values is not None for value in values]
+        if len(all_values) != len(set(all_values)):
+            raise ValueError("Overlapping metadata values detected across splits.")
+    
+    meta_split_datasets = [None, None, None]
+    if metadata_config:
+        key, split_values = metadata_config    
+        metadata = pd.DataFrame(dataset.metadata)
+        meta_split_datasets = [
+            Subset(dataset, indices=metadata[metadata[key].isin(values)].index.tolist()) 
+                if values is not None else None
+            for values in split_values
+        ]
+        if all(dataset is not None for dataset in meta_split_datasets):
+            return meta_split_datasets
+
+    remaining_indices = set(range(len(dataset))) - {
+        idx for subset in meta_split_datasets if subset is not None for idx in subset.indices
+    }
+    remaining_dataset = Subset(dataset, list(remaining_indices))
+    remaining_total = len(remaining_dataset)
+    remaining_sizes = [
+        int(ratio * remaining_total) if ratio is not None else 0
+        for ratio in ratio_config
+    ]
+    discrepancy = remaining_total - sum(remaining_sizes)
+    # Find the last split that was defined by a ratio, and add the leftover
+    for i in reversed(range(len(remaining_sizes))):
+        if ratio_config[i] is not None:
+            remaining_sizes[i] += discrepancy
+            break
+
+    remaining_split_datasets = random_split(remaining_dataset, lengths=remaining_sizes, generator=torch.Generator().manual_seed(seed))
+
+    train_dataset, val_dataset, test_dataset = (
+        meta_split_dataset if meta_split_dataset is not None else rem_split_dataset
+        for meta_split_dataset, rem_split_dataset in zip(meta_split_datasets, remaining_split_datasets)
+    )
+
+    return train_dataset, val_dataset, test_dataset
+
+
 def main(args):
     print("Running train.py with args:")
     print(json.dumps(args.__dict__, indent=4))
@@ -809,99 +881,48 @@ def main(args):
     # pytorch lightning seed
     pl.seed_everything(args.random_seed, workers=True)
 
-    print("Loading dataset...")
-    if args.model == "scglm":
-        if args.task == "link":
-            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
-        elif args.task == "mgm":
-            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked_0.45/embedding.npz"
-    elif args.model == "scgpt":
-        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
-    elif args.model == "scf":
-        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scfoundation/aracne_4096/embedding.npz"
-    elif args.model == "gf":
-        embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/geneformer/aracne_4096/embedding.npz"
-
-    train_cell_types = [
-        "cd14_monocytes",
-        "cd20_b_cells",
-        "cd8_t_cells",
-        "nkt_cells"
-    ]
-    val_cell_types = [
-        "erythrocytes",
-        "cd16_monocytes"
-    ]
-    test_cell_types = [
-        "cd4_t_cells",
-        "monocyte-derived_dendritic_cells",
-        "nk_cells"
-    ]
-    # train_paths = [embedding_path_format.format(cell_type) for cell_type in train_cell_types]
-    # val_paths = [embedding_path_format.format(cell_type) for cell_type in val_cell_types]
-    # test_paths = [embedding_path_format.format(cell_type) for cell_type in test_cell_types]
-
-    # # cache dirs
-    train_paths = [
-        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/test_cache/cached_embeddings"
-        for cell_type in ("Macro_NLRP3", "Macro_LYVE1", "cDC2_CXCR4hi")
-    ]
-    
-    # # npz files
-    # train_paths = [
-    #     f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/test_no_cache/embedding.npz"
-    #     for cell_type in ("Macro_NLRP3", "Macro_LYVE1", "cDC2_CXCR4hi")
-    # ]
-    val_paths = train_paths
-    test_paths = train_paths
-
-    print("Loading Train and Validation Data...")
+    print("Loading Data...")
     if args.task == "link":
-        train_dataset = EmbeddingDataset(train_paths)
-        val_dataset = EmbeddingDataset(val_paths)
+        dataset = EmbeddingDataset(args.data_paths)
         collate_fn = embedding_collate_fn
     elif args.task == "expr":
-        train_dataset = EmbeddingDataset(
-            paths=train_paths,
-            with_expression=True
-        )
-        val_dataset = EmbeddingDataset(
-            paths=val_paths,
+        dataset = EmbeddingDataset(
+            paths=args.data_paths,
             with_expression=True
         )
         collate_fn = partial(embedding_collate_fn, expression=True)
     elif args.task == "cls":
-        train_dataset = EmbeddingDataset(
-            paths=train_paths,
+        dataset = EmbeddingDataset(
+            paths=args.data_paths,
             target_metadata_key=args.target
-        )
-        val_dataset = EmbeddingDataset(
-            paths=val_paths,
-            target_metadata_key=args.target,
-            label_encoder=train_dataset.label_encoder
         )
         collate_fn=partial(embedding_collate_fn, target_label=True)
     elif args.task == "mgm":
-        train_dataset = EmbeddingDatasetWithEdgeMasks(
-            paths=train_paths, 
-            generate_edge_masks=args.generate_edge_masks,
-            mask_ratio=args.mask_ratio
-        )
-        val_dataset = EmbeddingDatasetWithEdgeMasks(
-            paths=val_paths, 
+        dataset = EmbeddingDatasetWithEdgeMasks(
+            paths=args.data_paths, 
             generate_edge_masks=args.generate_edge_masks,
             mask_ratio=args.mask_ratio
         )
         collate_fn = partial(embedding_collate_fn, masked_edges=True)
     elif args.task == "mlm":
-        train_dataset = EmbeddingDatasetWithGeneMasks(train_paths)
-        val_dataset = EmbeddingDatasetWithGeneMasks(val_paths)
+        dataset = EmbeddingDatasetWithGeneMasks(args.data_paths)
         collate_fn = partial(embedding_collate_fn, masked_genes=True)
 
-    print_dataset_info("Train", train_dataset)
-    print_dataset_info("Validation", val_dataset)
-    info["train_embedding_tensor"] = train_dataset.shape
-    info["val_embedding_tensor"] = val_dataset.shape
+    # Split Dataset according to split config
+    train_dataset, val_dataset, test_dataset = split_dataset(
+        dataset=dataset,
+        metadata_config=args.split_config.metadata_config,
+        ratio_config=args.split_config.ratio_config
+    )
+    
+    print(f"Training set size: {len(train_dataset)}")
+    print(f"Validation set size: {len(val_dataset)}")
+    print(f"Test set size: {len(test_dataset)}")
+
+    info["embedding_tensor"] = dataset.shape
+    info["train_size"] = len(train_dataset)
+    info["val_size"] = len(val_dataset)
+    info["test_size"] = len(test_dataset)
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -919,25 +940,25 @@ def main(args):
 
     if args.task in {"link", "mgm"}:
         predictor = LinkPredictor(
-            in_channels=train_dataset.embedding_dim,
-            hidden_dim=train_dataset.embedding_dim,
-            embed_dim=train_dataset.embedding_dim,
+            in_channels=dataset.embedding_dim,
+            hidden_dim=dataset.embedding_dim,
+            embed_dim=dataset.embedding_dim,
             use_gat=args.use_gat
         )
     elif args.task == "cls":
         predictor = CellClassifier(
-            input_dim=train_dataset.embedding_dim,
-            num_classes=train_dataset.num_classes,
+            input_dim=dataset.embedding_dim,
+            num_classes=dataset.num_classes,
             use_gat=args.use_gat
         )
     elif args.task == "expr":
         predictor = RobertaLMHead(
-            embed_dim=train_dataset.embedding_dim,
+            embed_dim=dataset.embedding_dim,
             output_dim=1
         )
     elif args.task == "mlm":
         predictor = MaskedGeneExpressionPredictor(
-            embed_dim=train_dataset.embedding_dim,
+            embed_dim=dataset.embedding_dim,
             output_dim=1
         )
         
@@ -962,39 +983,12 @@ def main(args):
     )
     
     # Free up memory by deleting datasets and dataloaders
-    label_encoder = train_dataset.label_encoder
     del train_dataset, val_dataset, train_dataloader, val_dataloader
-    gc.collect()  # Run garbage collection to release Python memory
+    gc.collect()
 
     # If using GPU, empty CUDA cache
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-    print("Loading Test Data...")
-    if args.task == "link":
-        test_dataset = EmbeddingDataset(test_paths)
-    elif args.task == "expr":
-        test_dataset = EmbeddingDataset(
-            paths=test_paths,
-            with_expression=True
-        )
-    elif args.task == "cls":
-        test_dataset = EmbeddingDataset(
-            paths=test_paths,
-            target_metadata_key=args.target,
-            label_encoder=label_encoder
-        )
-    elif args.task == "mgm":
-        test_dataset = EmbeddingDatasetWithEdgeMasks(
-            paths=test_paths, 
-            generate_edge_masks=args.generate_edge_masks,
-            mask_ratio=args.mask_ratio
-        )
-    elif args.task == "mlm":
-        test_dataset = EmbeddingDatasetWithGeneMasks(test_paths)
-
-    print_dataset_info("Test", test_dataset)
-    info["test_embedding_tensor"] = test_dataset.shape
 
     test_dataloader = DataLoader(
         test_dataset,
@@ -1100,6 +1094,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
+    parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--split_config", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
@@ -1121,9 +1117,13 @@ if __name__ == "__main__":
     # e.g, trainer will stop if validation score hasn't improved after
     # training on batch_size=8 * val_check_interval=16 * patience=8 = 1024 cells
     args = parser.parse_args()
-    
     args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
     args.model_save_dir = join(args.res_dir, "model")
     args.info_path = join(args.res_dir, f"info.json")
     os.makedirs(args.res_dir, exist_ok=False)
+
+    # get paths of dataset
+    args.data_paths = EMBEDDING_DATASETS[args.dataset]
+    args.split_config = SPLIT_CONFIGS[args.split_config]
+
     main(args)

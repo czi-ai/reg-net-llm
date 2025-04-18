@@ -19,7 +19,12 @@ import scipy.sparse
 from scipy.sparse import issparse
 import scanpy as sc
 
-from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions
+from utils import (
+    mask_values, 
+    get_locally_indexed_edges, 
+    get_locally_indexed_masks_expressions, 
+    save_embedding
+)
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -258,7 +263,8 @@ def main(args):
 
     if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
         sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
-
+    
+    data_original = data.copy()
     if args.mask_fraction is not None:
         data_original = data.copy()
         X_masked, masked_indices = mask_values(data.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
@@ -324,18 +330,28 @@ def main(args):
                mode="constant", constant_values="<pad>")
         for g in genes_list
     ], axis=0)
+    # genes_ensg = [hugo2ensg_vectorized(genes) for genes in genes_list]
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
     edges = get_locally_indexed_edges(genes_ensg, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
 
+    # get original expression
+    expression = np.concatenate([
+        np.pad(data_original[i, genes[:seq_lengths[i]]].X.toarray(), 
+               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
+               mode="constant", constant_values=0)
+        for i, genes in enumerate(genes_ensg)
+    ], axis=0)
+
     if args.mask_fraction is None:
         np.savez(
             file=join(args.out_dir, "embedding.npz"), 
             x=embeddings,
             seq_lengths=seq_lengths,
-            edges=edges, 
+            edges=edges,
+            expression=expression,
             allow_pickle=True
         )
         return

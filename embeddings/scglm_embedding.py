@@ -28,7 +28,7 @@ from scGraphLLM.preprocess import rank
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
-from utils import *
+from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions, save_embedding
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -53,6 +53,7 @@ parser.add_argument("--mask_value", type=float, default=1e-4)
 parser.add_argument("--retain_obs_vars", nargs="+", default=[])
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
+parser.add_argument("--cache", action="store_true")
 args = parser.parse_args()
 
 
@@ -187,6 +188,7 @@ def main(args):
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
 
+    adata_original = adata.copy()
     if args.mask_fraction is not None:
         adata_original = adata.copy()
         X_masked, masked_indices = mask_values(adata.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
@@ -271,7 +273,7 @@ def main(args):
     input_genes = np.vectorize(global_node_to_gene.get)(input_gene_ids)
     # get original expression
     expression = np.concatenate([
-        np.pad(adata[i, genes[:seq_lengths[i]]].X.toarray(), 
+        np.pad(adata_original[i, genes[:seq_lengths[i]]].X.toarray(), 
                pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
                mode="constant", constant_values=0)
         for i, genes in enumerate(input_genes)
@@ -289,51 +291,57 @@ def main(args):
     if args.use_masked_edges:
         masked_edges = get_edges_dict(masked_edges_list)
         non_masked_edges = get_edges_dict(non_masked_edges_list)
-        np.savez(
-            file=args.emb_path, 
+        save_embedding(
+            file=args.emb_path,
+            cache=args.cache,
+            cache_dir=args.emb_cache,
             x=embeddings,
             seq_lengths=seq_lengths,
             edges=edges,
             masked_edges=masked_edges,
             non_masked_edges=non_masked_edges,
-            metadata=metadata,
-            allow_pickle=True
+            metadata=metadata
         )
         return
     elif args.mask_fraction is None:  
-        np.savez(
-            file=args.emb_path, 
+        save_embedding(
+            file=args.emb_path,
+            cache=args.cache,
+            cache_dir=args.emb_cache,
             x=embeddings,
             expression=expression,
             seq_lengths=seq_lengths,
             edges=edges,
-            metadata=metadata,
-            allow_pickle=True
+            metadata=metadata
         )
         return
     
-    masks, masked_expressions = get_locally_indexed_masks_expressions(adata_original, masked_indices, input_genes)                
-    np.savez(       
-        file=join(args.out_dir, "embedding.npz"), 
+    masks, masked_expressions = get_locally_indexed_masks_expressions(adata_original, masked_indices, input_genes)
+    save_embedding(
+        file=args.emb_path,
+        cache=args.cache,
+        cache_dir=args.emb_cache,
         x=embeddings,
         seq_lengths=seq_lengths,
         edges=edges,
         masks=masks,
         masked_expressions=masked_expressions,
-        metadata=metadata,
-        allow_pickle=True
+        metadata=metadata
     )
 
 
 if __name__ == "__main__":
-
     args.cells_path = join(args.data_dir, "cells.h5ad")
     args.ranks_path = join(args.data_dir, "rank_raw.csv")
     args.emb_path = join(args.out_dir, "embedding.npz")
+    args.emb_cache = join(args.out_dir, "cached_embeddings")
     args.cache_dir = join(args.out_dir, "cache")
     args.all_data_dir = join(args.cache_dir, "all")
+    
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.all_data_dir, exist_ok=True)
+    if args.cache:
+        os.makedirs(args.emb_cache, exist_ok=True)
 
     main(args)
 
