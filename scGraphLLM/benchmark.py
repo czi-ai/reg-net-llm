@@ -11,6 +11,7 @@ from argparse import ArgumentParser
 from datetime import datetime
 from functools import partial
 from typing import Dict
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from torch_geometric.utils import negative_sampling
 import lightning.pytorch as pl
@@ -42,13 +43,14 @@ from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
-    f1_score
+    f1_score,
+    confusion_matrix
 )
 from sklearn.preprocessing import LabelEncoder
 from scipy.stats import pearsonr, spearmanr
 import tqdm
 import matplotlib.pyplot as plt
-import random
+from matplotlib.colors import LinearSegmentedColormap
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -99,17 +101,8 @@ class EmbeddingDataset(Dataset):
                     self.max_seq_length = data["seq_lengths"]
 
             if self.target_metadata_key is not None:
-                if self.target_metadata_key not in self.metadata:
-                    raise ValueError(f"Target key {self.target_metadata_key} not in metadata")
-                if self.label_encoder is None:
-                    self.label_encoder = LabelEncoder()
-                    self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
-                elif isinstance(self.label_encoder, LabelEncoder):
-                    self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
-                else:
-                    raise ValueError("label_encoder must be None or a LabelEncoder instance")
+                self.encode_labels()
             
-
     def _load_npz_files(self, paths):
         embeddings = [np.load(p, allow_pickle=True) for p in paths]
         self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embeddings], axis=0)
@@ -139,15 +132,22 @@ class EmbeddingDataset(Dataset):
             self.metadata = metadata
 
             if self.target_metadata_key is not None:
-                assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"
-                if self.label_encoder is None:
-                    self.label_encoder = LabelEncoder()
-                    self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
-                elif isinstance(self.label_encoder, LabelEncoder):
-                    self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
-                else:
-                    raise ValueError("label_encoder must be None or a LabelEncoder instance")
+                self.encode_labels()
 
+    def encode_labels(self):
+        assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"
+        if self.label_encoder is None:
+            self.label_encoder = LabelEncoder()
+            self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
+        elif isinstance(self.label_encoder, LabelEncoder):
+            self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
+        else:
+            raise ValueError("label_encoder must be None or a LabelEncoder instance")
+        
+        self.class_counts = pd.Series(self.metadata[self.target_metadata_key]).value_counts()[self.label_encoder.classes_]
+        class_weights = 1.0 / self.class_counts
+        self.class_weights = class_weights / class_weights.sum()
+      
     def aggregate_embedding_dicts(self, embeddings, key="edges"):
         res = {}
         i = 0
@@ -317,12 +317,13 @@ class LinkPredictor(nn.Module):
     
 
 class CellClassifier(nn.Module):
-    def __init__(self, input_dim, num_classes, num_layers=1, use_gat=False, lr=1e-3, hidden_dim=None):
+    def __init__(self, input_dim, num_classes, class_weights=None, num_layers=1, use_gat=False, lr=1e-3, hidden_dim=None):
         super().__init__()
         self.lr = lr
         self.hidden_dim = hidden_dim or input_dim
         self.use_gat = use_gat
         self.encoder = GATEncoder(input_dim, self.hidden_dim, self.hidden_dim) if self.use_gat else None
+        self.class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device) if class_weights is not None else None
 
         layers = []
         in_dim = self.encoder.out_channels if self.use_gat else input_dim
@@ -351,7 +352,8 @@ class CellClassifier(nn.Module):
             x = self.encoder(x, edge_index)
             x = x.view(B, N, -1)
 
-        x_pooled = x.mean(dim=1)
+        # x_pooled = x.mean(dim=1)
+        x_pooled, _ = x.max(dim=1)
         return self.net(x_pooled)
 
 class MaskedGeneExpressionPredictor(nn.Module):
@@ -492,10 +494,11 @@ def cell_classification_loss(
         edge_index_list,
         labels,
         seq_lengths=None,
+        class_weights=None,
         device="cuda"):
     logits = predictor(node_embedding, edge_index_list)
     labels = labels.to(device)
-    loss = F.cross_entropy(logits, labels)
+    loss = F.cross_entropy(logits, labels, weight=class_weights)
     preds = torch.argmax(logits, dim=1)
     return loss, preds, labels
 
@@ -549,7 +552,8 @@ class FineTuneModule(pl.LightningModule):
                 node_embedding=batch["x"],
                 edge_index_list=batch["edges"],
                 seq_lengths=batch["seq_lengths"],
-                labels=batch["y"]
+                labels=batch["y"],
+                class_weights=self.model.class_weights
             )
         elif self.task == "expr":
             return gene_expression_pred_loss(
@@ -802,6 +806,42 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
     return fig, ax
 
 
+def plot_confusion_matrix(y, yhat, save_path=None):
+
+    GREEN = (0.2, 0.5, 0.3)
+    LIGHT_GREEN = tuple(0.5 * g + 0.5 for g in GREEN)
+    custom_cmap = LinearSegmentedColormap.from_list("white_to_lightgreen", [(1, 1, 1), LIGHT_GREEN])
+
+    # Compute confusion matrix
+    labels = sorted(np.unique(np.concatenate([y, yhat])))  # or custom list
+    cm = confusion_matrix(y, yhat, labels=labels)
+
+    # Plot using matplotlib
+    fig, ax = plt.subplots(figsize=(16, 14))
+    im = ax.imshow(cm, cmap=custom_cmap)
+
+    # Add text annotations
+    for i in range(len(cm)):
+        for j in range(len(cm)):
+            ax.text(j, i, f"{cm[i, j]:,}", ha='center', va='center', color='black', fontsize=15)
+
+    # Set labels
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels, fontsize=15)
+    ax.set_yticklabels(labels, fontsize=15)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    ax.set_xlabel('Predicted label', fontsize=20)
+    ax.set_ylabel('True label', fontsize=20)
+    ax.set_title('Confusion Matrix', fontsize=20)
+
+    if save_path is not None:
+        fig.savefig(save_path)
+        
+    return fig, ax
+
+
+
 def print_dataset_info(name, dataset):
     print(f"{name} Dataset: Number of cells: {len(dataset):,}, Max sequence length: {dataset.max_seq_length:,}, Embedding size: {dataset.embedding_dim:,}")
 
@@ -949,6 +989,7 @@ def main(args):
         predictor = CellClassifier(
             input_dim=dataset.embedding_dim,
             num_classes=dataset.num_classes,
+            class_weights=dataset.class_weights if args.use_weighted_ce else None,
             use_gat=args.use_gat
         )
     elif args.task == "expr":
@@ -977,9 +1018,14 @@ def main(args):
         save_dir=args.model_save_dir
     )
 
-    print("Making Inference with predictor...")
+    print("Making Inference with predictor for train set...")
     result_train = predict(
         best_model, train_dataloader, max_num_batches=None, task=args.task
+    )
+
+    print("Making Inference with predictor for validation set...")
+    result_val = predict(
+        best_model, val_dataloader, max_num_batches=None, task=args.task
     )
     
     # Free up memory by deleting datasets and dataloaders
@@ -1067,8 +1113,21 @@ def main(args):
         )
     elif args.task == "cls":
         y_train, yhat_train, acc_train, pre_train, rec_train, f1_train = result_train
-        y_test, yhat_test, acc_test, pre_test, rec_test, f1_test = result_train
+        y_test, yhat_test, acc_test, pre_test, rec_test, f1_test = result_test
+        y_val, yhat_val, acc_val, pre_val, rec_val, f1_val = result_val
 
+        save_path_test = join(args.res_dir, "cm_test.png")
+        print(f"Saving test confusion matrix to: {save_path_test}")
+        plot_confusion_matrix(y_test, yhat_test, save_path_test)
+
+        save_path_train = join(args.res_dir, "cm_train.png")
+        print(f"Saving train confusion matrix to: {save_path_train}")
+        plot_confusion_matrix(y_train, yhat_train, save_path_train)
+
+        save_path_val = join(args.res_dir, "cm_val.png")
+        print(f"Saving val confusion matrix to: {save_path_val}")
+        plot_confusion_matrix(y_val, yhat_val, save_path_val)
+        
         save_data_path = join(args.res_dir, "cls_data.npz")
         print(f"Saving classification performance data to: {save_data_path}")
         np.savez(save_data_path,
@@ -1085,7 +1144,14 @@ def main(args):
             acc_test=acc_test,
             pre_test=pre_test,
             rec_test=rec_test,
-            f1_test=f1_test
+            f1_test=f1_test,
+            # Val Metrics
+            y_val=y_val,
+            yhat_val=yhat_val,
+            acc_val=acc_val,
+            pre_val=pre_val,
+            rec_val=rec_val,
+            f1_val=f1_val
         )
 
     with open(args.info_path, "w") as file:
@@ -1098,14 +1164,14 @@ if __name__ == "__main__":
     parser.add_argument("--split_config", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
-    parser.add_argument("--model", type=str, required=True, choices=["scglm", "scgpt", "scf", "gf"])
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm", "cls"])
+    parser.add_argument("--use_weighted_ce", action="store_true")
     parser.add_argument("--target", type=str, default=None)
     parser.add_argument("--generate_edge_masks", action="store_true")
     parser.add_argument("--mask_ratio", type=float, default=0.15)
     parser.add_argument("--use_gat", action="store_true")
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-1)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--max_num_batches", type=int, default=None)
     parser.add_argument("--num_epochs", type=int, default=500)

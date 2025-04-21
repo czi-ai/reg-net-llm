@@ -2,48 +2,43 @@ from os.path import join
 
 from scGraphLLM.config import Config
 
-# Human Immune Cell Dataset
-# train_cell_types = [
-#     "cd14_monocytes",
-#     "cd20_b_cells",
-#     "cd8_t_cells",
-#     "nkt_cells"
-# ]
-# val_cell_types = [
-#     "erythrocytes",
-#     "cd16_monocytes"
-# ]
-# test_cell_types = [
-#     "cd4_t_cells",
-#     "monocyte-derived_dendritic_cells",
-#     "nk_cells"
-# ]
 
-# if args.model == "scglm":
-#     if args.task == "link":
-#         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
-#     elif args.task == "mgm":
-#         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked_0.45/embedding.npz"
-# elif args.model == "scgpt":
-#     embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
-# elif args.model == "scf":
-#     embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scfoundation/aracne_4096/embedding.npz"
-# elif args.model == "gf":
-#     embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/geneformer/aracne_4096/embedding.npz"
-
-
-
-
-### Myeloid Dataset for Cell Annotation
-
-MYE_REF_DIR = "/hpc/mydata/rowan.cassius/data/scGPT/mye/ref/cell_type"
-MYE_QUERY_DIR = "/hpc/mydata/rowan.cassius/data/scGPT/mye/query/cell_type"
-
+CELL_TYPES = [
+    'Macro_C1QC',
+    'Mono_CD16',
+    'Mono_CD14',
+    'cDC2_CD1C',
+    'Macro_LYVE1',
+    'Macro_SPP1',
+    'Macro_NLRP3',
+    'Macro_GPNMB',
+    'Macro_INHBA',
+    'Macro_IL1B',
+    'cDC2_CXCR4hi',
+    # 'cDC2_CD1A', # exclude due to insufficient edge count (< 500)
+    # 'Macro_FN1',
+    # 'pDC_LILRA4',
+    # 'cDC2_IL1B',
+    # 'cDC2_FCN1',
+    # 'Macro_ISG15',
+    # 'cDC3_LAMP3',
+    # 'cDC2_CXCL9',
+    # 'cDC1_CLEC9A',
+    # 'cDC2_ISG15'
+]
 
 EMBEDDING_DATASETS = ({
     "debug": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/test_cache/cached_embeddings"
         for cell_type in ("Macro_NLRP3", "Macro_LYVE1", "cDC2_CXCR4hi")
+    ],
+    "gf": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+    "scglm": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cached_embeddings"
+        for cell_type in CELL_TYPES
     ]
 })
 
@@ -53,11 +48,11 @@ SPLIT_CONFIGS = {
         "ratio_config": (0.7, 0.1, 0.2)
     }),
     "debug": Config({
-        "metadata_config": ("cancer_type", (None, None, ['MYE', 'UCEC', 'cDC2'])),
+        "metadata_config": ("cancer_type", (None, None, ['MYE', 'UCEC'])),
         "ratio_config": (0.9, 0.1, None)
     }),
     "mye": Config({
-        "metadata_config": ("cancer_type", (None, None, ['MYE', 'UCEC', 'cDC2'])),
-        "ratio_config": (0.8, 0.2, None)
+        "metadata_config": ("cancer_type", (None, None, ['MYE', 'OV-FTC', 'ESCA'])),
+        "ratio_config": (0.85, 0.15, None)
     })
 }
