@@ -469,61 +469,53 @@ def make_metacells(
     return metacells_adata, qc_metrics_dict(metacells_adata)
     
 
-def rank_cells(df, n_bins, rank_by_z_score):
-
-    if rank_by_z_score:
-        mean_expr = df.mean(axis=1) # Get the mean of each gene
-        std_expr = df.std(axis=1)
-        df_z_score = (df.sub(mean_expr, axis=0)).div(std_expr, axis=0) # Calculate simple z-score
-        df_z_score = df_z_score.replace(0, np.nan) # Replace any zeros with NaN so they are not considered in the ranking
-        df = df_z_score
-    
+def quantize_cells(gex, n_bins, method="quantile"):
     # Create a dataframe of the same size as df with all zeros
-    rank_bins = np.zeros_like(df, dtype=np.int64)
+    expression_bins = np.zeros(gex.shape, dtype=np.int16)
     
-    # Rank the z-scores into separate "expression bins" that represent the expression of each gene 
-    # relative to itself across this set of cells
-    df_ranked = df.rank(axis=1, method="first", ascending=True).replace(np.nan, 0) - 1
-    for i in range(df_ranked.shape[0]): # Iterate through rows (single cells)
-        row = df_ranked.iloc[i].to_numpy(dtype=int)
-        non_zero = row.nonzero()
-        if len(row[non_zero]) != 0: # Make sure row is not all zeros/nans (expressionless)
-            operative_n_bins = n_bins
-            if len(row[non_zero]) < operative_n_bins-1:
-                operative_n_bins = len(row[non_zero])+1
-            # "Binnify" the rankings
-            bins = np.quantile(row[non_zero], np.linspace(0, 1, operative_n_bins-1))
-            bindices = np.digitize(row[non_zero], bins)
-            rank_bins[i, non_zero] = bindices
+    for i in range(gex.shape[0]): # Iterate through rows (single cells)
+        cell = gex.iloc[i].to_numpy(dtype=int) # Get single cell expression
+        non_zero = cell.nonzero()[0] # Get indices where expression is non-zero
+        
+        # "Binnify" the rankings
+        if np.unique(cell[non_zero]).shape[0] > 1: # More than one expression value - should be in all cases
+            if method == "quantile":
+                bins = np.quantile(cell[non_zero], np.linspace(0, 1, n_bins))[1:-1] # Get the bin edges, this gets n_bins-2 bin edges - [1:-1] so anything under/over the bottom/top edge gets added to the same bin
+            else: 
+                bins = np.linspace(min(cell[non_zero]), max(cell[non_zero]), n_bins)
+            expression_bins[i, non_zero] = np.digitize(cell[non_zero], bins, right=True) + 1 # Assign bins, add 1 as the bins are numbered from 0 up and we have already reserved 0 for zero-expression. right=True to differentiate high expression over low expression
+        
+        elif np.unique(cell[non_zero]).shape[0] == 1: # Edge case: If the cell has two expression levels (zero and x) - this shouldn't really happen
+            expression_bins[i, non_zero] = np.zeros(cell[non_zero].shape[0]) + round(n_bins/2) # Set to expressed genes to median bin value
+        else: # No update needed if cell is all zeros
+            pass
+    
+    # Convert the binned expressions to a pandas dataframe
+    expression_bins = pd.DataFrame(expression_bins, columns=gex.columns, index=gex.index)
+    return expression_bins
 
-    # Convert the binned ranks to a pandas dataframe
-    ranks = pd.DataFrame(rank_bins, columns=df.columns, index=df.index)
 
-    return ranks
-
-
-def rank(cells, n_bins, rank_by_z_score=False, save_path=None):    
+def quantize(cells, n_bins, save_path=None):    
     # Get the z-score test statistic   
-    df = cells.to_df()
+    cells = cells.to_df()
+    bins = quantize_cells(cells, n_bins)
     
-    ranks = rank_cells(df, n_bins, rank_by_z_score)
-    
-    # Save ranks_raw.csv file to cell-type-specific directory
+    # Save bins_raw.csv file to cell-type-specific directory
     if save_path is not None:
-        ranks.to_csv(save_path, index=False, header=True)
+        bins.to_csv(save_path, index=False, header=True)
 
-    # Save the ranking info
-    df_info = df.count(axis=1)
-    rank_info = {
+    # Save the bin info
+    cells_info = cells.count(axis=1)
+    binfo = {
         "n_bins": n_bins,
-        "min_genes_per_metacell": int(df_info.min()),
-        "max_genes_per_metacell": int(df_info.max()),
-        "median_genes_per_metacell": df_info.median(),
-        "mean_genes_per_bin": round(df.count(axis=0).sum()/(df.dropna(how="all").shape[0] * n_bins), 2),
-        "num_unique_highest_expressed": int(np.sum(np.any(np.isin(rank_bins, [99]), axis=0))) # Number of genes that were in the highest bin rank across metacells
+        "min_genes_per_cell": int(cells_info.min()),
+        "max_genes_per_cell": int(cells_info.max()),
+        "median_genes_per_cell": cells_info.median(),
+        "mean_genes_per_bin": round(cells.count(axis=0).sum()/(cells.dropna(how="all").shape[0] * n_bins), 2),
+        "num_unique_highest_expressed": int(np.sum(np.any(np.isin(bins, [99]), axis=0))) # Number of genes that were in the highest bin rank across cells
     }
 
-    return ranks, rank_info
+    return bins, binfo
 
 def main(args):
     logger.info(f"Preprocessing cells on {date.today()} with the following configuration:")
@@ -592,15 +584,16 @@ def main(args):
         qc_metacells = qc_metrics_dict(metacells)
         logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
 
-    if "rank" in args.steps:
+    if "quantize" in args.steps:
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
-        ranks, qc_rank = rank(
+        print(f"Quantizing dataset into {args.n_bins} bins...")
+        bins, qc_bins = quantize(
             adata,
             n_bins=args.n_bins, 
-            rank_by_z_score=args.rank_by_z_score,
-            save_path=args.ranks_path
+            save_path=args.bins_path
         )
-        info["ranks"] = qc_rank
+        info["bins"] = qc_bins
+        print("Quantization completed!")
     
     if "aracne" in args.steps:
         # aracne_cells = metacells if args.aracne_metacells else args.
@@ -636,8 +629,9 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--dataset", type=str, default="cell_x_gene")
+    parser.add_argument("--perturbed", type=str, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
     parser.add_argument("--out_dir", type=str, required=True)
-    parser.add_argument("--steps", nargs="+", default=["preprocess", "rank", "aracne"])
+    parser.add_argument("--steps", nargs="+", default=["preprocess", "quantize", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
@@ -659,7 +653,6 @@ if __name__ == "__main__":
     parser.add_argument("--aracne_top_n_hvg", type=int, default=None)
     parser.add_argument("--aracne_dirname", type=str, default="aracne")
     parser.add_argument("--n_bins", type=int, default=250)
-    parser.add_argument("--rank_by_z_score", action="store_true")
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")
@@ -670,9 +663,15 @@ if __name__ == "__main__":
     parser.add_argument("--n_cores", type=int, default=os.cpu_count())
     args = parser.parse_args()
     
+    # Make sure perturbed argument is in correct form
+    args.perturbed = args.perturbed == "true"
+    
+    if args.sample_index_vars == ["null"]:
+        args.sample_index_vars = ["dataset_id", "donor_id", "tissue"]
+    
     # define paths 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    args.ranks_path = join(args.out_dir, "rank_raw.csv")
+    args.bins_path = join(args.out_dir, "binned_expression.csv")
     args.meta_path = join(args.out_dir, "metacells.h5ad")
     args.cells_path = join(args.out_dir, "cells.h5ad")
     args.info_path = join(args.out_dir, f"info_{timestamp}.json")

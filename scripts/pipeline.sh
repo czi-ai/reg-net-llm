@@ -5,13 +5,15 @@
 # From the "<PATH_TO_REPO>/scGraphLLM/scripts" directory, run the following script... (i.e. cd /hpc/projects/group.califano/GLM/scGraphLLM/scripts)
 
 # EXAMPLE COMMAND (Preprocessing): 
-# source pipeline.sh --preprocess --data-dir "/hpc/projects/group.califano/GLM/data" --cxg-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/cell_type_all" --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/" --rank-by-z --aracne-top-n-hvg "1024" --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out"
-# source pipeline.sh --cache --data-dir "/hpc/projects/group.califano/GLM/data" --out-dir "/hpc/archives/group.califano" --aracne-top-n-hvg "1024" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out"
+# source pipeline.sh --preprocess --data-dir "/hpc/projects/group.califano/GLM/data" --cxg-dir "/hpc/archives/group.califano/cell_type_all" --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/" --rank-by-z --aracne-top-n-hvg "4096" --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out"
+# source pipeline.sh --preprocess --data-dir "/hpc/projects/group.califano/GLM/data" --cxg-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/replogle" --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/" --rank-by-z --aracne-top-n-hvg "4096" --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle"
+# source pipeline.sh --cache --data-dir "/hpc/projects/group.califano/GLM/data" --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/sc" --aracne-top-n-hvg "4096" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out" --rank-by-z 
+# source pipeline.sh --cache --data-dir "/hpc/projects/group.califano/GLM/data" --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/adamson" --aracne-top-n-hvg "4096" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out" --rank-by-z 
 
 # Initialize variables:
 PREPROCESS=false # Preprocess the CellxGene raw cell-type data (true/false)
 CACHE=false # Cache the preprocessed CellxGene cell-type data (true/false)
-DATA_DIR="" # Directory to create the cache folder(s) - one folder for each ARACNE_TOP_N_HVG configuration
+DATA_DIR="" # Directory to create the cache folder(s) - one folder for each ARACNE_TOP_N_HVG configuration (also containes cellxgene_gene2index.csv & gene-name-map.csv)
 CXG_DIR="" # Path to the CellxGene cell-type dataset directory (i.e. <PATH>/cell_type_all)
 OUT_DIR="" # Path to store the processed data. The same <PATH> as cell_type_all (above) is recommended
 RANK_BY_Z=false # When creating the expression rank bins, rank by the expression z-score of each gene? or just the raw expression value (true/false)
@@ -122,15 +124,15 @@ if $PREPROCESS; then
   echo "                |_|                                        |___/              "
   echo ""
 
-  # source start_slurm_preprocess.sh \
-  #     --run-type "initial" \
-  #     --data-dir $DATA_DIR \
-  #     --cxg-dir $CXG_DIR \
-  #     --out-dir $OUT_DIR \
-  #     --rank-by-z $RANK_BY_Z \
-  #     --aracne-top-n-hvg $ARACNE_TOP_N_HVG \
-  #     --aracne-path $ARACNE_PATH \
-  #     --job-out-dir $JOB_OUT_DIR
+  source start_slurm_preprocess.sh \
+      --run-type "initial" \
+      --data-dir $DATA_DIR \
+      --cxg-dir $CXG_DIR \
+      --out-dir $OUT_DIR \
+      --rank-by-z $RANK_BY_Z \
+      --aracne-top-n-hvg $ARACNE_TOP_N_HVG \
+      --aracne-path $ARACNE_PATH \
+      --job-out-dir $JOB_OUT_DIR
 fi
 
 # Cache the successfully preprocessed cells
@@ -156,10 +158,18 @@ if $CACHE; then
   #     --cxg-path $OUT_DIR \
   #     --slurm-out-path $JOB_OUT_DIR \
   #     --aracne-top-n-hvg $ARACNE_TOP_N_HVG
-      
-  # source start_slurm_cache.sh \
-  #     --data-dir $DATA_DIR \
-  #     --cache-dir $CACHE_DIR \
-  #     --aracne-top-n-hvg $ARACNE_TOP_N_HVG \
-  #     --job-out-dir $JOB_OUT_DIR
+
+  source start_slurm_cache.sh \
+      --data-dir $DATA_DIR \
+      --cache-dir $CACHE_DIR \
+      --aracne-top-n-hvg $ARACNE_TOP_N_HVG \
+      --job-out-dir $JOB_OUT_DIR
 fi
+
+# "/hpc/projects/group.califano/GLM/data" --cxg-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/replogle" --out-dir "/hpc/projects/group.califano/GLM/data/cellxgene/data/" --rank-by-z --aracne-top-n-hvg "4096" --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle"
+
+# python outdir_gen.py \
+#       --data-path "/hpc/projects/group.califano/GLM/data" \
+#       --cxg-path /hpc/projects/group.califano/GLM/data/cellxgene/data/complete_data_ranked_z_score \
+#       --slurm-out-path /hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/4096_z_scored \
+#       --aracne-top-n-hvg 4096
