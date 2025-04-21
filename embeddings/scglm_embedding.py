@@ -46,6 +46,7 @@ parser.add_argument("--data_dir", type=str, required=True)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
+parser.add_argument("--max_seq_length", type=int, default=2048)
 parser.add_argument("--use_masked_edges", action="store_true")
 parser.add_argument("--mask_ratio", type=float, default=0.15)
 parser.add_argument("--mask_fraction", type=float, default=None)
@@ -82,7 +83,7 @@ def collate_fn(batch):
 
     return data
 
-def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit, valsg_split_ratio, cell_type, min_genes_per_graph=MIN_GENES_PER_GRAPH, skipped=0, ncells=0, verbose=False):
+def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit, valsg_split_ratio, cell_type, min_genes_per_graph=MIN_GENES_PER_GRAPH, max_seq_length=None, skipped=0, ncells=0, verbose=False):
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
 
     # FIXME: we are exluding genes that don't appear in the network... should be union not intersection
@@ -118,6 +119,7 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
             continue
         
         cell: pd.Series = ranks.iloc[i, :]
+
         zero_expression_rank = cell.max()
         # print(f"Number of cells of zero expression rank {(cell == zero_expression_rank).sum()}")
         cell = cell[cell != zero_expression_rank] + NUM_GENES ## offset the ranks by global number of genes - this lets the same 
@@ -129,6 +131,10 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
             skipped += 1
             ncells+=1
             continue
+
+        # enforce max sequence length
+        if max_seq_length is not None and cell.shape[0] > max_seq_length:
+            cell = cell.nsmallest(max_seq_length)
 
         # Subset network to only include genes in the cell
         network_cell = network[
@@ -204,7 +210,8 @@ def main(args):
         overwrite=True, 
         msplit="all", 
         valsg_split_ratio=None, 
-        cell_type="cell", 
+        cell_type="cell",
+        max_seq_length=args.max_seq_length, 
         min_genes_per_graph=-1, 
         skipped=0, 
         ncells=0

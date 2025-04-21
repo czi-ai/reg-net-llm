@@ -3,13 +3,16 @@ import pandas as pd
 import numpy as np
 import scanpy as sc
 from scipy.sparse import csc_matrix
+import importlib.util
 import os
 from os.path import join, dirname, abspath
 from geneformer import TranscriptomeTokenizer, EmbExtractor
-from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions, save_embedding
-
-import importlib.util
-import os
+from utils import (
+    mask_values, 
+    get_locally_indexed_edges, 
+    get_locally_indexed_masks_expressions, 
+    save_embedding
+)
 
 geneformer_dir = dirname(dirname(abspath(importlib.util.find_spec("geneformer").origin)))
 
@@ -19,7 +22,7 @@ TAR_VALS = "target.values"
 def main(args):
     # initialize tokenizer
     tokenizer = TranscriptomeTokenizer(
-        model_input_size=2048,
+        model_input_size=args.max_seq_length,
         nproc=1,
         special_token=False,
         custom_attr_name_dict={"cell_id": "cell_id"},
@@ -148,6 +151,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--aracne_dir", type=str, required=True)
+    parser.add_argument("--max_seq_length", type=int, default=2048)
     parser.add_argument("--mask_fraction", type=float, default=None)
     parser.add_argument("--mask_value", type=float, default=1e-4)
     parser.add_argument("--retain_obs_vars", nargs="+", default=[])
