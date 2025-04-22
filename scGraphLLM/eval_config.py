@@ -39,6 +39,18 @@ EMBEDDING_DATASETS = ({
     "scglm": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cached_embeddings"
         for cell_type in CELL_TYPES
+    ],
+    "gf_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/seq_len_2048/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+    "scglm_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/seq_len_2048/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+    "scgpt_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scgpt/seq_len_2048/cached_embeddings"
+        for cell_type in CELL_TYPES
     ]
 })
 
@@ -54,5 +66,9 @@ SPLIT_CONFIGS = {
     "mye": Config({
         "metadata_config": ("cancer_type", (None, None, ['MYE', 'OV-FTC', 'ESCA'])),
         "ratio_config": (0.85, 0.15, None)
+    }),
+    "mye_cancer_type": Config({
+        "metadata_config": ("cancer_type", (None, ['THCA', 'LYM'], ['MYE', 'OV-FTC', 'ESCA'])),
+        "ratio_config": (1.0, None, None)
     })
 }
