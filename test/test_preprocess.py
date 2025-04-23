@@ -161,44 +161,44 @@ class TestQuantization(unittest.TestCase):
         self.assertTrue(bins.equals(expected.astype(bins.dtypes)))
         
 
-    # # Test having more bins than genes
-    # def test_n_bins_greater_than_n_genes(self):
-    #     original_n_bins = self.n_bins
-    #     self.n_bins = self.expression.shape[1] + 1
-    #     print(f"\nTesting n_bins={self.n_bins}")
-    #     self.run_tests() # Run all the earlier tests with new n_bins value
-    #     print(f"Finished testing n_bins={self.n_bins}")
-    #     self.n_bins = original_n_bins
+    # Test having more bins than genes
+    def test_n_bins_greater_than_n_genes(self):
+        original_n_bins = self.n_bins
+        self.n_bins = self.expression.shape[1] + 1
+        print(f"\nTesting n_bins={self.n_bins}")
+        self.run_tests() # Run all the earlier tests with new n_bins value
+        print(f"Finished testing n_bins={self.n_bins}")
+        self.n_bins = original_n_bins
         
     
-    # # Test having many many more bins than genes | Make sure n_bins not divisible by num_genes
-    # def test_too_many_bins(self):
-    #     original_n_bins = self.n_bins
-    #     self.n_bins = self.expression.shape[1] * 71
-    #     print(f"\nTesting n_bins={self.n_bins}")
-    #     self.run_tests() # Run all the earlier tests with new n_bins value
-    #     print(f"Finished testing n_bins={self.n_bins}")
-    #     self.n_bins = original_n_bins
+    # Test having many many more bins than genes | Make sure n_bins not divisible by num_genes
+    def test_too_many_bins(self):
+        original_n_bins = self.n_bins
+        self.n_bins = self.expression.shape[1] * 71 + 5
+        print(f"\nTesting n_bins={self.n_bins}")
+        self.run_tests() # Run all the earlier tests with new n_bins value
+        print(f"Finished testing n_bins={self.n_bins}")
+        self.n_bins = original_n_bins
         
     
-    # # Test having as many bins as genes
-    # def test_n_bins_equals_n_genes(self):
-    #     original_n_bins = self.n_bins
-    #     self.n_bins = self.expression.shape[1]
-    #     print(f"\nTesting n_bins={self.n_bins}")
-    #     self.run_tests() # Run all the earlier tests with new n_bins value
-    #     print(f"Finished testing n_bins={self.n_bins}")
-    #     self.n_bins = original_n_bins
+    # Test having as many bins as genes
+    def test_n_bins_equals_n_genes(self):
+        original_n_bins = self.n_bins
+        self.n_bins = self.expression.shape[1]
+        print(f"\nTesting n_bins={self.n_bins}")
+        self.run_tests() # Run all the earlier tests with new n_bins value
+        print(f"Finished testing n_bins={self.n_bins}")
+        self.n_bins = original_n_bins
         
     
-    # # Test having only 2 bins (binary, 0 and 1)
-    # def test_2_bin(self):
-    #     original_n_bins = self.n_bins
-    #     self.n_bins = 2
-    #     print(f"\nTesting n_bins={self.n_bins}")
-    #     self.run_tests() # Run all the earlier tests with new n_bins value
-    #     print(f"Finished testing n_bins={self.n_bins}")
-    #     self.n_bins = original_n_bins
+    # Test having only 2 bins (binary, 0 and 1)
+    def test_2_bin(self):
+        original_n_bins = self.n_bins
+        self.n_bins = 2
+        print(f"\nTesting n_bins={self.n_bins}")
+        self.run_tests() # Run all the earlier tests with new n_bins value
+        print(f"Finished testing n_bins={self.n_bins}")
+        self.n_bins = original_n_bins
 
 
 if __name__ == '__main__':

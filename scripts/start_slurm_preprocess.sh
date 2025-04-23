@@ -117,16 +117,31 @@ source start_slurm_preprocess.sh \
     --perturbed \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/partitioned"
 
-# Replogle 200k single partition subset
+# Replogle 400k single partition subset
 source start_slurm_preprocess.sh \
-    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_200k_raw" \
-    --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_200k_clean" \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_400k_raw" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_400k_clean" \
     --aracne-top-n-hvg "null" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
-    --index-vars "gene_id" \
+    --index-vars "gem_group" \
     --dataset "replogle" \
     --perturbed \
-    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/200k"
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/400k"
+
+
+
+# Adamson
+# Adamson dataset preprocessing command
+source start_slurm_preprocess.sh \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_adamson/data/adamson_raw" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_adamson/data/adamson_clean" \
+    --aracne-top-n-hvg "null" \
+    --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
+    --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
+    --index-vars "null" \
+    --dataset "adamson" \
+    --perturbed \
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/adamson/full"
 
 END_COMMENT

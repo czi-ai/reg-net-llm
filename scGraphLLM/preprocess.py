@@ -474,7 +474,7 @@ def quantize_cells(gex, n_bins, method="quantile"):
     expression_bins = np.zeros(gex.shape, dtype=np.int16)
     
     for i in range(gex.shape[0]): # Iterate through rows (single cells)
-        cell = gex.iloc[i].to_numpy(dtype=int) # Get single cell expression
+        cell = gex.iloc[i].to_numpy(dtype=float) # Get single cell expression
         non_zero = cell.nonzero()[0] # Get indices where expression is non-zero
         
         # "Binnify" the rankings
@@ -522,19 +522,28 @@ def main(args):
     logger.info(json.dumps(args.__dict__, indent=4))
     info = {"config": args.__dict__}
 
-    if "preprocess" in args.steps:
-        adata = load_data(args.data_path, var_index_name=args.var_index_name)
-        qc_initial = qc_metrics_dict(adata)
-        info["initial"] = qc_initial
-        logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
+    adata = load_data(args.data_path, var_index_name=args.var_index_name)
+    qc_initial = qc_metrics_dict(adata)
+    info["initial"] = qc_initial
+    logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
         
-        # CellXGene specific processing
-        if args.dataset == "cell_x_gene":
-            adata = adata[adata.obs["is_primary_data"],:]
-            adata.obs.reset_index(inplace=True)
-            adata.var.reset_index(inplace=True)
-            check_index(adata.var, "feature_id")
+    # CellXGene specific processing
+    if args.dataset == "cell_x_gene":
+        adata = adata[adata.obs["is_primary_data"],:]
+        adata.obs.reset_index(inplace=True)
+        adata.var.reset_index(inplace=True)
+        check_index(adata.var, "feature_id")
+    elif args.dataset == "mye":
+        counts = sc.AnnData(X=adata.X, obs=adata.obs)
+        counts.var_names = adata.var_names
+        counts.X = np.expm1(adata.X).astype(int)
+        adata = counts
+        adata.var["ensembl_id"] = adata.var_names.map(hugo_to_ensg)
+        adata = adata[:,~adata.var["ensembl_id"].isna()]
+        adata.var.set_index("ensembl_id", inplace=True)
 
+    #### Preprocessing ####
+    if "preprocess" in args.steps:
         adata, qc_processed = preprocess_data(
             adata=adata, 
             mito_thres=args.mito_thres, 
@@ -545,45 +554,54 @@ def main(args):
         ) 
         info["preprocessed"] = qc_processed
         logger.info(f"Processed dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_processed['sparsity']:.2f}")
+    else:
+        logger.info(f"'preprocess' not in steps, skipping preprocessing...")
 
+    #### Samples ####
+    if "samples" in args.steps:
         samples, qc_samples = get_samples(
             adata=adata,
             index_vars=args.sample_index_vars
         )
         info["samples"] = qc_samples
         logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
+    else:
+        adata.obs["sample_id"] = "0"
+        args.groupby_var = "sample_id"
+        logger.info(f"'samples' not in steps, skipping detection of samples...")
 
+    #### Clustering ####
+    if "clusters" in args.steps:
         qc_cluster = get_clusters(
             adata, 
             random_state=args.random_state
         )
         info["clusters"] = qc_cluster
         logger.info(f"Detected {qc_cluster['count']} clusters")
+    else:
+        logger.info(f"'clusters' not in steps, skipping detection of clusters...")
         
-        # Save preprocessed data
-        adata.write_h5ad(args.cells_path)
+    # Save preprocessed data
+    adata.write_h5ad(args.cells_path)
 
+    #### Metacells ####
+    if "metacells" in args.steps:
         metacells, qc_metacells = make_metacells(
             adata=adata,
             target_depth=args.metacells_target_depth,
             compression=args.metacells_compression,
             size=args.metacells_size,
             target_sum=args.target_sum,
-            groupby_var="sample_id" if args.aracne_by_sample else "cluster",
+            groupby_var=args.groupby_var,
             save_path=(args.meta_path if args.save_metacells else None),
             random_state=args.random_state
         )
         info["metacells"] = qc_metacells
         logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
     else:
-        adata = sc.read_h5ad(args.cells_path)
-        qc_adata = qc_metrics_dict(adata)
-        logger.info(f"Loaded {adata.shape[0]:,} processed cells with sparsity = {qc_adata['sparsity']:2f}")  
+        logger.info(f"'metacells' not in steps, skipping generation of metacells...")
 
-        metacells = sc.read_h5ad(args.meta_path)
-        qc_metacells = qc_metrics_dict(metacells)
-        logger.info(f"Loaded {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
-
+    #### Quantization ####
     if "quantize" in args.steps:
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
         print(f"Quantizing dataset into {args.n_bins} bins...")
@@ -594,7 +612,10 @@ def main(args):
         )
         info["bins"] = qc_bins
         print("Quantization completed!")
+    else:
+        logger.info(f"'rank' not in steps, skipping ranking...")
     
+    #### ARACNe ####
     if "aracne" in args.steps:
         # aracne_cells = metacells if args.aracne_metacells else args.
         qc_aracne = make_aracne_counts(
@@ -608,6 +629,8 @@ def main(args):
         )
         info["aracne"] = qc_aracne
         logger.info(f"{qc_aracne['count']} clusters have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
+    else:
+        logger.info(f"'aracne' not in steps, skipping making counts for ARACNe...")
 
     with open(args.info_path, "w") as file:
         json.dump(info, file, indent=4)
@@ -631,7 +654,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="cell_x_gene")
     parser.add_argument("--perturbed", type=str, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
     parser.add_argument("--out_dir", type=str, required=True)
-    parser.add_argument("--steps", nargs="+", default=["preprocess", "quantize", "aracne"])
+    parser.add_argument("--steps", nargs="+", default=["preprocess", "samples", "clusters", "metacells", "aracne"]) # ["preprocess", "samples", "clusters", "metacells", "quantize", "aracne"]
     parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
@@ -640,7 +663,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
-    parser.add_argument("--sample_index_vars", nargs="+")
+    parser.add_argument("--sample_index_vars", nargs="+") 
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
@@ -667,7 +690,7 @@ if __name__ == "__main__":
     args.perturbed = args.perturbed == "true"
     
     if args.sample_index_vars == ["null"]:
-        args.sample_index_vars = ["dataset_id", "donor_id", "tissue"]
+        args.sample_index_vars = None
     
     # define paths 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
