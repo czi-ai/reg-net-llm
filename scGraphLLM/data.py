@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd 
 
 import os
+from os.path import join
 from typing import List
 import warnings
 from pathlib import Path
@@ -15,6 +16,10 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
+
+REG_VALS = "regulator.values"
+TAR_VALS = "target.values"
+MI_VALS = "mi.values"
 
 # from scGraphLLM.graph_op import spectral_PE
 from scGraphLLM._globals import * ## imported global variables are all caps 
@@ -33,21 +38,40 @@ def load(file):
     with open(file, "rb") as ifl:
         return pickle.load(ifl)
 
-def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells):
-    aracne_out = i[0]
-    msplit = i[1]
-    cell_type = aracne_out.split("/")[-2]
-    sample = aracne_out.split("/")[-1]
-    assert aracne_out[-1] != "/", "aracne_out should not end with a /"
-    network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
-    network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-    ranks = pd.read_csv(str(Path(aracne_out).parents[0]) + "/rank_raw.csv") + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
+def run_save(
+        network, 
+        ranks, 
+        global_gene_to_node, 
+        cache_dir, 
+        overwrite, 
+        msplit, 
+        valsg_split_ratio, 
+        cell_type, 
+        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+        max_seq_length=None, 
+        skipped=0, 
+        ncells=0, 
+        verbose=False
+    ):
+    """
+    Assign local aracne graph to each cell and cache each cell
+    """
+    os.makedirs(join(cache_dir, msplit), exist_ok=True)
+    # remove unknown genes
+    ranks = ranks[ranks.columns[ranks.columns.isin(global_gene_to_node)]]
+    # remove edges due to unknown genes
+    network = network[
+        network[REG_VALS].isin(global_gene_to_node) & 
+        network[TAR_VALS].isin(global_gene_to_node)
+    ]
+    network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
     common_genes = list(set(network_genes).intersection(set(ranks.columns)))
-
     ranks = ranks.loc[:, common_genes]
+
     for i in range(ranks.shape[0]):
         if ncells % 1000 == 0:
             print(f"Processed {ncells} cells", end="\r")
+
         cell_number = ranks.index[i]
         
         if msplit == "valSG":
@@ -64,37 +88,37 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
             ncells+=1
             continue
         
-        cell = ranks.iloc[i, :]
-        # cell = cell[cell != ZERO_IDX] + NUM_GENES ## offset the ranks by global number of genes -  this lets the same 
-        # VS:
-        # keep graph static across batches 
-        cell = cell + NUM_GENES
-        # nn.Embedding be used for both gene and rank embeddings
-        if cell.shape[0] < MIN_GENES_PER_GRAPH: # require a minimum number of genes per cell 
+        cell: pd.Series = ranks.iloc[i, :]
+        # filter out genes with 0 expression
+        ZERO_EXPRESSION_RANK = 0
+        cell = cell[cell != ZERO_EXPRESSION_RANK]
+
+        if cell.shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
             skipped += 1
             ncells+=1
             continue
 
+        # enforce max sequence length
+        if max_seq_length is not None and cell.shape[0] > max_seq_length:
+            cell = cell.nlargest(n=max_seq_length)
+
         # Subset network to only include genes in the cell
         network_cell = network[
-            network["regulator.values"].isin(cell.index) & 
-            network["target.values"].isin(cell.index)
+            network[REG_VALS].isin(cell.index) & 
+            network[TAR_VALS].isin(cell.index)
         ]
 
         local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-        # local_gene_to_node_index = global_gene_to_node
-        # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
-        # so edge index is local to each graph for each cell.
-        # cell.index defines the order of the nodes in the graph
+
         with warnings.catch_warnings(): # Suppress annoying pandas warnings
             warnings.simplefilter("ignore") 
-            edges = network_cell[['regulator.values', 'target.values', 'mi.values']]
-            edges['regulator.values'] = edges['regulator.values'].map(local_gene_to_node_index)
-            edges['target.values'] = edges['target.values'].map(local_gene_to_node_index)
+            edges = network_cell[[REG_VALS, TAR_VALS, MI_VALS]]
+            edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
+            edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
 
-        edge_list = torch.tensor(np.array(edges[['regulator.values', 'target.values']])).T
-        edge_weights = torch.tensor(np.array(edges['mi.values']))
-        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long)
+        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
+        edge_weights = torch.tensor(np.array(edges[MI_VALS]))
+        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
         data = Data(
             x=node_indices, 
             edge_index=edge_list, 
@@ -103,14 +127,16 @@ def run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, sk
         
         torch.save(data, outfile)
         ncells += 1
-            
-        try:
-            torch.load(outfile)
-            print(outfile)
-        except:
-            print(outfile, "-------- Failed")
+        
+        if verbose:
+            try:
+                torch.load(outfile)
+                print(outfile)
+            except:
+                print(outfile, "-------- Failed")
         
     return (skipped, ncells)
+
 
 def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]], gene_to_node_file:str, cache_dir:str, overwrite:bool=False, single=False, valsg_split_ratio = 0.2): # 0.2 makes it closer to equal size btween SG and HOG
     with warnings.catch_warnings():
@@ -132,70 +158,6 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")
 
-
-class AracneGraphWithRanksDataset(Dataset):
-    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
-        """
-        Args:
-            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
-            global_gene_to_node_file (str): path to file that maps gene name to integer index 
-            cache_dir (str): path to directory where the processed data will be stored
-        """   
-        print(cache_dir)     
-        self.debug = debug
-        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
-        self.dataset_name = dataset_name
-        super().__init__(None, None, None)
-    
-    def len(self):
-        if self.debug:
-            return 1000
-        print(len(self.cached_files))
-        return len(self.cached_files)
-    
-    def get(self, idx, mask_fraction = 0.05):
-        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
-        data = torch.load(self.cached_files[idx], weights_only=False)
-        #data = Data(**data_dict)
-
-        node_indices = data.x
-        # need the clones otherwise the original indices will be modified
-        orig_gene_indices = node_indices[:, 0].clone()
-        orig_rank_indices = node_indices[:, 1].clone()
-        ## for each mask type, create boolean mask of the same shape as node_indices
-        gene_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        rank_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        both_mask = torch.rand(node_indices.shape[0]) < mask_fraction
-        node_indices[gene_mask, 0] = MASK_IDX
-        node_indices[rank_mask, 1] = MASK_IDX
-        node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX], dtype=node_indices.dtype)
-        
-        return Data(
-            x=node_indices, 
-            edge_index=data.edge_index, 
-            edge_weight=data.edge_weight, 
-            gene_mask=gene_mask, 
-            rank_mask=rank_mask, 
-            both_mask=both_mask, 
-            orig_gene_id=orig_gene_indices, 
-            orig_rank_indices=orig_rank_indices, 
-            dataset_name=self.dataset_name,
-        )
-
-class LitDataModule(pl.LightningDataModule):
-    def __init__(self, data_config):
-        super().__init__()
-        self.data_config = data_config
-        self.train_ds = AracneGraphWithRanksDataset(**data_config.train)
-        self.val_ds = [AracneGraphWithRanksDataset(**val) for val in data_config.val]
-        if data_config.run_test:
-            self.test_ds = [AracneGraphWithRanksDataset(**test) for test in data_config.test]
-    def train_dataloader(self):
-        return DataLoader(self.train_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers)
-    def val_dataloader(self):
-        return [DataLoader(val_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for val_ds in self.val_ds]
-    def test_dataloader(self):
-        return [DataLoader(test_ds, batch_size = self.data_config.batch_size, num_workers = self.data_config.num_workers) for test_ds in self.test_ds]
 
 class GraphTransformerDataset(torchDataset):
     def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.1, debug:bool=False, ):
