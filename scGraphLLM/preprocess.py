@@ -573,11 +573,16 @@ def main(args):
     elif args.dataset == "mye":
         counts = sc.AnnData(X=adata.X, obs=adata.obs)
         counts.var_names = adata.var_names
-        counts.X = np.expm1(adata.X).astype(int)
+        counts.X = np.expm1(adata.X)
         adata = counts
         adata.var["ensembl_id"] = adata.var_names.map(hugo_to_ensg)
         adata = adata[:,~adata.var["ensembl_id"].isna()]
         adata.var.set_index("ensembl_id", inplace=True)
+    elif args.dataset == "adamson":
+        counts = sc.AnnData(X=adata.X, obs=adata.obs)
+        counts.var_names = adata.var_names
+        counts.X = np.expm1(adata.X)
+        adata = counts
 
     if "preprocess" in args.steps:
         adata, qc_processed = preprocess_data(

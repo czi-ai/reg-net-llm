@@ -133,6 +133,8 @@ class EmbeddingDataset(Dataset):
 
             if self.target_metadata_key is not None:
                 self.encode_labels()
+        
+        return embeddings
 
     def encode_labels(self):
         assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"
@@ -184,41 +186,98 @@ class EmbeddingDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.cache_mode:
-            data = torch.load(self.samples[idx])
-            item = {
-                "x": torch.tensor(data["x"]),
-                "seq_lengths": torch.tensor(data["seq_lengths"]),
-                "edges": torch.tensor(data["edges"])
-            }
-
-            if self.with_expression and "expression" in data:
-                item["expression"] = torch.tensor(data["expression"])
-
-            if self.with_metadata and "metadata" in data:
-                item["metadata"] = data["metadata"]
-
-            if self.target_metadata_key is not None:
-                item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
-
+            item, data = self._get_cached_item(idx)
             return item
         else:
-            item = {
-                "x": torch.tensor(self.x[idx]),
-                "seq_lengths": torch.tensor(self.seq_lengths[idx]),
-                "edges": torch.tensor(self.edges[idx])
-            }
+            return self._get_item(idx)
 
-            if self.with_expression:
-                item["expression"] = torch.tensor(self.expression[idx])
+    def _get_item(self, idx):
+        item = {
+            "x": torch.tensor(self.x[idx]),
+            "seq_lengths": torch.tensor(self.seq_lengths[idx]),
+            "edges": torch.tensor(self.edges[idx])
+        }
 
-            if self.with_metadata:
-                item["metadata"] = {k: self.metadata[k][idx] for k in self.metadata}
+        if self.with_expression:
+            item["expression"] = torch.tensor(self.expression[idx])
 
-            if self.target_metadata_key is not None:
-                item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
+        if self.with_metadata:
+            item["metadata"] = {k: self.metadata[k][idx] for k in self.metadata}
 
-            return item
+        if self.target_metadata_key is not None:
+            item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
 
+        return item
+
+    def _get_cached_item(self, idx):
+        data = torch.load(self.samples[idx])
+        item = {
+            "x": torch.tensor(data["x"]),
+            "seq_lengths": torch.tensor(data["seq_lengths"]),
+            "edges": torch.tensor(data["edges"])
+        }
+
+        if self.with_expression and "expression" in data:
+            item["expression"] = torch.tensor(data["expression"])
+
+        if self.with_metadata and "metadata" in data:
+            item["metadata"] = data["metadata"]
+
+        if self.target_metadata_key is not None:
+            item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
+
+        return item, data
+    
+
+class EmbeddingDatasetWithEdgeMasks(EmbeddingDataset):
+    def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False, **kwargs):
+        self.mask_ratio = mask_ratio
+        self.generate_edge_masks = generate_edge_masks
+        self.mask_ratio = mask_ratio
+        super().__init__(paths, **kwargs)
+    
+    def _load_npz_files(self, paths):
+        embeddings = super()._load_npz_files(self, paths)
+        if not self.generate_edge_masks:
+            self.masked_edges = self.aggregate_embedding_dicts(embeddings, key="masked_edges")
+            self.non_masked_edges = self.aggregate_embedding_dicts(embeddings, key="non_masked_edges")
+            
+            mean_perc_masked_edges = np.mean([
+                self.masked_edges[k].shape[1] / self.edges[k].shape[1]
+                for k in self.edges.keys()
+            ])
+            print(f"Mean percentage masked edges {mean_perc_masked_edges:.3f}")
+
+            mean_perc_non_masked_edges = np.mean([
+                self.non_masked_edges[k].shape[1] / self.edges[k].shape[1]
+                for k in self.edges.keys()
+            ])
+            print(f"Mean percentage non masked edges {mean_perc_non_masked_edges:.3f}") 
+        
+        return embeddings
+
+    def _get_item(self, idx):
+        item = super()._get_item(idx)
+        if self.generate_edge_masks:
+            non_masked_edges, masked_edges = random_edge_mask(item["edges"], self.mask_ratio)
+            item["masked_edges"] = masked_edges
+            item["non_masked_edges"] = non_masked_edges
+        else:
+            item["masked_edges"] = torch.tensor(self.masked_edges[idx])
+            item["non_masked_edges"] = torch.tensor(self.non_masked_edges[idx])
+        return item
+
+    def _get_cached_item(self, idx):
+        item, data = super()._get_cached_item(idx)
+        if self.generate_edge_masks:
+            non_masked_edges, masked_edges = random_edge_mask(item["edges"], self.mask_ratio)
+            item["masked_edges"] = masked_edges
+            item["non_masked_edges"] = non_masked_edges
+        else:
+            item["masked_edges"] = data["masked_edges"]
+            item["non_masked_edges"] = data["non_masked_edges"]
+        return item, data
+    
 
 class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
     def __init__(self, paths, **kwargs):
@@ -232,47 +291,10 @@ class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
         item["masked_genes"] = torch.tensor(self.masked_genes[idx])
         item["masked_expression"] = torch.tensor(self.expression[idx])
         return item
-    
-
-class EmbeddingDatasetWithEdgeMasks(EmbeddingDataset):
-    def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False, **kwargs):
-        super().__init__(paths, **kwargs)
-        self.mask_ratio = mask_ratio
-        self.generate_edge_masks = generate_edge_masks
-        self.mask_ratio = mask_ratio
-
-        if not generate_edge_masks:
-            embedding = [np.load(path, allow_pickle=True) for path in self.paths]
-            self.masked_edges = self.aggregate_embedding_dicts(embedding, key="masked_edges")
-            self.non_masked_edges = self.aggregate_embedding_dicts(embedding, key="non_masked_edges")
-            
-            mean_perc_masked_edges = np.mean([
-                self.masked_edges[k].shape[1] / self.edges[k].shape[1]
-                for k in self.edges.keys()
-            ])
-            print(f"Mean percentage masked edges {mean_perc_masked_edges:.3f}")
-
-            mean_perc_non_masked_edges = np.mean([
-                self.non_masked_edges[k].shape[1] / self.edges[k].shape[1]
-                for k in self.edges.keys()
-            ])
-            print(f"Mean percentage non masked edges {mean_perc_non_masked_edges:.3f}") 
-    
-    def __getitem__(self, idx):
-        item = super().__getitem__(idx)
-        if self.generate_edge_masks:
-            non_masked_edges, masked_edges = random_edge_mask(item["edges"], self.mask_ratio)
-            item["masked_edges"] = masked_edges
-            item["non_masked_edges"] = non_masked_edges
-        else:
-            item["masked_edges"] = torch.tensor(self.masked_edges[idx])
-            item["non_masked_edges"] = torch.tensor(self.non_masked_edges[idx])
-        return item
 
 
 def embedding_collate_fn(batch, expression=False, metadata=False, target_label=False, masked_genes=False, masked_edges=False):
     collated = {
-        # "x": torch.stack([item["x"] for item in batch]),
         "x": pad_sequence([item["x"] for item in batch], batch_first=True, padding_value=0),
         "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
         "edges": [item["edges"] for item in batch]
@@ -317,17 +339,31 @@ class LinkPredictor(nn.Module):
     
 
 class CellClassifier(nn.Module):
-    def __init__(self, input_dim, num_classes, class_weights=None, num_layers=1, use_gat=False, lr=1e-3, hidden_dim=None):
+    def __init__(
+            self, 
+            input_dim, 
+            num_classes, 
+            class_weights=None, 
+            num_layers=1, 
+            use_gat=False, 
+            lr=1e-3, 
+            hidden_dim=None, 
+            pooling="mean"
+        ):
         super().__init__()
         self.lr = lr
         self.hidden_dim = hidden_dim or input_dim
         self.use_gat = use_gat
+        self.pooling = pooling.lower()
         self.encoder = GATEncoder(input_dim, self.hidden_dim, self.hidden_dim) if self.use_gat else None
         self.class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device) if class_weights is not None else None
 
         layers = []
         in_dim = self.encoder.out_channels if self.use_gat else input_dim
         hidden_dim = self.hidden_dim
+
+        if self.pooling == "both":
+            in_dim *= 2
 
         for i in range(num_layers - 1):
             layers.append(nn.Linear(in_dim, hidden_dim))
@@ -337,12 +373,12 @@ class CellClassifier(nn.Module):
         layers.append(nn.Linear(in_dim, num_classes))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x, edge_index_list=None):
+    def forward(self, x, edge_index_list=None, seq_lengths=None):
         # x: [B, N, D], edge_index_list: List of [2, E]
+        B, N, D = x.shape
         if self.use_gat:
-            B, N, D = x.shape
             x = x.view(B * N, D)
-            
+
             # build batched edge_index
             edge_indices = []
             for i, ei in enumerate(edge_index_list):
@@ -352,8 +388,23 @@ class CellClassifier(nn.Module):
             x = self.encoder(x, edge_index)
             x = x.view(B, N, -1)
 
-        # x_pooled = x.mean(dim=1)
-        x_pooled, _ = x.max(dim=1)
+        mask = torch.arange(N, device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
+        mask_float = mask.unsqueeze(-1).float()
+        x_masked = x * mask_float
+
+        if self.pooling == "mean":
+            x_pooled = x_masked.sum(dim=1) / mask_float.sum(dim=1)
+        elif self.pooling == "max":
+            x_masked[~mask] = float('-inf')
+            x_pooled, _ = x_masked.max(dim=1)
+        elif self.pooling == "both":
+            x_mean = x_masked.sum(dim=1) / mask_float.sum(dim=1)
+            x_masked[~mask] = float('-inf')
+            x_max, _ = x_masked.max(dim=1)
+            x_pooled = torch.cat([x_mean, x_max], dim=1)
+        else:
+            raise ValueError(f"Unsupported pooling type: {self.pooling}")
+
         return self.net(x_pooled)
 
 class MaskedGeneExpressionPredictor(nn.Module):
@@ -496,7 +547,7 @@ def cell_classification_loss(
         seq_lengths=None,
         class_weights=None,
         device="cuda"):
-    logits = predictor(node_embedding, edge_index_list)
+    logits = predictor(node_embedding, edge_index_list, seq_lengths)
     labels = labels.to(device)
     loss = F.cross_entropy(logits, labels, weight=class_weights)
     preds = torch.argmax(logits, dim=1)
@@ -939,7 +990,7 @@ def main(args):
         collate_fn=partial(embedding_collate_fn, target_label=True)
     elif args.task == "mgm":
         dataset = EmbeddingDatasetWithEdgeMasks(
-            paths=args.data_paths, 
+            paths=args.data_paths,
             generate_edge_masks=args.generate_edge_masks,
             mask_ratio=args.mask_ratio
         )
@@ -990,7 +1041,9 @@ def main(args):
             input_dim=dataset.embedding_dim,
             num_classes=dataset.num_classes,
             class_weights=dataset.class_weights if args.use_weighted_ce else None,
-            use_gat=args.use_gat
+            use_gat=args.use_gat,
+            num_layers=2,
+            pooling="mean"
         )
     elif args.task == "expr":
         predictor = RobertaLMHead(

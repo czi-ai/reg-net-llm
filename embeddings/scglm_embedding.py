@@ -93,7 +93,10 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
     # remove unknown genes
     ranks = ranks[ranks.columns[ranks.columns.isin(global_gene_to_node)]]
     # remove edges due to unknown genes
-    network = network[network[REG_VALS].isin(global_gene_to_node) & network[TAR_VALS].isin(global_gene_to_node)]
+    network = network[
+        network[REG_VALS].isin(global_gene_to_node) & 
+        network[TAR_VALS].isin(global_gene_to_node)
+    ]
 
     network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
     common_genes = list(set(network_genes).intersection(set(ranks.columns)))
@@ -184,7 +187,7 @@ def get_edges_dict(edges_list):
     return edges
 
 def main(args):
-    
+    print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
     global_gene_df = pd.read_csv(args.gene_index_path)
     global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
@@ -338,6 +341,7 @@ def main(args):
 
 
 if __name__ == "__main__":
+    print("Starting main execution...")
     args.cells_path = join(args.data_dir, "cells.h5ad")
     args.ranks_path = join(args.data_dir, "rank_raw.csv")
     args.emb_path = join(args.out_dir, "embedding.npz")
