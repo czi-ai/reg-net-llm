@@ -526,7 +526,7 @@ def main(args):
     qc_initial = qc_metrics_dict(adata)
     info["initial"] = qc_initial
     logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
-        
+
     # CellXGene specific processing
     if args.dataset == "cell_x_gene":
         adata = adata[adata.obs["is_primary_data"],:]
@@ -561,13 +561,11 @@ def main(args):
     if "samples" in args.steps:
         samples, qc_samples = get_samples(
             adata=adata,
-            index_vars=args.sample_index_vars
+            index_vars=args.groupby_var
         )
         info["samples"] = qc_samples
-        logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.sample_index_vars}")
+        logger.info(f"Detected {qc_samples['count']:,} samples indexed by variables: {args.groupby_var}")
     else:
-        adata.obs["sample_id"] = "0"
-        args.groupby_var = "sample_id"
         logger.info(f"'samples' not in steps, skipping detection of samples...")
 
     #### Clustering ####
@@ -580,7 +578,7 @@ def main(args):
         logger.info(f"Detected {qc_cluster['count']} clusters")
     else:
         logger.info(f"'clusters' not in steps, skipping detection of clusters...")
-        
+
     # Save preprocessed data
     adata.write_h5ad(args.cells_path)
 
@@ -592,7 +590,7 @@ def main(args):
             compression=args.metacells_compression,
             size=args.metacells_size,
             target_sum=args.target_sum,
-            groupby_var=args.groupby_var,
+            groupby_var="sample_id" if args.aracne_by_sample else "cluster",
             save_path=(args.meta_path if args.save_metacells else None),
             random_state=args.random_state
         )
@@ -603,10 +601,16 @@ def main(args):
 
     #### Quantization ####
     if "quantize" in args.steps:
+        # Which data to bin (metacells or single cells)
+        if args.quantize_metacells:
+            data = metacells
+        else:
+            data = adata
+            
         # Returns: pandas dataframe with metacell x genes: values are ranking bin number | AND | rank_info JSON element
         print(f"Quantizing dataset into {args.n_bins} bins...")
         bins, qc_bins = quantize(
-            adata,
+            data,
             n_bins=args.n_bins, 
             save_path=args.bins_path
         )
@@ -614,7 +618,7 @@ def main(args):
         print("Quantization completed!")
     else:
         logger.info(f"'rank' not in steps, skipping ranking...")
-    
+
     #### ARACNe ####
     if "aracne" in args.steps:
         # aracne_cells = metacells if args.aracne_metacells else args.
@@ -646,15 +650,16 @@ def main(args):
             title="QC Figures for Metacells", 
             fig_path=join(args.fig_dir, "qc_metacells.png")
         )
-    
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--dataset", type=str, default="cell_x_gene")
-    parser.add_argument("--perturbed", type=str, help="Is this a perturbation dataset? Perturbation information will be stored in caching", default=False)
+    parser.add_argument("--perturbed", action="store_true", help="Is this a perturbation dataset? Perturbation information will be stored in caching")
     parser.add_argument("--out_dir", type=str, required=True)
-    parser.add_argument("--steps", nargs="+", default=["preprocess", "samples", "clusters", "metacells", "aracne"]) # ["preprocess", "samples", "clusters", "metacells", "quantize", "aracne"]
+    parser.add_argument("--quantize_metacells", action="store_true",)
+    parser.add_argument("--steps", nargs="+", default=["preprocess", "samples", "clusters", "metacells", "quantize", "aracne"])
     parser.add_argument("--var_index_name", type=str, default=None)
     parser.add_argument("--mito_thres", type=int, default=20)
     parser.add_argument("--umi_min", type=int, default=1000)
@@ -663,7 +668,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_sum", type=int, default=1e6)
     parser.add_argument("--n_top_genes", type=int, default=None)
     parser.add_argument("--protein_coding", type=bool, default=True)
-    parser.add_argument("--sample_index_vars", nargs="+") 
+    parser.add_argument("--groupby_var", type=str, default=["dataset_id", "donor_id", "tissue"], help="`cluster`, `sample_id`, or any variable already in obs, None for no grouping")
     parser.add_argument("--metacells_target_depth", type=float, default=10000)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
@@ -675,7 +680,7 @@ if __name__ == "__main__":
     parser.add_argument("--aracne_regulators", nargs="+", default=["tfs", "cotfs"])
     parser.add_argument("--aracne_top_n_hvg", type=int, default=None)
     parser.add_argument("--aracne_dirname", type=str, default="aracne")
-    parser.add_argument("--n_bins", type=int, default=250)
+    parser.add_argument("--n_bins", type=int, default=100)
     # figures
     parser.add_argument("--produce_figures", action="store_true")
     parser.add_argument("--produce_stats", action="store_true")
@@ -688,9 +693,6 @@ if __name__ == "__main__":
     
     # Make sure perturbed argument is in correct form
     args.perturbed = args.perturbed == "true"
-    
-    if args.sample_index_vars == ["null"]:
-        args.sample_index_vars = None
     
     # define paths 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")

@@ -28,6 +28,13 @@ class TestQuantization(unittest.TestCase):
         self.test_equal_expression()
         self.test_uniform_expression()
         self.test_various_expression()
+        
+    # Runs all the bin tests (and subsequently all run_tests() tests)
+    def run_bin_tests(self):
+        self.test_n_bins_greater_than_n_genes()
+        self.test_too_many_bins()
+        self.test_n_bins_equals_n_genes()
+        self.test_2_bin()
     
         
     # Check that the shape is consistent
@@ -199,6 +206,24 @@ class TestQuantization(unittest.TestCase):
         self.run_tests() # Run all the earlier tests with new n_bins value
         print(f"Finished testing n_bins={self.n_bins}")
         self.n_bins = original_n_bins
+    
+    def test_decimal_expression(self):
+        original_expr = self.expression
+        self.expression = pd.DataFrame(
+            [[0.9, 10.2, 0, 0, 0, 0, 1.3, 0],
+            [0, 0, 0, 0, 0, 0, 7.654, 0],
+            [0, 0, 4.33, 4.33, 0, 0, 4.33, 0],
+            [0, 0, 1.873, 0, 0, 0, 3.273, 0],
+            [2.341, 2.341, 2.341, 2.341, 2.341, 2.341, 2.341, 2.341],
+            [0.1, 0.2, 1.873, 0.4, 0, 8, 3.273, 0]],
+            index=['Cell1', 'Cell2', 'Cell3', 'Cell4', 'Cell5', 'Cell6'], 
+            columns=['GeneA', 'GeneB', 'GeneC', 'GeneD', 'GeneE', 'GeneF', 'GeneG', 'GeneH']
+        )
+        print(f"\nTesting decimal expression...")
+        self.run_tests()
+        self.run_bin_tests()
+        print(f"\nFinished testing decimal expression")
+        self.expression = original_expr
 
 
 if __name__ == '__main__':

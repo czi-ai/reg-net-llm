@@ -6,16 +6,43 @@ while [[ $# -gt 0 ]]; do
     --cell-type) CELL_TYPE="$2"; shift 2 ;;
     --raw-data-dir) RAW_DATA_DIR="$2"; shift 2 ;;
     --out-dir) OUT_DIR="$2"; shift 2 ;;
+    --quantize_metacells) QUANTIZE_METACELLS="$2"; shift 2 ;;
     --aracne-top-n-hvg) ARACNE_TOP_N_HVG="$2"; shift 2 ;;
     --aracne-path) ARACNE_PATH="$2"; shift 2 ;;
     --regulators-path) REGULATORS_PATH="$2"; shift 2 ;;
-    --index-vars) INDEX_VARS="$2"; shift 2 ;;
+    --group-by) GROUP_BY="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
     --perturbed) PERTURBED="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
+# Parse args for python input
+if [[ -n "$ARACNE_TOP_N_HVG" && "${ARACNE_TOP_N_HVG,,}" != "false" ]]; then
+  ARACNE_ARG="--aracne_top_n_hvg $ARACNE_TOP_N_HVG"
+else
+  ARACNE_ARG=""
+fi
+
+if [[ -n "$QUANTIZE_METACELLS" && "${QUANTIZE_METACELLS,,}" != "false" ]]; then
+  QUANTIZE_METACELLS_ARG="--quantize_metacells"
+else
+  QUANTIZE_METACELLS_ARG=""
+fi
+
+if [[ -n "$GROUP_BY" && "${GROUP_BY,,}" != "false" ]]; then
+  GROUP_BY_ARG="--group_by $GROUP_BY"
+else
+  GROUP_BY_ARG=""
+fi
+
+if [[ -n "$PERTURBED" && "${PERTURBED,,}" != "false" ]]; then
+  PERTURBED_ARG="--perturbed"
+else
+  PERTURBED_ARG=""
+fi
+
+# Other variables
 preprocess=true
 aracne=true
 min_total_subnets=50
@@ -31,30 +58,18 @@ mamba activate scllm
 echo "Processing ${CELL_TYPE}..."
 start_time=$(date +%s)
 if $preprocess; then
-    if [[ "$ARACNE_TOP_N_HVG" == "null" ]]; then # consider all genes
-        python $preprocess_path \
-            --data_path "${RAW_DATA_DIR}/${CELL_TYPE}/partitions" \
-            --out_dir "${OUT_DIR}/${CELL_TYPE}" \
-            --save_metacells \
-            --sample_index_vars $INDEX_VARS \
-            --aracne_min_n 250 \
-            --aracne_dirname $aracne_dirname \
-            --n_bins 250 \
-            --dataset $DATASET \
-            --perturbed $PERTURBED
-    else # Consider ARACNE_TOP_N_HVG genes (no ARACNE_TOP_N_HVG argument passed)
-        python $preprocess_path \
-            --data_path "${RAW_DATA_DIR}/${CELL_TYPE}/partitions" \
-            --out_dir "${OUT_DIR}/${CELL_TYPE}" \
-            --save_metacells \
-            --sample_index_vars $INDEX_VARS \
-            --aracne_min_n 250 \
-            --aracne_dirname $aracne_dirname \
-            --n_bins 250 \
-            --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
-            --dataset $DATASET \
-            --perturbed $PERTURBED
-    fi
+    python $preprocess_path \
+        --data_path "${RAW_DATA_DIR}/${CELL_TYPE}/partitions" \
+        --out_dir "${OUT_DIR}/${CELL_TYPE}" \
+        --aracne_dirname $aracne_dirname \
+        --dataset $DATASET \
+        --aracne_min_n 250 \
+        --n_bins 100 \
+        --save_metacells \
+        $QUANTIZE_METACELLS_ARG \
+        $ARACNE_ARG \
+        $GROUP_BY_ARG \
+        $PERTURBED_ARG
 
     # Check if the command succeeded
     if [ $? -eq 0 ]; then

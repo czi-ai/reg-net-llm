@@ -38,9 +38,9 @@ def load(file):
     with open(file, "rb") as ifl:
         return pickle.load(ifl)
 
-def run_save(
+def run_cache(
         network, 
-        ranks, 
+        expression, 
         global_gene_to_node, 
         cache_dir, 
         overwrite, 
@@ -49,30 +49,31 @@ def run_save(
         cell_type, 
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
+        only_expressed_genes=True,
         skipped=0, 
         ncells=0, 
         verbose=False
     ):
     """
-    Assign local aracne graph to each cell and cache each cell
+    Assign local ARACNe graph to each cell and cache each cell
     """
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
     # remove unknown genes
-    ranks = ranks[ranks.columns[ranks.columns.isin(global_gene_to_node)]]
+    expression = expression[expression.columns[expression.columns.isin(global_gene_to_node)]]
     # remove edges due to unknown genes
     network = network[
         network[REG_VALS].isin(global_gene_to_node) & 
         network[TAR_VALS].isin(global_gene_to_node)
     ]
     network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
-    common_genes = list(set(network_genes).intersection(set(ranks.columns)))
-    ranks = ranks.loc[:, common_genes]
+    common_genes = list(set(network_genes).intersection(set(expression.columns)))
+    expression = expression.loc[:, common_genes]
 
-    for i in range(ranks.shape[0]):
+    for i in range(expression.shape[0]):
         if ncells % 1000 == 0:
             print(f"Processed {ncells} cells", end="\r")
 
-        cell_number = ranks.index[i]
+        cell_number = expression.index[i]
         
         if msplit == "valSG":
             rand = rng.random()
@@ -88,12 +89,12 @@ def run_save(
             ncells+=1
             continue
         
-        cell: pd.Series = ranks.iloc[i, :]
+        cell: pd.Series = expression.iloc[i, :]
         # filter out genes with 0 expression
-        ZERO_EXPRESSION_RANK = 0
-        cell = cell[cell != ZERO_EXPRESSION_RANK]
+        if only_expressed_genes:
+            cell = cell[cell != ZERO_IDX]
 
-        if cell.shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
+        if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
             skipped += 1
             ncells+=1
             continue
@@ -118,9 +119,9 @@ def run_save(
 
         edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
         edge_weights = torch.tensor(np.array(edges[MI_VALS]))
-        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
+        node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
         data = Data(
-            x=node_indices, 
+            x=node_expression, 
             edge_index=edge_list, 
             edge_weight=edge_weights
         )
@@ -138,7 +139,25 @@ def run_save(
     return (skipped, ncells)
 
 
-def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]], gene_to_node_file:str, cache_dir:str, overwrite:bool=False, single=False, valsg_split_ratio = 0.2): # 0.2 makes it closer to equal size btween SG and HOG
+def cache_aracane_and_bins(
+        aracne_outdir_info : List[List[str]], 
+        gene_to_node_file:str, 
+        cache_dir:str, 
+        overwrite:bool=False, 
+        single=False, 
+        valsg_split_ratio = 0.2 # 0.2 makes it closer to equal size between SG and HOG
+    ):
+    """ 
+    Calls run_cache() function. Transforms and caches the cell-types' ARACNe graphs with their corresponding expression bins.
+
+    Args:
+        aracne_outdir_info (List[List[str]]): Array of shape (num cell-types, 2), will be (1, 2) if single == True, where the first element of each pair is the path to that cell-type's aracne directory (i.e. .../endocrine_cell/aracne_4096) and the second element is the dataset (valSG or valHOG)
+        gene_to_node_file (str): Path to the file containing all ENSEMBL genes along with their associated token, this file also houses the PAD and MASK token assignments
+        cache_dir (str): Path to which the cached files will be stored (in specified sub-directories that are created)
+        overwrite (bool, optional): Defaults to False.
+        single (bool, optional): Whether the provided information is to process a single cell-type (often used in parallelization where each cell-type is processed individually). Defaults to False.
+        valsg_split_ratio (float, optional): Ratio of valSG-marked cells to store in the validation set rather than the training set. Defaults to 0.2.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         
@@ -148,12 +167,32 @@ def transform_and_cache_aracane_graph_ranks(aracne_outdir_info : List[List[str]]
         skipped = 0
         ncells = 0
         
-        if single: # Run on a single cell-type
-            print("Caching", aracne_outdir_info[0][0].split("/")[-2])
-            skipped, ncells = run_save(aracne_outdir_info[0], global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
-        # else:
-        #     for i in aracne_outdir_info:
-        #         skipped, ncells = run_save(i, global_gene_to_node, cache_dir, overwrite, valsg_split_ratio, skipped, ncells)
+        # msplit, ####
+        # min_genes_per_graph=MIN_GENES_PER_GRAPH, ####
+        # max_seq_length=None, ####
+        
+        for outdir_info in aracne_outdir_info: # If single==True, then this will only run once (for that single cell-type)
+            cell_type = outdir_info[0].split('/')[-2] # Get the cell-type's name that is currently being cached
+            print(f"Caching: {cell_type}...")
+            
+            aracne_out = outdir_info[0]
+            network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t") # Get the ARACNe network for this cell-type
+            expression = pd.read_csv(str(Path(aracne_out).parents[0]) + "/binned_expression.csv") # Get expression (most likely in binned format)
+
+            skipped, ncells = run_cache(
+                network=network, 
+                expression=expression, 
+                global_gene_to_node=global_gene_to_node, 
+                cache_dir=cache_dir, 
+                overwrite=overwrite, 
+                msplit=outdir_info[1], # Change this to seen_graph
+                valsg_split_ratio=valsg_split_ratio, 
+                cell_type=cell_type, 
+                min_genes_per_graph=MIN_GENES_PER_GRAPH,
+                max_seq_length=None,
+                skipped=skipped, 
+                ncells=ncells
+            )
 
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")
@@ -188,10 +227,9 @@ class GraphTransformerDataset(torchDataset):
             both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
         # mask the tensors
-        #node_indices[gene_mask, 0] = MASK_IDX
-        node_indices[rank_mask, 1] = MASK_IDX + NUM_GENES
-        node_indices[both_mask, :] = torch.tensor([MASK_IDX, MASK_IDX + NUM_GENES], 
-                                                  dtype=node_indices.dtype)
+        # node_indices[gene_mask, 0] = MASK_GENE_IDX
+        node_indices[rank_mask, 1] = MASK_RANK_IDX
+        # node_indices[both_mask, :] = torch.tensor([MASK_GENE_IDX, MASK_RANK_IDX], dtype=node_indices.dtype)
         
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
@@ -263,11 +301,11 @@ if __name__ == "__main__":
     if debug:
         print("DEBUG")
         for arg in args_list:
-            transform_and_cache_aracane_graph_ranks(*arg)
-    elif single_index: # Single is equal to any non-zero value (the index)
+            cache_aracane_and_bins(*arg)
+    elif (single_index) or (single_index == 0): # An index value has been given - corresponding to a specific cell-type to be process individually
         print("SINGLE CACHE")
-        transform_and_cache_aracane_graph_ranks([aracane_metadata[single_index-1]], args.gene_to_node_file, args.cache_dir, single=True)
+        cache_aracane_and_bins(aracane_metadata[single_index].reshape(1, 2), args.gene_to_node_file, args.cache_dir, single=True)
     else:
         print("RUNNING MULTI-THREADED")
         with Pool(num_proc) as p:
-            p.starmap(transform_and_cache_aracane_graph_ranks, args_list)
+            p.starmap(cache_aracane_and_bins, args_list)
