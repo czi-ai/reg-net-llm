@@ -17,13 +17,13 @@ class LitScGraphLLM(pl.LightningModule):
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_IDX
+            padding_idx=PAD_GENE_IDX
         )
         
         self.rank_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_ranks, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_IDX
+            padding_idx=PAD_RANK_IDX
         )
         #self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
@@ -143,19 +143,17 @@ class GDTransformer(LitScGraphLLM):
                         fine_tuning=self.tconfig.fine_tuning,
                     )   
                 )
-        self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
-                                                 config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
         
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_IDX
+            padding_idx=PAD_GENE_IDX
         )
         
         self.rank_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_ranks, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_IDX
+            padding_idx=PAD_RANK_IDX
         )
         
         #self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)

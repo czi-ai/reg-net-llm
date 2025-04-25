@@ -5,7 +5,7 @@
 #SBATCH --time=5-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
-#SBATCH --gpus=8
+#SBATCH --gpus=h100:8
 #SBATCH -p gpu
 
 # Display all variables set by slurm

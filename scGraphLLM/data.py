@@ -199,7 +199,7 @@ def cache_aracane_and_bins(
 
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.1, debug:bool=False, ):
+    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.3, debug:bool=False, ):
         self.debug = debug
         self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
         self.dataset_name = dataset_name
@@ -208,8 +208,6 @@ class GraphTransformerDataset(torchDataset):
         print(f"Observation Count: {len(self):,}")
 
     def __len__(self):
-        if self.debug:
-            return 1000
         return len(self.cached_files)
 
     def __getitem__(self, idx):

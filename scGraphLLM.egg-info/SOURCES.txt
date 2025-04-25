@@ -20,4 +20,5 @@ scGraphLLM.egg-info/PKG-INFO
 scGraphLLM.egg-info/SOURCES.txt
 scGraphLLM.egg-info/dependency_links.txt
 scGraphLLM.egg-info/top_level.txt
+test/test_cache.py
 test/test_preprocess.py

@@ -25,8 +25,8 @@ class Config(dict):
 node_hyperparams = Config({
     "num_ranks": NUM_RANKS, 
     "num_genes": NUM_GENES, 
-    "node_embedding_dim": 128,
-    "num_hvgs": 1024,
+    "node_embedding_dim": 256,
+    "num_hvgs": 4096,
     "freeze_encoder": False
 })
 
@@ -102,6 +102,18 @@ graph_kernel_attn_6L_config = Config({
     "num_encoder_layers": 6,
     "activation": "gelu",
     "dropout": 0.1,
+    "batch_first": True,
+    "use_pe": False,
+    "use_attn_mask": True,
+    "use_flash_attn": True
+})
+
+graph_kernel_attn_10L_config = Config({
+    "transformer_dim": transformer_dim,
+    "num_heads": 8,
+    "num_encoder_layers": 10,
+    "activation": "gelu",
+    "dropout": 0.3,
     "batch_first": True,
     "use_pe": False,
     "use_attn_mask": True,
@@ -604,14 +616,14 @@ graph_kernel_attn_2048 = Config({
 })
 
 graph_kernel_attn_4096 = Config({
-    "model": models.GDTransformer, # models.LitScGraphLLM,#
+    "model": models.GDTransformer,
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096_META/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096_META/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096_META/valHOG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/valHOG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],
@@ -622,7 +634,7 @@ graph_kernel_attn_4096 = Config({
     "trainer_config":Config({
         "max_epochs" : 10,
         "accelerator" : "gpu",
-        "max_time": "05:00:00:00",
+        "max_time": "07:00:00:00",
         "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
@@ -696,6 +708,52 @@ graph_kernel_attn_3L_4096 = Config({
 })
 
 graph_kernel_attn_6L_4096 = Config({
+    "model": models.GDTransformer, # models.LitScGraphLLM,#
+    "model_config": node_hyperparams,
+    "transformer_config": graph_kernel_attn_6L_config,
+    "data_config":Config({
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/cxg_cache_4096/valHOG", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
+        "num_workers": 1,
+        "batch_size": 8
+    }),
+    "trainer_config":Config({
+        "max_epochs" : 100,
+        "accelerator" : "gpu",
+        "max_time": "01:00:00:00",
+        "devices" : 1,
+        "precision":"bf16",
+        "num_sanity_val_steps" : 0,
+        "log_every_n_steps" : 1,
+        "val_check_interval":0.05,
+        "checkpoint_config": {
+                                "save_top_k": -1, # Save all checkpoints
+                                "every_n_train_steps" : 5000 # Save every 5000 training steps
+                            }
+    }),
+    "loss_config":Config({
+        "loss":"mlm"
+    }),
+    "optim_config":Config({
+        "optimizer": torch.optim.Adam,
+        "args":{
+            "lr": 0.0001,
+            "betas": [0.9, 0.999]
+         }
+    }),
+    "repo_name":"scGraphLLM",
+    "wandb_user":"aqlab",
+    "wandb_project":"scGraphLLM",
+})
+
+
+graph_kernel_attn_6L_4096_no_gene_pred = Config({
     "model": models.GDTransformer, # models.LitScGraphLLM,#
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_6L_config,

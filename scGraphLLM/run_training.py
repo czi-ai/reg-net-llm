@@ -3,7 +3,6 @@ from data import *
 from pathlib import Path
 import json 
 import os
-from data import AracneGraphWithRanksDataset
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
@@ -173,11 +172,7 @@ def main(args):
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         litmodel = model_fn(mconfig)
-        
-        # print(torchsummary.summary(litmodel, input_size=(3, 224, 224)))
-        
         trainer.fit(litmodel, train_dataloaders = train_transformer_dl, val_dataloaders = val_transformer_dl)
-        # trainer.validate(model=litmodel, dataloaders=val_dl)
 
     elif mode == "resume":
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
