@@ -12,12 +12,14 @@ from typing import Dict
 from torch_geometric.utils import negative_sampling
 import lightning.pytorch as pl
 
-from scGraphLLM.data import *
-from scGraphLLM.GNN_modules import GATEncoder 
-from scGraphLLM.MLP_modules import LinkPredictHead
-from scGraphLLM._globals import *
+
+
+from data import *
+from GNN_modules import GATEncoder 
+from MLP_modules import LinkPredictHead
+from _globals import *
 # from scGraphLLM.flash_transformer import GDTransformer
-from scGraphLLM.config import *
+from config import *
 
 import torch
 import torch.nn as nn
@@ -481,7 +483,7 @@ def main(args):
         if args.task == "link":
             embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/embedding.npz"
         elif args.task == "mgm":
-            embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scglm/aracne_4096_masked_002/embedding.npz"
+            embedding_path_format = "/hpc/mydata/mingxuan.zhang/data/scGPT/human_immune/{}/embeddings/scglm/embedding.npz"
     elif args.model == "scgpt":
         embedding_path_format = "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{}/embeddings/scgpt/embedding.npz"
     elif args.model == "scf":

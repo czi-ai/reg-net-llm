@@ -306,7 +306,7 @@ class FlashMHASelfMaskKV(nn.Module):
             self.rot_emb = RotaryEmbeddingESM(self.head_dim)
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
         if fine_tuning:
-            self.perturb_emb = PerturbEmbedding(max_hop=4, embed_dim=self.d_model, 
+            self.perturb_emb = PerturbEmbedding(max_hop=3, embed_dim=self.d_model, 
                                             hidden_dim=100, output_dim=self.d_model)
 
     def forward(self, q, k,v, key_padding_mask=None, 

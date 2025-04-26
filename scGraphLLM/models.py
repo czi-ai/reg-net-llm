@@ -4,19 +4,16 @@ import torch.nn.functional as F
 from torch_geometric.utils import negative_sampling
 import lightning.pytorch as pl
 
-from scGraphLLM.GNN_modules import *
-from scGraphLLM.MLP_modules import *
-from scGraphLLM._globals import * ## these define the indices for the special tokens 
-from scGraphLLM.transformer_modules import *
+from GNN_modules import *
+from MLP_modules import *
+from _globals import * ## these define the indices for the special tokens 
+from transformer_modules import *
 
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
-
-        #self.link_prediction_head = LinkPredictHead(config.model_config.node_embedding_dim * 2, 1)
         self.node_embedding = torch.nn.Embedding(config.model_config.num_genes + config.model_config.num_ranks, 
                                                  config.model_config.node_embedding_dim, padding_idx=PAD_IDX)
-        #self.gene_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_genes)
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
@@ -244,32 +241,39 @@ class Perturb_GDTransformer(GDTransformer):
         if config.model_config.freeze_encoder:
             for param in self.transformer_encoder.parameters():
                 param.requires_grad = False
+        
+        self.linear_proj = nn.Linear(1, config.model_config.node_embedding_dim * 2)
 
     def forward(self, batch):
-        x_c = batch["ctrl_exp"]
-        x_p = batch["perturb_exp"]
-        r_p = batch['perturb_one_hot']
-        edge_index_list = batch["edge_index"]
-        num_nodes_list = batch["num_nodes"]
+        x_c = batch['control']['orig_rank_indices']
+        x_p = batch['perturbed']['orig_rank_indices']
+        r_p = torch.stack(batch['perturbed']['perturbation'], dim=0)
+        
+        print(x_c)
+        edge_index_list = batch['control']["edge_index"]
+        num_nodes_list = batch['control']["num_nodes"]
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None
         
-        ctrl_exp_embedding = self.node_embedding(x_c)
+        x_in = x_c.view(-1, 1).float().to(torch.bfloat16)
+        exp_embedding = self.linear_proj(x_in).view(x_c.shape[0], x_c.shape[1], -1)
+        
         
         if self.tconfig.num_encoder_layers == 1:
-            pert_exp_embedding = self.transformer_encoder(ctrl_exp_embedding, p=pe, 
+            exp_embedding = self.transformer_encoder(exp_embedding, p=pe, 
                                                      edge_index_list=edge_index_list, 
                                                      num_nodes_list=num_nodes_list,
                                                      perturb_one_hot=r_p)
         else:
             for encoder_layer in self.transformer_encoder:
-                pert_exp_embedding = encoder_layer(ctrl_exp_embedding, p=pe, 
-                                               edge_index_list=edge_index_list, 
-                                               num_nodes_list=num_nodes_list,
-                                               perturb_one_hot=r_p)
-        x_p_hat = self.expression_pred_head(pert_exp_embedding).squeeze()
+                exp_embedding = encoder_layer(exp_embedding, p=pe, 
+                                              edge_index_list=edge_index_list, 
+                                              num_nodes_list=num_nodes_list,
+                                              perturb_one_hot=r_p)
+        x_p_hat = self.expression_pred_head(exp_embedding).squeeze()
         assert x_p_hat.shape == x_p.shape
         return x_c, x_p, x_p_hat
     
+    # might need linear runtime version
     def MMD(self, x_p, x_p_hat, bandwidth=1.0):
         gamma = 1.0 / (2 * bandwidth**2)
         yy = torch.cdist(x_p, x_p, p=2)**2
@@ -283,6 +287,24 @@ class Perturb_GDTransformer(GDTransformer):
         
         return k_xx.mean() + k_yy.mean() - 2 * k_xy.mean()
     
+    # notice that variance is shrinked in this
+    def MMD_lin_time(self, x_p, x_p_hat, bandwidth=1.0):
+        gamma = 1.0 / (2 * bandwidth**2)
+        if x_p.shape[0] % 2 != 0:
+            x_p = x_p[:-1]
+        if x_p_hat.shape[0] % 2 != 0:
+            x_p_hat = x_p_hat[:-1]
+
+        x1, x2 = x_p[0::2], x_p[1::2]
+        y1, y2 = x_p_hat[0::2], x_p_hat[1::2]
+
+        k_xx = torch.exp(-gamma * ((x1 - x2) ** 2).sum(dim=1))
+        k_yy = torch.exp(-gamma * ((y1 - y2) ** 2).sum(dim=1))
+        k_xy1 = torch.exp(-gamma * ((x1 - y2) ** 2).sum(dim=1))
+        k_xy2 = torch.exp(-gamma * ((x2 - y1) ** 2).sum(dim=1))
+        return (k_xx + k_yy - k_xy1 - k_xy2).mean()
+        
+    
     def ATE_alignment(self, x_c, x_p, x_p_hat):
         # expectation over cells
         ate_gt = torch.abs(x_p - x_c).mean()
@@ -290,7 +312,7 @@ class Perturb_GDTransformer(GDTransformer):
         return 1 - torch.dot(ate_gt, ate_pred) / (torch.norm(ate_gt) * torch.norm(ate_pred))
         
     def fine_tune_loss(self, x_c, x_p, x_p_hat, bandwidth=1.0):
-        mmd = self.MMD(x_p, x_p_hat, bandwidth)
+        mmd = self.MMD_lin_time(x_p, x_p_hat, bandwidth)
         ate_align = self.ATE_alignment(x_c, x_p, x_p_hat)
         loss = mmd + ate_align
         return loss, mmd, ate_align

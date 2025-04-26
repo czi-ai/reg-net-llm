@@ -21,23 +21,6 @@ from config import *
 from torch_geometric.loader import DataLoader
 from wandb_checkpoint import SaveModelEveryNSteps
 
-
-def collate_fn(batch):
-    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
-            "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
-            "perturb_regime": [], "dataset_name" : []}
-    
-    # Make a dictionary of lists from the list of dictionaries
-    for b in batch:
-        for key in data.keys():
-            data[key].append(b[key])
-
-    # Pad these dictionaries of lists
-    for key in data.keys():
-        if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
-            data[key] = pad_sequence(data[key], batch_first=True)
-    return data
-
 torch.set_float32_matmul_precision('medium')
 user = os.environ["USER"]
 filesystem = f"/hpc/mydata/{user}"
@@ -60,20 +43,8 @@ def main(args):
     name = args.name
     version = args.version
     
-    if mode == "debug":
-        ### run a minimal debug run to make sure everything is working
-        print("***debug***")
-        mconfig.trainer_config.max_epochs=1
-        mconfig.data_config.train["debug"] = True
-        for i in range(len(mconfig.data_config.val)):
-            mconfig.data_config.val[i]["debug"] = True
-        mconfig.data_config.num_workers=1
-        mconfig['wandb_project']='debug'
-        name = "debug"
-        mconfig['trainer_config']['devices']=1
-        if "strategy" in mconfig.trainer_config:
-            del mconfig['trainer_config']['strategy']
-    elif mode == "train":
+   
+    if mode == "train":
         name = f"{name}_fine_tuned"
     
     if version is None:
@@ -81,23 +52,15 @@ def main(args):
         current_time_UTC = time.strftime("%Y-%m-%d@%H:%M:%S", time.gmtime(timestamp))
         version = f"{name}:{current_time_UTC}"
     
-    project = mconfig['wandb_project']
-    repo_name = mconfig['repo_name']
+    project = "perturb_fine_tune_scGraphLM"
+    #repo_name = mconfig['repo_name']
     root_dir = f"{filesystem}/GLM/model_fine_tune_out"
     run_dir = Path(f"{root_dir}/{version}")
-    ## don't overwrite existing runs
-    if run_dir.exists() and (mode not in {"resume", "validate"}):
-        raise NotImplementedError(f"run_dir {str(run_dir)} already exists, bad input ")
     run_dir.mkdir(exist_ok=True, parents=True)
-    
-    
-    mconfig["slurm_jobid"] = os.getenv("SLURM_JOBID")
-    with open(f"{str(run_dir)}/mconfig_used.json", 'wb+') as m_stream:
-        pickle.dump(mconfig, m_stream)
     
     print("loading fine-tune data...")
 
-    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
+    transformer_data_module = PerturbationDataModule(mconfig.data_config)
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
     print("data loaded")
@@ -109,17 +72,6 @@ def main(args):
     copy_checkpoints = True
     
     if mode == 'train':
-        callbacks = []
-        if "checkpoint_config" in trainer_conf:
-            check_point_conf = trainer_conf['checkpoint_config']
-            check_point_conf["dirpath"] = f"{run_dir}/checkpoints/"
-            check_point_conf["filename"] = f"{{epoch}}-{{step}}"
-            callbacks.append(ModelCheckpoint(**check_point_conf)) 
-        
-        if "early_stopping" in trainer_conf:
-            callbacks.append(EarlyStopping(**trainer_conf['early_stopping']))
-        
-        trainer_conf['callbacks'] = callbacks
         
         wblg = WandbLogger(project = mconfig['wandb_project'],
                     name = name,
@@ -131,13 +83,17 @@ def main(args):
         trainer_conf['logger'] = wblg
     
     wandb.init(project=mconfig['wandb_project'], name=name)
+    
     if mode == 'train':
+        if "checkpoint_config" in trainer_conf:
+            del trainer_conf["checkpoint_config"]
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         pre_trained_path = args.ckpt_path
-        
-        # load pre-trained weights
-        checkpoint = torch.load(pre_trained_path, weights_only=False)["state_dict"]
-        fine_tune_model = model_fn.load_from_checkpoint(checkpoint, strict=False)
+        print("loading pre-trained weights...")
+        #checkpoint = torch.load(pre_trained_path, weights_only=False)["state_dict"]
+        print(model_fn)
+        fine_tune_model = model_fn.load_from_checkpoint(pre_trained_path, config=graph_kernel_attn_4096, strict=False)
+        print("pre-trained weights loaded")
         
         # fine-tune with separate trainer
         trainer.fit(fine_tune_model, train_dataloaders = train_transformer_dl, 
@@ -155,6 +111,9 @@ def main(args):
             print("Fine Tuning Completed Succsessfully.")
         
 if __name__ == "__main__":
+    mconfig_str = args.fine_tune_config
+    mconfig = eval(mconfig_str)
+    args.fine_tune_config = mconfig
     main(args)
     
     
