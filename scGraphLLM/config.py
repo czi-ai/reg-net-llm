@@ -620,10 +620,10 @@ graph_kernel_attn_4096 = Config({
     "model_config": node_hyperparams,
     "transformer_config": graph_kernel_attn_config,
     "data_config":Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_4096/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/valSG", "dataset_name":"valSG"}),
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/valHOG", "dataset_name":"valHOG"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_4096/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_4096/valHOG", "dataset_name":"valHOG"})
             ],
         "test": [
             ],
@@ -639,12 +639,59 @@ graph_kernel_attn_4096 = Config({
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 50,
-        "val_check_interval":0.05,
+        "val_check_interval": 0.05,
         "num_nodes":  1,
         "strategy" :"ddp_find_unused_parameters_true",
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints
-                                "every_n_train_steps" : 1000 # Save every 5000 training steps
+                                "every_n_train_steps" : 1000 # Save every 1000 training steps
+                            }
+    }),
+    "loss_config":Config({
+        "loss":"mlm"
+    }),
+    "optim_config":Config({
+        "optimizer": torch.optim.Adam,
+        "args":{
+            "lr": 0.0001,
+            "betas": [0.9, 0.999]
+         }
+    }),
+    "repo_name":"scGraphLLM",
+    "wandb_user":"aqlab",
+    "wandb_project":"scGraphLLM",
+})
+
+graph_kernel_attn_4096_TEST = Config({
+    "model": models.GDTransformer,
+    "model_config": node_hyperparams,
+    "transformer_config": graph_kernel_attn_config,
+    "data_config":Config({
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/train", "dataset_name": "train"}),  # NOTE: bc we are reading from disk each time, we need to cache in /pmglocal
+        "val": [
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/valSG", "dataset_name":"valSG"}),
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/meta_cell/cxg_TEST/valHOG", "dataset_name":"valHOG"})
+            ],
+        "test": [
+            ],
+        "run_test":False, 
+        "num_workers": 8,
+        "batch_size": 8
+    }),
+    "trainer_config":Config({
+        "max_epochs" : 10,
+        "accelerator" : "gpu",
+        "max_time": "07:00:00:00",
+        "devices" : 1,
+        "precision":"bf16",
+        "num_sanity_val_steps" : 0,
+        "log_every_n_steps" : 50,
+        "val_check_interval": 0.05,
+        "num_nodes":  1,
+        "strategy" :"ddp_find_unused_parameters_true",
+        "checkpoint_config": {
+                                "save_top_k": -1, # Save all checkpoints
+                                "every_n_train_steps" : 1000 # Save every 1000 training steps
                             }
     }),
     "loss_config":Config({

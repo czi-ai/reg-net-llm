@@ -1,0 +1,18 @@
+{"time":"2025-04-24T21:45:13.791273302-07:00","level":"INFO","msg":"using version","core version":"0.18.3"}
+{"time":"2025-04-24T21:45:13.791291702-07:00","level":"INFO","msg":"created symlink","path":"/hpc/mydata/leo.dupire/GLM/scGraphLLM/wandb/run-20250424_214513-bf691ajw/logs/debug-core.log"}
+{"time":"2025-04-24T21:45:13.793128534-07:00","level":"ERROR","msg":"dialing: google: could not find default credentials. See https://cloud.google.com/docs/authentication/external/set-up-adc for more information"}
+{"time":"2025-04-24T21:45:13.813907373-07:00","level":"INFO","msg":"created new stream","id":"bf691ajw"}
+{"time":"2025-04-24T21:45:13.813922703-07:00","level":"INFO","msg":"stream: started","id":"bf691ajw"}
+{"time":"2025-04-24T21:45:13.813937217-07:00","level":"INFO","msg":"handler: started","stream_id":{"value":"bf691ajw"}}
+{"time":"2025-04-24T21:45:13.813972508-07:00","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"bf691ajw"}}
+{"time":"2025-04-24T21:45:13.814070505-07:00","level":"INFO","msg":"sender: started","stream_id":{"value":"bf691ajw"}}
+{"time":"2025-04-24T21:45:14.311643006-07:00","level":"INFO","msg":"wandb-core","!BADKEY":null}
+{"time":"2025-04-24T21:45:14.314577929-07:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-04-24T21:46:02.386307606-07:00","level":"INFO","msg":"stream: closing","id":"bf691ajw"}
+{"time":"2025-04-24T21:46:02.386429776-07:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-04-24T21:46:02.398120171-07:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-04-24T21:46:03.988497321-07:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-04-24T21:46:04.107469333-07:00","level":"INFO","msg":"handler: closed","stream_id":{"value":"bf691ajw"}}
+{"time":"2025-04-24T21:46:04.107489652-07:00","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"bf691ajw"}}
+{"time":"2025-04-24T21:46:04.107616613-07:00","level":"INFO","msg":"sender: closed","stream_id":{"value":"bf691ajw"}}
+{"time":"2025-04-24T21:46:04.109045588-07:00","level":"INFO","msg":"stream: closed","id":"bf691ajw"}

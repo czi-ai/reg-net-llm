@@ -45,7 +45,7 @@ def collate_fn(batch):
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
 # filesystem = os.environ["WHEREAMI"]
 user = os.environ["USER"]
-filesystem = f"/hpc/mydata/{user}/scGraphLLM/"
+filesystem = f"/hpc/mydata/{user}/GLM/scGraphLLM/"
 ## ^This makes it easier to switch between different machines;  WHEREAMI is set in the .bashrc file and is the location of where we store repos; 
 ## on manitou its /manitou/pmg/users/vss2134, exxmini its /data/vss2134, aws its /data and so on 
 
@@ -102,7 +102,7 @@ def main(args):
     ## setup output directory
     project = mconfig['wandb_project']
     repo_name = mconfig['repo_name']
-    root_dir = f"{filesystem}/GLM/model_out"
+    root_dir = f"{filesystem}/model_out"
     run_dir = Path(f"{root_dir}/{version}")
     ## don't overwrite existing runs
     # if run_dir.exists() and (mode not in {"resume", "validate"}):
