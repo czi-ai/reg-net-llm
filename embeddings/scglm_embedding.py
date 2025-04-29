@@ -83,22 +83,30 @@ def collate_fn(batch):
 
     return data
 
-def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit, valsg_split_ratio, cell_type, min_genes_per_graph=MIN_GENES_PER_GRAPH, max_seq_length=None, skipped=0, ncells=0, verbose=False):
+# TODO: merge with other run_save_function
+def run_save_(
+        network, 
+        ranks,
+        global_gene_to_node, 
+        cache_dir, 
+        overwrite, 
+        msplit, 
+        valsg_split_ratio, 
+        cell_type, 
+        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+        skipped=0, 
+        ncells=0, 
+        max_seq_length=None,
+        expressed_genes_only=False,
+        verbose=False,
+
+    ):
+    
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
 
-    # FIXME: we are exluding genes that don't appear in the network... should be union not intersection
-    # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
-    ranks = ranks + 2
-
-    # remove unknown genes
-    ranks = ranks[ranks.columns[ranks.columns.isin(global_gene_to_node)]]
-    # remove edges due to unknown genes
-    network = network[
-        network[REG_VALS].isin(global_gene_to_node) & 
-        network[TAR_VALS].isin(global_gene_to_node)
-    ]
-
-    network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
+    # make special tokens negative to avoid shifting ranks
+    ranks = ranks + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
+    network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
     common_genes = list(set(network_genes).intersection(set(ranks.columns)))
     ranks = ranks.loc[:, common_genes]
 
@@ -125,6 +133,7 @@ def run_save_(network, ranks, global_gene_to_node, cache_dir, overwrite, msplit,
 
         zero_expression_rank = cell.max()
         # print(f"Number of cells of zero expression rank {(cell == zero_expression_rank).sum()}")
+        # cell = cell[cell != 0]
         cell = cell[cell != zero_expression_rank] + NUM_GENES ## offset the ranks by global number of genes - this lets the same 
         # VS:
         # keep graph static across batches 
@@ -298,6 +307,7 @@ def main(args):
             print(f"Key {var} not in observational metadata...")
 
     print("Saving emeddings...")
+    # TODO: 1. Write embedding for each cell to embedding cache directory
     if args.use_masked_edges:
         masked_edges = get_edges_dict(masked_edges_list)
         non_masked_edges = get_edges_dict(non_masked_edges_list)
@@ -347,6 +357,7 @@ if __name__ == "__main__":
     args.emb_path = join(args.out_dir, "embedding.npz")
     args.emb_cache = join(args.out_dir, "cached_embeddings")
     args.cache_dir = join(args.out_dir, "cache")
+    args.emb_cache_dir = join(args.out_dir, "emb_cache")
     args.all_data_dir = join(args.cache_dir, "all")
     
     os.makedirs(args.out_dir, exist_ok=True)

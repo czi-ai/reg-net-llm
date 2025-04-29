@@ -1,105 +1,75 @@
 #!/bin/bash 
 
-# CXG_DIR="/hpc/projects/group.califano/GLM/data/cellxgene/data/cell_type_all"
-# CELL_TYPE="macrophage" # "astrocyte_of_the_cerebral_cortex"
-# ARACNE_TOP_N_HVG=1024
-
-CELL_TYPE=""
-DATA_DIR=""
-CXG_DIR=""
-OUT_DIR=""
-RANK_BY_Z=""
-ARACNE_TOP_N_HVG=""
-ARACNE_PATH=""
-
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --cell-type)
-      CELL_TYPE="$2"
-      shift # Remove --cell-type
-      shift
-      ;;
-    --data-dir)
-      DATA_DIR="$2"
-      shift # Remove --data-dir
-      shift
-      ;;
-    --cxg-dir)
-      CXG_DIR="$2"
-      shift # Remove --cxg-dir
-      shift
-      ;;
-    --out-dir)
-      OUT_DIR="$2"
-      shift # Remove --out-dir
-      shift
-      ;;
-    --rank-by-z)
-      RANK_BY_Z="$2"
-      shift # Remove --rank-by-z
-      shift
-      ;;
-    --aracne-top-n-hvg)
-      ARACNE_TOP_N_HVG="$2"
-      shift # Remove --aracne-top-n-hvg
-      shift
-      ;;
-    --aracne-path)
-      ARACNE_PATH="$2"
-      shift # Remove --aracne-path
-      shift
-      ;;
-    *)
-      echo "Unknown option: $1"
-      exit 1
-      ;;
+    --cell-type) CELL_TYPE="$2"; shift 2 ;;
+    --raw-data-dir) RAW_DATA_DIR="$2"; shift 2 ;;
+    --out-dir) OUT_DIR="$2"; shift 2 ;;
+    --quantize_metacells) QUANTIZE_METACELLS="$2"; shift 2 ;;
+    --aracne-top-n-hvg) ARACNE_TOP_N_HVG="$2"; shift 2 ;;
+    --aracne-path) ARACNE_PATH="$2"; shift 2 ;;
+    --regulators-path) REGULATORS_PATH="$2"; shift 2 ;;
+    --group-by) GROUP_BY="$2"; shift 2 ;;
+    --dataset) DATASET="$2"; shift 2 ;;
+    --perturbed) PERTURBED="$2"; shift 2 ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-PREPROCESS=true
-RUN_ARACNE=true
-MIN_TOTAL_SUBNETS=50
-ARACNE_DIRNAME=aracne_$ARACNE_TOP_N_HVG
-N_THREADS=4
+# Parse args for python input
+if [[ -n "$ARACNE_TOP_N_HVG" && "${ARACNE_TOP_N_HVG,,}" != "false" ]]; then
+  ARACNE_ARG="--aracne_top_n_hvg $ARACNE_TOP_N_HVG"
+else
+  ARACNE_ARG=""
+fi
+
+if [[ -n "$QUANTIZE_METACELLS" && "${QUANTIZE_METACELLS,,}" != "false" ]]; then
+  QUANTIZE_METACELLS_ARG="--quantize_metacells"
+else
+  QUANTIZE_METACELLS_ARG=""
+fi
+
+if [[ -n "$GROUP_BY" && "${GROUP_BY,,}" != "false" ]]; then
+  GROUP_BY_ARG="--group_by $GROUP_BY"
+else
+  GROUP_BY_ARG=""
+fi
+
+if [[ -n "$PERTURBED" && "${PERTURBED,,}" != "false" ]]; then
+  PERTURBED_ARG="--perturbed"
+else
+  PERTURBED_ARG=""
+fi
+
+# Other variables
+preprocess=true
+aracne=true
+min_total_subnets=50
+aracne_dirname=aracne_$ARACNE_TOP_N_HVG
+n_threads=4
+preprocess_path="../scGraphLLM/preprocess.py"
 
 # activate virtual environment
 module load mamba
 mamba activate scllm
 
-# Base paths
-regulators_path="$DATA_DIR"/regulators.txt
-preprocess_path="../scGraphLLM/preprocess.py"
-aracne=$ARACNE_PATH
-
 # Preprocess cell-type
 echo "Processing ${CELL_TYPE}..."
-
 start_time=$(date +%s)
-if $PREPROCESS; then
-    if $RANK_BY_Z_SCORE; then
-        OUT_DIR="$OUT_DIR"
-        python $preprocess_path \
-            --data_path "${CXG_DIR}/${CELL_TYPE}/partitions" \
-            --out_dir "${OUT_DIR}/${CELL_TYPE}" \
-            --save_metacells \
-            --sample_index_vars dataset_id donor_id tissue \
-            --aracne_min_n 250 \
-            --aracne_dirname $ARACNE_DIRNAME \
-            --n_bins 250 \
-            --aracne_top_n_hvg $ARACNE_TOP_N_HVG \
-            --rank_by_z_score
-    else
-        python $preprocess_path\
-            --data_path "${CXG_DIR}/${CELL_TYPE}/partitions" \
-            --out_dir "${OUT_DIR}/${CELL_TYPE}" \
-            --save_metacells \
-            --sample_index_vars dataset_id donor_id tissue \
-            --aracne_min_n 250 \
-            --aracne_dirname $ARACNE_DIRNAME \
-            --n_bins 250 \
-            --aracne_top_n_hvg $ARACNE_TOP_N_HVG
-    fi
+if $preprocess; then
+    python $preprocess_path \
+        --data_path "${RAW_DATA_DIR}/${CELL_TYPE}/partitions" \
+        --out_dir "${OUT_DIR}/${CELL_TYPE}" \
+        --aracne_dirname $aracne_dirname \
+        --dataset $DATASET \
+        --aracne_min_n 250 \
+        --n_bins 100 \
+        --save_metacells \
+        $QUANTIZE_METACELLS_ARG \
+        $ARACNE_ARG \
+        $GROUP_BY_ARG \
+        $PERTURBED_ARG
 
     # Check if the command succeeded
     if [ $? -eq 0 ]; then
@@ -111,15 +81,15 @@ fi
 
 echo -e "\n"
 
-if $RUN_ARACNE; then
+if $aracne; then
     # Generate ARACNe subnetworks for each cluster
-    counts_files=($(find "$OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME/counts/" -name "counts_*.tsv" | sort))
+    counts_files=($(find "$OUT_DIR/$CELL_TYPE/$aracne_dirname/counts/" -name "counts_*.tsv" | sort))
     n_clusters=${#counts_files[@]}
 
     if [ $n_clusters -eq 0 ]; then
         echo "No clusters detected for ${CELL_TYPE}. ARACNe step incomplete."
     else
-        n_subnets_per_cluster=$(((MIN_TOTAL_SUBNETS + $n_clusters) / $n_clusters))
+        n_subnets_per_cluster=$(((min_total_subnets + $n_clusters) / $n_clusters))
         n_total_subnets=$((n_clusters * n_subnets_per_cluster)) # make this ~50-100
         echo "Generating ${n_subnets_per_cluster} ARACNe subnetworks for ${n_clusters} clusters...${n_total_subnets} total subnetworks..."
         for file_path in "${counts_files[@]}"
@@ -127,31 +97,31 @@ if $RUN_ARACNE; then
             index=$(basename "$file_path" | sed 's/counts_\([0-9]*\)\.tsv/\1/')
             echo "Running ARACNe for ${file_path} (Cluster: $index)" 
             
-            $aracne \
+            $ARACNE_PATH \
                 -e $file_path \
-                -r $regulators_path \
-                -o $OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME \
+                -r $REGULATORS_PATH \
+                -o $OUT_DIR/$CELL_TYPE/$aracne_dirname \
                 -x $n_subnets_per_cluster \
                 -FDR \
                 --runid $index \
                 --alpha 0.05 \
                 --noConsolidate \
                 --seed 12345 \
-                --threads $N_THREADS
+                --threads $n_threads
         done
 
         echo "Consolidating ARACNe subnetworks for ${n_clusters} clusters of cell type: ${CELL_TYPE} "
-        $aracne \
-            -e $OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME/counts/counts.tsv \
-            -r $regulators_path \
-            -o $OUT_DIR/$CELL_TYPE/$ARACNE_DIRNAME \
+        $ARACNE_PATH \
+            -e $OUT_DIR/$CELL_TYPE/$aracne_dirname/counts/counts.tsv \
+            -r $REGULATORS_PATH \
+            -o $OUT_DIR/$CELL_TYPE/$aracne_dirname \
             -x $n_total_subnets \
             -FDR \
             --subsample 1.00 \
             --alpha 0.05 \
             --consolidate \
             --seed 12345 \
-            --threads $N_THREADS
+            --threads $n_threads
 
         # Check if the ARACNe command succeeded
         if [ $? -eq 0 ]; then
