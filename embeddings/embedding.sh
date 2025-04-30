@@ -82,13 +82,13 @@ for cell_type in "${immune_cell_types[@]}"; do
     
     python $scglm_embedding_script \
         --data_dir "$immune_cell_type_dir/$cell_type" \
-        --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/aracne_${ARACNE_N_HVG}_masked_0.45" \
-        --model_path /hpc/mydata/mingxuan.zhang/GLM/model_out/GLM_manitou_masked:2025-01-25@22:33:42/checkpoints/epoch=1-step=5000.ckpt \
+        --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/002_aracne_${ARACNE_N_HVG}" \
+        --model_path "/hpc/projects/group.califano/GLM/checkpoints/GK Transformer [noPE, 12Layer] 4096 - PRETRAIN:2025-04-29@19:09:59/checkpoints/epoch=0-step=1000.ckpt.ckpt" \
         --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv \
         --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
         --sample_n_cells 1000 \
-        --use_masked_edges \
-        --mask_ratio 0.45
+        # --use_masked_edges \
+        # --mask_ratio 0.45
 done
 
 
