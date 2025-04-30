@@ -24,10 +24,11 @@ warnings.filterwarnings("ignore")
 
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
-from scGraphLLM.preprocess import rank
+from scGraphLLM.preprocess import quantize_cells
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
+from scGraphLLM._globals import NUM_BINS
 from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions, save_embedding
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
@@ -83,109 +84,6 @@ def collate_fn(batch):
 
     return data
 
-# TODO: merge with other run_save_function
-def run_save_(
-        network, 
-        ranks,
-        global_gene_to_node, 
-        cache_dir, 
-        overwrite, 
-        msplit, 
-        valsg_split_ratio, 
-        cell_type, 
-        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
-        skipped=0, 
-        ncells=0, 
-        max_seq_length=None,
-        expressed_genes_only=False,
-        verbose=False,
-
-    ):
-    
-    os.makedirs(join(cache_dir, msplit), exist_ok=True)
-
-    # make special tokens negative to avoid shifting ranks
-    ranks = ranks + 2 # keep only genes in the network, and offset the ranks by 2 to account for the special tokens, so 2 now corresponds to rank 0(ZERO_IDX)
-    network_genes = list(set(network["regulator.values"].to_list() + network["target.values"].to_list()))
-    common_genes = list(set(network_genes).intersection(set(ranks.columns)))
-    ranks = ranks.loc[:, common_genes]
-
-    for i in range(ranks.shape[0]):
-        if ncells % 1000 == 0:
-            print(f"Processed {ncells} cells", end="\r")
-        cell_number = ranks.index[i]
-        
-        if msplit == "valSG":
-            rand = rng.random()
-            if rand > valsg_split_ratio:
-                split = "train"
-            else:
-                split = msplit
-        else:
-            split = msplit
-        
-        outfile = f"{cache_dir}/{split}/{cell_type}_{cell_number}.pt"
-        if (os.path.exists(outfile)) and (not overwrite):
-            ncells+=1
-            continue
-        
-        cell: pd.Series = ranks.iloc[i, :]
-
-        zero_expression_rank = cell.max()
-        # print(f"Number of cells of zero expression rank {(cell == zero_expression_rank).sum()}")
-        # cell = cell[cell != 0]
-        cell = cell[cell != zero_expression_rank] + NUM_GENES ## offset the ranks by global number of genes - this lets the same 
-        # VS:
-        # keep graph static across batches 
-        # cell = cell + NUM_GENES
-        # nn.Embedding be used for both gene and rank embeddings
-        if cell.shape[0] < min_genes_per_graph: # require a minimum number of genes per cell 
-            skipped += 1
-            ncells+=1
-            continue
-
-        # enforce max sequence length
-        if max_seq_length is not None and cell.shape[0] > max_seq_length:
-            cell = cell.nsmallest(max_seq_length)
-
-        # Subset network to only include genes in the cell
-        network_cell = network[
-            network[REG_VALS].isin(cell.index) & 
-            network[TAR_VALS].isin(cell.index)
-        ]
-
-        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-        # local_gene_to_node_index = global_gene_to_node
-        # each cell graph is disjoint from each other in terms of the relative position of nodes and edges
-        # so edge index is local to each graph for each cell.
-        # cell.index defines the order of the nodes in the graph
-        with warnings.catch_warnings(): # Suppress annoying pandas warnings
-            warnings.simplefilter("ignore") 
-            edges = network_cell[[REG_VALS, TAR_VALS, MI_VALS]]
-            edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
-            edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
-
-        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
-        edge_weights = torch.tensor(np.array(edges[MI_VALS]))
-        node_indices = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
-        data = Data(
-            x=node_indices, 
-            edge_index=edge_list, 
-            edge_weight=edge_weights
-        )
-        
-        torch.save(data, outfile)
-        ncells += 1
-        
-        if verbose:
-            try:
-                torch.load(outfile)
-                print(outfile)
-            except:
-                print(outfile, "-------- Failed")
-        
-    return (skipped, ncells)
-
 def get_edges_dict(edges_list):
     edges = {}
     i = 0
@@ -212,18 +110,18 @@ def main(args):
         X_masked, masked_indices = mask_values(adata.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
         adata.X = X_masked
     
-    
-    ranks, _ = rank(adata, n_bins=250, rank_by_z_score=True)
-    run_save_(
+    ranks = quantize_cells(adata.to_df(), n_bins=NUM_BINS, method="quantile")
+    run_cache(
         network=network, 
-        ranks=ranks, 
+        expression=ranks, 
         global_gene_to_node=global_gene_to_node, 
         cache_dir=args.cache_dir,
         overwrite=True, 
         msplit="all", 
         valsg_split_ratio=None, 
         cell_type="cell",
-        max_seq_length=args.max_seq_length, 
+        max_seq_length=args.max_seq_length,
+        only_expressed_genes=True,
         min_genes_per_graph=-1, 
         skipped=0, 
         ncells=0
