@@ -19,6 +19,13 @@ import scipy.sparse
 from scipy.sparse import issparse
 import scanpy as sc
 
+from utils import (
+    mask_values, 
+    get_locally_indexed_edges, 
+    get_locally_indexed_masks_expressions, 
+    save_embedding
+)
+
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
 ensg2hugo = gene_names_map.set_index("ensg.values")["hugo.values"].to_dict()
@@ -34,10 +41,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, required=True)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
+parser.add_argument("--retain_obs_vars", nargs="+", default=[])
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--scf_rootdir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
+parser.add_argument("--mask_fraction", type=float, default=None)
+parser.add_argument("--mask_value", type=float, default=1e-4)
+parser.add_argument("--max_seq_length", type=int, default=2048)
+parser.add_argument("--cache", action="store_true")
 args = parser.parse_args()
 
 # scFoundation imports
@@ -47,7 +59,7 @@ from get_embedding import main_gene_selection
 
 VOCAB_SIZE = 19264
 
-def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature, input_type, pre_normalized, tgthighres, output_type, pool_type):
+def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature, input_type, pre_normalized, tgthighres, output_type, pool_type, max_seq_length=None):
     #Inference
     geneexpemb = []
     batchcontainer = []
@@ -68,7 +80,19 @@ def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature,
                 data_gene_ids = torch.arange(VOCAB_SIZE+2, device=pretrain_gene_x.device).repeat(pretrain_gene_x.shape[0], 1)
             
             #Single cell
-            elif input_type == 'singlecell':   
+            elif input_type == 'singlecell':  
+                expr_series = gexpr_feature.iloc[i, :]
+                if pre_normalized == 'A':
+                    expr_values = expr_series.iloc[:-1]  # skip totalcount column
+                    totalcount = expr_series.iloc[-1]
+                else:
+                    expr_values = expr_series
+                    totalcount = expr_series.sum()
+
+                # # Truncate to top `max_len` expressed genes if specified
+                # if max_seq_length is not None and len(expr_values) > max_seq_length:
+                #     expr_values = expr_values.nlargest(max_seq_length).sort_index()
+
                 # pre-Normalization
                 if pre_normalized == 'F':
                     tmpdata = (np.log1p(gexpr_feature.iloc[i,:]/(gexpr_feature.iloc[i,:].sum())*1e4)).tolist()
@@ -93,7 +117,9 @@ def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature,
                     pretrain_gene_x = torch.tensor(tmpdata+[float(  tgthighres[1:]),np.log10(totalcount)]).unsqueeze(0).cuda()
                 else:
                     raise ValueError('tgthighres must be start with f, a or t')
+                
                 data_gene_ids = torch.arange(VOCAB_SIZE+2, device=pretrain_gene_x.device).repeat(pretrain_gene_x.shape[0], 1)
+
             # data_gene_ids = torch.arange(VOCAB_SIZE+2, device=pretrain_gene_x.device).repeat(pretrain_gene_x.shape[0], 1)
             value_labels = pretrain_gene_x > 0
             x, x_padding = gatherData(pretrain_gene_x, value_labels, pretrainconfig['pad_token_id'])
@@ -182,13 +208,16 @@ def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature,
                 raise ValueError('output_type must be cell or gene or gene_batch or gene_expression or raw')
     
     if output_type == "raw":
-        max_seq_length = max(emb.shape[1] for emb in geneexpemb)
+        # Remove last two tokens
+        trimmed_geneexpemb = [emb[:, :-2, :] for emb in geneexpemb]
+        max_seq_length = max(emb.shape[1] for emb in trimmed_geneexpemb)
         embeddings = np.concatenate([
             np.pad(emb, pad_width=((0, 0), (0, max_seq_length - emb.shape[1]), (0, 0)), 
                    mode="constant", constant_values=0)
-            for emb in geneexpemb
+            for emb in trimmed_geneexpemb
         ], axis=0)
-        return embeddings, position_gene_ids_list
+        gene_ids_list = [gene_ids[:,:-2] for gene_ids in position_gene_ids_list]
+        return embeddings, gene_ids_list
 
     geneexpemb = np.squeeze(np.array(geneexpemb))
     return geneexpemb
@@ -251,13 +280,27 @@ def load_model(model_path, version, output_type, rootdir):
 def main(args):
     # Load cells & translate to human symbol gene names
     data = sc.read_h5ad(args.cells_path)
+
+    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
+        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+    
+    data_original = data.copy()
+    if args.mask_fraction is not None:
+        data_original = data.copy()
+        X_masked, masked_indices = mask_values(data.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
+        data.X = X_masked
+
+    # convert to raw counts
+    # counts = sc.AnnData(
+    #     X=csc_matrix(adata.layers["counts"].astype(int)),
+    #     obs=adata.obs[["n_counts"]],
+    #     var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
+    # )
+
     data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
     data = data[:, ~data.var["symbol_id"].isna()]
     data.var.set_index("symbol_id")
     data.var_names = data.var["symbol_id"]
-
-    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
-        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
 
     data_df = data.to_df()
 
@@ -295,7 +338,7 @@ def main(args):
         output_type="raw",
         pool_type=None
     )
-
+    
     id_symbol_map = pd.Series(gexpr_feature.columns).to_dict()
     id_gene_map_vectorized = np.vectorize(lambda x: id_symbol_map.get(x))
     genes_list = [id_gene_map_vectorized(ids) for ids in symbol_ids]
@@ -307,35 +350,62 @@ def main(args):
                mode="constant", constant_values="<pad>")
         for g in genes_list
     ], axis=0)
+    # genes_ensg = [hugo2ensg_vectorized(genes) for genes in genes_list]
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
+    edges = get_locally_indexed_edges(genes_ensg, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
 
-    # get edges for each cell
-    edges = {}
-    for i, genes_i in enumerate(genes_ensg):
-        local_gene_to_node_index = {gene: i for i,gene in enumerate(genes_i)}
-        edges_i = network[
-            network[REG_VALS].isin(genes_i) & 
-            network[TAR_VALS].isin(genes_i)
-        ].assign(**{
-            REG_VALS: lambda df: df[REG_VALS].map(local_gene_to_node_index),
-            TAR_VALS: lambda df: df[TAR_VALS].map(local_gene_to_node_index),
-        })[[REG_VALS, TAR_VALS]].to_numpy().T
-        edges[i] = edges_i
+    # get original expression
+    expression = np.concatenate([
+        np.pad(data_original[i, genes[:seq_lengths[i]]].X.toarray(), 
+               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
+               mode="constant", constant_values=0)
+        for i, genes in enumerate(genes_ensg)
+    ], axis=0)
 
-    pass   
+    metadata = {}
+    for var in args.retain_obs_vars:
+        try:
+            metadata[var] = data_original.obs[var].tolist()
+        except KeyError:
+            print(f"Key {var} not in observational metadata...")
 
-    np.savez(
-        file=join(args.out_dir, "embedding.npz"), 
+    if args.mask_fraction is None:
+        save_embedding(
+            file=args.emb_path,
+            cache=args.cache,
+            cache_dir=args.emb_cache,
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            expression=expression,
+            edges=edges,
+            metadata=metadata
+        )
+        return
+    
+    masks, masked_expressions = get_locally_indexed_masks_expressions(data_original, masked_indices, genes_ensg)
+    save_embedding(
+        file=args.emb_path,
+        cache=args.cache,
+        cache_dir=args.emb_cache,
         x=embeddings,
         seq_lengths=seq_lengths,
-        edges=edges, 
-        allow_pickle=True
-    )
+        expression=expression,
+        edges=edges,
+        metadata=metadata,
+        masks=masks,
+        masked_expressions=masked_expressions
+    )                
+    
 
 if __name__ == "__main__":
     args.cells_path = join(args.data_dir, "cells.h5ad")
+    args.emb_path = join(args.out_dir, "embedding.npz")
+    args.emb_cache = join(args.out_dir, "cached_embeddings")
+
     os.makedirs(args.out_dir, exist_ok=True)
+    if args.cache:
+        os.makedirs(args.emb_cache, exist_ok=True)
     main(args)

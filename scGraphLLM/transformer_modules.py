@@ -32,8 +32,8 @@ import importlib
 import torch
 from typing import Tuple
 from einops import repeat
-from graph_op import _chebyshev_diffusion
-from MLP_modules import PerturbEmbedding
+from scGraphLLM.graph_op import _chebyshev_diffusion
+from scGraphLLM.MLP_modules import PerturbEmbedding
 
 
 def rotate_half(x):

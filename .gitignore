@@ -15,6 +15,8 @@ notebooks/preprocess_cancer_samples.ipynb
 model_out/*
 scripts/.ARACNe3_cached
 scripts/slurm_out
+scripts/ID_corrupted/corrupted_files
+scripts/ID_corrupted/out
 slurm_data_out/
 *slurm*
 */lightning_logs/*

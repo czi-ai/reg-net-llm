@@ -17,6 +17,13 @@ from os.path import join, dirname, abspath
 import warnings
 warnings.filterwarnings("ignore")
 
+from utils import (
+    mask_values, 
+    get_locally_indexed_edges, 
+    get_locally_indexed_masks_expressions, 
+    save_embedding
+)
+
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
 ensg2hugo = gene_names_map.set_index("ensg.values")["hugo.values"].to_dict()
@@ -34,11 +41,15 @@ parser.add_argument("--model_dir", type=str, required=True)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--scgpt_rootdir", type=str, required=True)
+parser.add_argument("--max_seq_length", type=int, default=2048)
 parser.add_argument("--sample_n_cells", type=int, default=None)
+parser.add_argument("--mask_fraction", type=float, default=None)
+parser.add_argument("--mask_value", type=float, default=1e-4)
+parser.add_argument("--retain_obs_vars", nargs="+", default=[])
+parser.add_argument("--cache", action="store_true")
 args = parser.parse_args()
 
 sys.path.append(args.scgpt_rootdir)
-from scgpt.tasks.cell_emb import embed_data
 from scgpt.data_collator import DataCollator
 from scgpt.model import TransformerModel
 from scgpt.tokenizer import GeneVocab
@@ -339,20 +350,27 @@ def embed_data(
 
 def main(args):
     data: sc.AnnData = sc.read_h5ad(args.cells_path)
+    
+    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
+        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
+
+    data_original = data.copy()
+    if args.mask_fraction is not None:
+        X_masked, masked_indices = mask_values(data.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
+        data.X = X_masked
+
+    # translate to human symbol
     data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
     data = data[:, ~data.var["symbol_id"].isna()]
     data.var.set_index("symbol_id")
     data.var_names = data.var["symbol_id"]
-
-    if args.sample_n_cells is not None and data.n_obs > args.sample_n_cells:
-        sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
 
     embeddings, symbol_ids, id_symbol_map = embed_data(
         adata_or_file=data,
         model_dir=args.model_dir,
         gene_col="index",
         embedding_mode="raw",
-        max_length=1200,
+        max_length=args.max_seq_length+1, # +1 because scGPT API considers <CLS> to be in the sequence
         batch_size=32,
         obs_to_save=None,
         device="cuda",
@@ -368,39 +386,65 @@ def main(args):
     id_gene_map_vectorized = np.vectorize(lambda x: id_symbol_map.get(x))
     genes_symbol = id_gene_map_vectorized(symbol_ids)
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
-    
+
     assert np.sum(genes_symbol == "cls") == 0
     max_seq_length = embeddings.shape[1]
     seq_lengths = [np.where(seq == '<pad>')[0][0] if np.any(seq == '<pad>') else max_seq_length for seq in genes_symbol]
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
+    edges = get_locally_indexed_edges(genes_ensg, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
     
-    # get edges for each cell
-    edges = {}
-    for i, genes_i in enumerate(genes_ensg):
-        local_gene_to_node_index = {gene: i for i,gene in enumerate(genes_i)}
-        edges_i = network[
-            network[REG_VALS].isin(genes_i) & 
-            network[TAR_VALS].isin(genes_i)
-        ].assign(**{
-            REG_VALS: lambda df: df[REG_VALS].map(local_gene_to_node_index),
-            TAR_VALS: lambda df: df[TAR_VALS].map(local_gene_to_node_index),
-        })[[REG_VALS, TAR_VALS]].to_numpy().T
-        edges[i] = edges_i
+    # get original expression
+    expression = np.concatenate([
+        np.pad(data_original[i, genes[:seq_lengths[i]]].X.toarray(), 
+               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
+               mode="constant", constant_values=0)
+        for i, genes in enumerate(genes_ensg)
+    ], axis=0)
 
-    np.savez(
-        file=join(args.out_dir, "embedding.npz"), 
+    # retain requested metadata
+    metadata = {}
+    for var in args.retain_obs_vars:
+        try:
+            metadata[var] = data.obs[var]
+        except KeyError:
+            print(f"Key {var} not in observational metadata...")
+
+    if args.mask_fraction is None:
+        save_embedding(
+            file=args.emb_path,
+            cache=args.cache,
+            cache_dir=args.emb_cache,
+            x=embeddings,
+            seq_lengths=seq_lengths,
+            expression=expression,
+            edges=edges,
+            metadata=metadata
+        )
+        return
+    
+    masks, masked_expressions = get_locally_indexed_masks_expressions(data_original, masked_indices, genes_ensg)                
+    save_embedding(
+        file=args.emb_path,
+        cache=args.cache,
+        cache_dir=args.emb_cache,
         x=embeddings,
         seq_lengths=seq_lengths,
-        edges=edges, 
-        allow_pickle=True
+        expression=expression,
+        edges=edges,
+        metadata=metadata,
+        masks=masks,
+        masked_expressions=masked_expressions
     )
-
 
 if __name__ == "__main__":
 
     args.cells_path = join(args.data_dir, "cells.h5ad")
+    args.emb_path = join(args.out_dir, "embedding.npz")
+    args.emb_cache = join(args.out_dir, "cached_embeddings")
     os.makedirs(args.out_dir, exist_ok=True)
+    if args.cache:
+        os.makedirs(args.emb_cache, exist_ok=True)
 
     main(args)

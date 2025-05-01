@@ -1,0 +1,1 @@
+{"_step":9,"_wandb":{"runtime":79},"valHOG_loss":0.1928415447473526,"epoch":9,"_timestamp":1.745556361763568e+09,"valHOG_mlm_rankonly_loss":0.1928415447473526,"valSG_loss":0.19347582757472992,"valSG_rank_perplexity":11.93857479095459,"valHOG_rank_perplexity":11.002503395080566,"_runtime":47.99758112,"valSG_mlm_rankonly_loss":0.19347582757472992,"trainer/global_step":9}

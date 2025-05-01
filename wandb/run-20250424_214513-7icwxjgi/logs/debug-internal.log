@@ -1,0 +1,18 @@
+{"time":"2025-04-24T21:45:13.685892598-07:00","level":"INFO","msg":"using version","core version":"0.18.3"}
+{"time":"2025-04-24T21:45:13.685904051-07:00","level":"INFO","msg":"created symlink","path":"/hpc/mydata/leo.dupire/GLM/scGraphLLM/wandb/run-20250424_214513-7icwxjgi/logs/debug-core.log"}
+{"time":"2025-04-24T21:45:13.687151767-07:00","level":"ERROR","msg":"dialing: google: could not find default credentials. See https://cloud.google.com/docs/authentication/external/set-up-adc for more information"}
+{"time":"2025-04-24T21:45:13.718429209-07:00","level":"INFO","msg":"created new stream","id":"7icwxjgi"}
+{"time":"2025-04-24T21:45:13.718444124-07:00","level":"INFO","msg":"stream: started","id":"7icwxjgi"}
+{"time":"2025-04-24T21:45:13.718458209-07:00","level":"INFO","msg":"handler: started","stream_id":{"value":"7icwxjgi"}}
+{"time":"2025-04-24T21:45:13.718496786-07:00","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"7icwxjgi"}}
+{"time":"2025-04-24T21:45:13.71858986-07:00","level":"INFO","msg":"sender: started","stream_id":{"value":"7icwxjgi"}}
+{"time":"2025-04-24T21:45:14.092994066-07:00","level":"INFO","msg":"wandb-core","!BADKEY":null}
+{"time":"2025-04-24T21:45:14.096796827-07:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-04-24T21:46:02.871120522-07:00","level":"INFO","msg":"stream: closing","id":"7icwxjgi"}
+{"time":"2025-04-24T21:46:02.871229477-07:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-04-24T21:46:02.880263286-07:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-04-24T21:46:04.770000894-07:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-04-24T21:46:04.96049432-07:00","level":"INFO","msg":"handler: closed","stream_id":{"value":"7icwxjgi"}}
+{"time":"2025-04-24T21:46:04.960536872-07:00","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"7icwxjgi"}}
+{"time":"2025-04-24T21:46:04.96069543-07:00","level":"INFO","msg":"sender: closed","stream_id":{"value":"7icwxjgi"}}
+{"time":"2025-04-24T21:46:04.962396129-07:00","level":"INFO","msg":"stream: closed","id":"7icwxjgi"}
