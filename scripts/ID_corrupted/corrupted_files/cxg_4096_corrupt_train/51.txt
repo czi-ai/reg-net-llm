@@ -1,1 +1,0 @@
-/hpc/projects/group.califano/GLM/data/meta_cell/cxg_4096/train/luminal_adaptive_secretory_precursor_cell_of_mammary_gland_23128.pt
