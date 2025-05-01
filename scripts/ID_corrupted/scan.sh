@@ -18,4 +18,5 @@ cd /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted
 
 python corrupt.py "$DATASET" "$CACHE_DIR" "$SLURM_ARRAY_TASK_ID"
 
+# RUN THIS SEPARATELY FOR EACH DATASET (train, valSG, valHOG)
 # sbatch --array=1-100 /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted/scan.sh "train" "/hpc/projects/group.califano/GLM/data/meta_cell/cxg_4096"

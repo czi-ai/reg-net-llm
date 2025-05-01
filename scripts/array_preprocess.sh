@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --partition=preempted
-#SBATCH --requeue
+#SBATCH --partition=cpu
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=512G
+#SBATCH --mem=1024G
 
 # Create the directory for output and error files
 mkdir -p ./slurm_out_${SLURM_ARRAY_JOB_ID}

@@ -81,15 +81,16 @@ python success.py --dataset_slurm_out_path "/hpc/projects/group.califano/GLM/scG
 
 python outdir_gen.py \
       --cxg-path "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_200k_clean" \
-      --outfile-path "/hpc/projects/group.califano/GLM/data/single_cell/replogle_outdirs.csv" \
+      --outfile-path "/hpc/projects/group.califano/GLM/data/single_cell/replogle_full_outdirs.csv" \
       --slurm-out-path "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/200k" \
-      --aracne-top-n-hvg null
+      --aracne-top-n-hvg full \
+      --perturbed
 
 # Replogle caching command
 source start_slurm_cache.sh \
-    --aracane-outdir-md "/hpc/projects/group.califano/GLM/data/single_cell/replogle_outdirs.csv" \
+    --aracane-outdir-md "/hpc/projects/group.califano/GLM/data/single_cell/replogle_full_outdirs.csv" \
     --gene-to-node-file "/hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv" \
-    --cache-dir "/hpc/projects/group.califano/GLM/data/single_cell/replogle_cache" \
+    --cache-dir "/hpc/projects/group.califano/GLM/data/single_cell/replogle_full_cache" \
     --perturbed \
     --gene_id "gene_id" \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/200k"

@@ -22,6 +22,7 @@ if [[ -n "$ARACNE_TOP_N_HVG" && "${ARACNE_TOP_N_HVG,,}" != "false" ]]; then
   ARACNE_ARG="--aracne_top_n_hvg $ARACNE_TOP_N_HVG"
 else
   ARACNE_ARG=""
+  ARACNE_TOP_N_HVG="full" # For aracne directory-naming purposes
 fi
 
 if [[ -n "$QUANTIZE_METACELLS" && "${QUANTIZE_METACELLS,,}" != "false" ]]; then
@@ -31,7 +32,7 @@ else
 fi
 
 if [[ -n "$GROUP_BY" && "${GROUP_BY,,}" != "false" ]]; then
-  GROUP_BY_ARG="--group_by $GROUP_BY"
+  GROUP_BY_ARG="--groupby_var $GROUP_BY"
 else
   GROUP_BY_ARG=""
 fi

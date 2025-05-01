@@ -105,7 +105,6 @@ source start_slurm_preprocess.sh \
 # CellxGene preprocessing command for single cells
 source start_slurm_preprocess.sh \
     --dataset "cell_x_gene" \
-    --quantize_metacells "true" \
     --aracne-top-n-hvg 4096 \
     --raw-data-dir "/hpc/archives/group.califano/cell_type_all" \
     --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/cxg_single_cell_clean" \
@@ -125,7 +124,7 @@ source start_slurm_preprocess.sh \
 source start_slurm_preprocess.sh \
     --raw-data-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_raw" \
     --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_clean" \
-    --aracne-top-n-hvg "null" \
+    --aracne-top-n-hvg "false" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
     --group-by "gene_id" \
@@ -138,25 +137,25 @@ source start_slurm_preprocess.sh \
 source start_slurm_preprocess.sh \
     --raw-data-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_raw_partitioned" \
     --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_clean_partitioned" \
-    --aracne-top-n-hvg "null" \
+    --aracne-top-n-hvg "false" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
     --group-by "gene_id" \
-    --dataset "replogle" \
+    --dataset "replogle" \a
     --perturbed \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/partitioned"
 
-# Replogle 400k single partition subset
+# Replogle 200k single partition subset
 source start_slurm_preprocess.sh \
-    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_400k_raw" \
-    --out-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_400k_clean" \
-    --aracne-top-n-hvg "null" \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_200k_raw" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_200k_clean" \
+    --aracne-top-n-hvg "false" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
     --group-by "gem_group" \
     --dataset "replogle" \
     --perturbed \
-    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/400k"
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/200k"
 
 
 
@@ -165,10 +164,10 @@ source start_slurm_preprocess.sh \
 source start_slurm_preprocess.sh \
     --raw-data-dir "/hpc/projects/group.califano/GLM/data/_adamson/data/adamson_raw" \
     --out-dir "/hpc/projects/group.califano/GLM/data/_adamson/data/adamson_clean" \
-    --aracne-top-n-hvg "null" \
+    --aracne-top-n-hvg "false" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
-    --group-by "null" \
+    --group-by "false" \
     --dataset "adamson" \
     --perturbed \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/adamson/full"
