@@ -27,6 +27,21 @@ CELL_TYPES = [
     # 'cDC2_ISG15'
 ]
 
+IMMUNE_CELL_TYPES = [
+    # Train
+    "cd14_monocytes",
+    "cd20_b_cells",
+    "cd8_t_cells",
+    "nkt_cells",
+    # Val
+    "erythrocytes",
+    "cd16_monocytes",
+    # Test
+    "cd4_t_cells",
+    "monocyte-derived_dendritic_cells",
+    "nk_cells"
+]
+
 EMBEDDING_DATASETS = ({
     "gf_debug": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/geneformer/test_cache/cached_embeddings"
@@ -65,7 +80,18 @@ EMBEDDING_DATASETS = ({
     "scgpt_seq_len_512":[
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scgpt/seq_len_512/cached_embeddings"
         for cell_type in CELL_TYPES
-    ]
+    ],
+
+    # HUMAN IMMUNE
+    "human_immune_scglm_5000_steps": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_5000_steps/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
+    # "human_immune_scglm_001": [
+    #     f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/embedding.npz"
+    #     for cell_type in IMMUNE_CELL_TYPES
+    # ]
+
 })
 
 SPLIT_CONFIGS = {
@@ -83,6 +109,10 @@ SPLIT_CONFIGS = {
     }),
     "mye_cancer_type": Config({
         "metadata_config": ("cancer_type", (None, ['THCA', 'LYM'], ['MYE', 'OV-FTC', 'ESCA'])),
+        "ratio_config": (1.0, None, None)
+    }),
+    "human_immune": Config({
+        "metadata_config": ("cancer_type", (None, ["erythrocytes", "cd16_monocytes"], ["cd4_t_cells", "monocyte-derived_dendritic_cells", "nk_cells"])),
         "ratio_config": (1.0, None, None)
     })
 }
