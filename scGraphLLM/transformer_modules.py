@@ -330,21 +330,24 @@ class FlashMHASelfMaskKV(nn.Module):
             q, k = self.rot_emb(q, k, seq_dimension=-3)
             
         if self.kernel_attn:
-            q = _chebyshev_diffusion(edge_index_list, num_nodes_list, q, k=64, beta=0.5)
+            q_genes = q[:, 1:, :, :]
+            q_cls = q[:, 0, :, :]
+            q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=0.5)
             
             # shift query by perturbational embedding if observing perturb seq data
             if self.fine_tuning:
                 assert perturb_one_hot is not None, "need perturbation labels"
                 perturb_bias = self.perturb_emb(edge_index_list, num_nodes_list, perturb_one_hot)
-                assert q.shape == perturb_bias.shape
-                q += perturb_bias
+                assert q_genes_diffused.shape == perturb_bias.shape
+                q_genes_diffused += perturb_bias
                 
-            q = q.bfloat16()
+            q_final = torch.cat([q_cls.unsqueeze(1), q_genes_diffused], dim=1)
+            q_final = q_final.bfloat16()
                 
             
-        q = rearrange(q.type(dtype), 'b s h d -> (b s) h d',
-                        h=self.num_heads)
-        q = q * self.scaling
+        q_final = rearrange(q_final.type(dtype), 'b s h d -> (b s) h d',
+                            h=self.num_heads)
+        q_final = q_final * self.scaling
 
         # [b s 2 h d]
         kv = torch.stack([k.type(dtype), v], dim=2)
@@ -376,7 +379,7 @@ class FlashMHASelfMaskKV(nn.Module):
             kv_max_s = s_size
 
         context = flash_attn_varlen_kvpacked_func(
-            q,
+            q_final,
             kv_unpad,
             q_cu_seqlens,
             kv_cu_seqlens,

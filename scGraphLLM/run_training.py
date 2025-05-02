@@ -38,7 +38,7 @@ def collate_fn(batch):
     # Pad these dictionaries of lists
     for key in data.keys():
         if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
-            data[key] = pad_sequence(data[key], batch_first=True)
+            data[key] = pad_sequence(data[key], batch_first=True, padding_value=PAD_RANK_IDX)
 
     return data
 

@@ -229,6 +229,10 @@ class GraphTransformerDataset(torchDataset):
         node_indices[rank_mask, 1] = MASK_RANK_IDX
         # node_indices[both_mask, :] = torch.tensor([MASK_GENE_IDX, MASK_RANK_IDX], dtype=node_indices.dtype)
         
+        # add CLS
+        cls = torch.tensor([[CLS_GENE_IDX, CLS_TOKEN]], dtype=node_indices.dtype)
+        node_indices = torch.cat([cls, node_indices], dim=0) # CLS can never be masked
+        
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
         
