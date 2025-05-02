@@ -284,9 +284,22 @@ class WQKV(nn.Module):
 
 
 class FlashMHASelfMaskKV(nn.Module):
-    def __init__(self, d_model, num_heads, batch_first, attention_dropout, mode="self", 
-                 bias=True, causal=False, kernel_attn=False, fine_tuning=False,
-                 use_rotary_emb=None, device = None, dtype = None) -> None:
+    def __init__(
+            self, 
+            d_model, 
+            num_heads, 
+            batch_first, 
+            attention_dropout, 
+            mode="self", 
+            bias=True, 
+            causal=False, 
+            kernel_attn=False, 
+            fine_tuning=False,
+            use_rotary_emb=None, 
+            device = None, 
+            dtype = None
+        ) -> None:
+        
         super(FlashMHASelfMaskKV, self).__init__()
         assert batch_first
         factory_kwargs = {'device': device, 'dtype': dtype}
@@ -645,12 +658,25 @@ class FlashTransformerEncoderLayer(nn.Module):
     We assume transformer encoder layer is for the same sequence
     so use the FusedWqkv 
     """
-    def __init__(self, d_model, nhead, dim_feedforward, dropout ,
-                 activation,batch_first, use_flash_attn = True, use_attn_mask = False, use_PE=False,
-                 fine_tuning=False, layer_norm_eps = 1e-5, norm_first = False,
-                 lora_qv_rank = None, use_rotary_emb = False, 
-                 init_scheme = "kaiming_uniform"
-                 ):
+    def __init__(
+            self, 
+            d_model, 
+            nhead, 
+            dim_feedforward, 
+            dropout,
+            activation, 
+            batch_first, 
+            use_flash_attn=True, 
+            use_attn_mask=False, 
+            use_PE=False,
+            fine_tuning=False, 
+            layer_norm_eps=1e-5, 
+            norm_first=False,
+            lora_qv_rank=None, 
+            use_rotary_emb=False, 
+            init_scheme = "kaiming_uniform"
+        ):
+        
         super(FlashTransformerEncoderLayer, self).__init__()
         if activation == 'esm-gelu':
             self.activation = gelu

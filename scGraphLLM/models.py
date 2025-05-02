@@ -109,6 +109,14 @@ class GDTransformer(LitScGraphLLM):
         else:
             self.transformer_encoder = nn.ModuleList()
             for i in range(self.tconfig.num_encoder_layers):
+                # Below if-statement ensures the application of GK diffusion to the desired layers
+                if type(self.tconfig.use_flash_attn) == list: # Check if ONLY specified transformer layers will use GK diffusion
+                    use_attn = False # Default assumes no GK diffusion on this layer
+                    if i in self.tconfig.use_flash_attn: # If this transformer layer should use GK diffusion
+                        use_attn = True
+                else:
+                    use_attn = self.tconfig.use_flash_attn # Where self.tconfig.use_flash_attn is a boolean value  
+
                 self.transformer_encoder.append(
                     FlashTransformerEncoderLayer(
                         self.tconfig.transformer_dim.input_dim, 

@@ -151,7 +151,7 @@ def main(args):
         if "checkpoint_config" in trainer_conf:
             check_point_conf = trainer_conf['checkpoint_config']
             check_point_conf["dirpath"] = f"{run_dir}/checkpoints/"
-            check_point_conf["filename"] = f"{{epoch}}-{{step}}.ckpt"
+            check_point_conf["filename"] = f"{{epoch}}-{{step}}"
             callbacks.append(ModelCheckpoint(**check_point_conf)) # Locally save checkpoint
             
 
