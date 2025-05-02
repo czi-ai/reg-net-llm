@@ -34,6 +34,7 @@ from typing import Tuple
 from einops import repeat
 from scGraphLLM.graph_op import _chebyshev_diffusion
 from scGraphLLM.MLP_modules import PerturbEmbedding
+from scGraphLLM._globals import *
 
 
 def rotate_half(x):
@@ -332,7 +333,7 @@ class FlashMHASelfMaskKV(nn.Module):
         if self.kernel_attn:
             q_genes = q[:, 1:, :, :]
             q_cls = q[:, 0, :, :]
-            q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=0.5)
+            q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
             
             # shift query by perturbational embedding if observing perturb seq data
             if self.fine_tuning:

@@ -20,6 +20,7 @@ from config import *
 from torch_geometric.loader import DataLoader
 from wandb_checkpoint import SaveModelEveryNSteps
 # import torchsummary
+from scGraphLLM._globals import *
 
 def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
@@ -37,8 +38,15 @@ def collate_fn(batch):
 
     # Pad these dictionaries of lists
     for key in data.keys():
-        if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
-            data[key] = pad_sequence(data[key], batch_first=True, padding_value=PAD_RANK_IDX)
+        if (key == "dataset_name") or (key == "edge_index") or (key == "num_nodes"):
+            continue
+        elif key == "orig_gene_id":
+            pad_value = PAD_GENE_IDX
+        elif key == "orig_rank_indices":
+            pad_value = PAD_RANK_IDX
+        elif key == "gene_mask" or key == "rank_mask" or key == "both_mask":
+            pad_value = False
+        data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
 
     return data
 

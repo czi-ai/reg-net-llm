@@ -232,12 +232,17 @@ class GraphTransformerDataset(torchDataset):
         # add CLS
         cls = torch.tensor([[CLS_GENE_IDX, CLS_TOKEN]], dtype=node_indices.dtype)
         node_indices = torch.cat([cls, node_indices], dim=0) # CLS can never be masked
+
+        # add False to masks
+        gene_mask = torch.cat(torch.tensor([False]), gene_mask)
+        rank_mask = torch.cat(torch.tensor([False]), rank_mask)
+        both_mask = torch.cat(torch.tensor([False]), both_mask)
         
+
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
-        
-        num_nodes = node_indices.shape[0]
-        
+        num_nodes = node_indices.shape[0] - 1 # discount the cls node
+       
         # graph positional encoding
         #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
