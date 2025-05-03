@@ -204,7 +204,7 @@ graph_kernel_attn_4096 = Config({
         "max_epochs" : 10,
         "accelerator" : "gpu",
         "max_time": "07:00:00:00",
-        "devices" : 8,
+        "devices" : 2,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 50,

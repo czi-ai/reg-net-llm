@@ -1,13 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=PRETRAIN
 #SBATCH --output=./slurm_train_out/array_job_%A.out
-#SBATCH --time=5-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus=8
+#SBATCH --ntasks-per-node=2
+#SBATCH --gpus=2
 #SBATCH --constraint=h100
-#SBATCH --mem=2000000
-#SBATCH --reservation=leo
 #SBATCH -p gpu
 
 #should not need this setting
@@ -62,7 +60,7 @@ srun python /hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py --c
 
 : <<'END_COMMENT'
 
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_4096" --run-name "PRETRAIN [CLS, 12Layer, All-diffused, BETA:0.1] - 5 DAYS"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_4096" --run-name "PRETRAIN [CLS, 12Layer, both_mask:15%]"
 
 sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096" --run-name "RUN [CLS, 3Layer]"
 sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_6L_4096" --run-name "RUN [CLS, 6Layer]"
