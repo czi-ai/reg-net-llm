@@ -92,9 +92,19 @@ class GDTransformer(LitScGraphLLM):
     def __init__(self, config):
         super().__init__(config)
         self.tconfig = config.transformer_config
-        
-        if self.tconfig.num_encoder_layers == 1:
-            self.transformer_encoder = FlashTransformerEncoderLayer(
+
+        self.transformer_encoder = nn.ModuleList()
+        for i in range(self.tconfig.num_encoder_layers):
+            # Below if-statement ensures the application of GK diffusion to the desired layers
+            if type(self.tconfig.use_flash_attn) == list: # Check if ONLY specified transformer layers will use GK diffusion
+                use_attn = False # Default assumes no GK diffusion on this layer
+                if i in self.tconfig.use_flash_attn: # If this transformer layer should use GK diffusion
+                    use_attn = True
+            else:
+                use_attn = self.tconfig.use_flash_attn # Where self.tconfig.use_flash_attn is a boolean value  
+
+            self.transformer_encoder.append(
+                FlashTransformerEncoderLayer(
                     self.tconfig.transformer_dim.input_dim, 
                     self.tconfig.num_heads, 
                     self.tconfig.transformer_dim.feed_dim, 
@@ -105,32 +115,8 @@ class GDTransformer(LitScGraphLLM):
                     use_PE=self.tconfig.use_pe,
                     use_flash_attn=self.tconfig.use_flash_attn,
                     fine_tuning=self.tconfig.fine_tuning,
-                )
-        else:
-            self.transformer_encoder = nn.ModuleList()
-            for i in range(self.tconfig.num_encoder_layers):
-                # Below if-statement ensures the application of GK diffusion to the desired layers
-                if type(self.tconfig.use_flash_attn) == list: # Check if ONLY specified transformer layers will use GK diffusion
-                    use_attn = False # Default assumes no GK diffusion on this layer
-                    if i in self.tconfig.use_flash_attn: # If this transformer layer should use GK diffusion
-                        use_attn = True
-                else:
-                    use_attn = self.tconfig.use_flash_attn # Where self.tconfig.use_flash_attn is a boolean value  
-
-                self.transformer_encoder.append(
-                    FlashTransformerEncoderLayer(
-                        self.tconfig.transformer_dim.input_dim, 
-                        self.tconfig.num_heads, 
-                        self.tconfig.transformer_dim.feed_dim, 
-                        self.tconfig.dropout, 
-                        self.tconfig.activation, 
-                        self.tconfig.batch_first,
-                        use_attn_mask=self.tconfig.use_attn_mask,
-                        use_PE=self.tconfig.use_pe,
-                        use_flash_attn=self.tconfig.use_flash_attn,
-                        fine_tuning=self.tconfig.fine_tuning,
-                    )   
-                )
+                )   
+            )
         
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 
@@ -165,18 +151,15 @@ class GDTransformer(LitScGraphLLM):
         
         node_embedding = self.gene_embedding(orig_gene_id) 
         rank_embedding = self.rank_embedding(orig_rank_id)
-        
         combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
         
-        if self.tconfig.num_encoder_layers == 1:
-            combined_embedding = self.transformer_encoder(combined_embedding, p=pe, 
-                                                          edge_index_list=edge_index_list, 
-                                                          num_nodes_list=num_nodes_list)
-        else:
-            for encoder_layer in self.transformer_encoder:
-                combined_embedding = encoder_layer(combined_embedding, p=pe, 
-                                               edge_index_list=edge_index_list, 
-                                               num_nodes_list=num_nodes_list)
+        for encoder_layer in self.transformer_encoder:
+            combined_embedding = encoder_layer(
+                combined_embedding, 
+                p=pe, 
+                edge_index_list=edge_index_list, 
+                num_nodes_list=num_nodes_list
+            )
         
         return combined_embedding, orig_gene_id, orig_rank_id, mask_locs, edge_index_list, num_nodes_list
 

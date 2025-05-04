@@ -13,6 +13,7 @@ from pathlib import Path
 from multiprocessing import Pool
 import argparse
 import lightning.pytorch as pl
+from torch.nn.utils.rnn import pad_sequence
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
@@ -26,6 +27,38 @@ from scGraphLLM._globals import * ## imported global variables are all caps
 
 
 rng = default_rng(42)
+
+def scglm_collate_fn(batch):
+    data = {
+        "orig_gene_id": [], 
+        "orig_rank_indices": [], 
+        "gene_mask": [], 
+        "rank_mask": [], 
+        "both_mask": [], 
+        "edge_index": [], 
+        "num_nodes" :[], 
+        "dataset_name": []
+    }
+    
+    # Make a dictionary of lists from the list of dictionaries
+    for b in batch:
+        for key in data.keys():
+            data[key].append(b[key])
+
+    # Pad these dictionaries of lists
+    for key in data.keys():
+        if (key == "dataset_name") or (key == "edge_index") or (key == "num_nodes"):
+            continue
+        elif key == "orig_gene_id":
+            pad_value = PAD_GENE_IDX
+        elif key == "orig_rank_indices":
+            pad_value = PAD_RANK_IDX
+        elif (key == "gene_mask") or (key == "rank_mask") or (key == "both_mask"):
+            pad_value = False
+        data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
+
+    return data
+
 def save(obj, file):
     # The above code is using the `pickle` module in Python to serialize the object `obj` and write it
     # to a file specified by the variable `file` in binary mode. This allows the object to be saved to
@@ -241,7 +274,8 @@ class GraphTransformerDataset(torchDataset):
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
         num_nodes = node_indices.shape[0] - 1 # discount the cls node
-       
+        edge_index = data.edge_index # edges index assumes the first gene token's index is 0
+
         # graph positional encoding
         #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
@@ -251,7 +285,7 @@ class GraphTransformerDataset(torchDataset):
             "gene_mask" : gene_mask, 
             "rank_mask" : rank_mask, 
             "both_mask" : both_mask,
-            "edge_index": data.edge_index,
+            "edge_index": edge_index, # edges index 
             "num_nodes": num_nodes,
             #"spectral_pe": spectral_pe,
             "dataset_name" : self.dataset_name
