@@ -31,12 +31,12 @@ class LitScGraphLLM(pl.LightningModule):
         pass
     
     def _step(self, batch, batch_idx):
-        learned_cell_embedding,  target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
-        predicted_expression_id= self.rank_prediction_head(learned_cell_embedding)
+        learned_cell_embedding, target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
+        predicted_expression_id = self.rank_prediction_head(learned_cell_embedding)
         gene_mask_locs, expression_mask_locs, both_mask_locs = mask_locs
-        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, expression_mask_locs)
+        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, both_mask_locs)
         loss = L_mlm_rankonly
-        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, expression_mask_locs)
+        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, both_mask_locs)
         if type(batch) == dict:
             subset = batch["dataset_name"][0]
         else:
@@ -136,21 +136,31 @@ class GDTransformer(LitScGraphLLM):
         self.use_attn_mask = self.tconfig.use_attn_mask
         self.use_PE = self.tconfig.use_pe
 
-    def forward(self, batch):
+    def forward(self, batch):        
         orig_gene_id = batch["orig_gene_id"]
-        orig_rank_id = batch["orig_rank_indices"]
+        orig_rank_indices = batch["orig_rank_indices"]
+        mask = batch["both_mask"]
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
         edge_index_list = batch["edge_index"]
         num_nodes_list = batch["num_nodes"]
         
+        # IMPORTANT: Copy/clone the gene IDs and expression tensors, altering the originals will alter the training labels
+        gene_ids = orig_gene_id.clone()
+        expression = orig_rank_indices.clone()
+        
+        # Mask specified gene IDs and expression values
+        gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
+        expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
+        
         # shape assertions for graph features
         if self.use_PE:
-            assert pe.shape[1] == orig_gene_id.shape[1], f"Expect seqlen to be {orig_gene_id.shape[1]}, Got {pe.shape[1]}"
+            assert pe.shape[1] == gene_ids.shape[1], f"Expect seqlen to be {gene_ids.shape[1]}, Got {pe.shape[1]}"
         
         mask_locs = [batch["gene_mask"], batch["rank_mask"], batch["both_mask"]]
         
-        node_embedding = self.gene_embedding(orig_gene_id) 
-        rank_embedding = self.rank_embedding(orig_rank_id)
+        node_embedding = self.gene_embedding(gene_ids) 
+        rank_embedding = self.rank_embedding(expression)
+        
         combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
         
         for encoder_layer in self.transformer_encoder:
@@ -161,7 +171,12 @@ class GDTransformer(LitScGraphLLM):
                 num_nodes_list=num_nodes_list
             )
         
-        return combined_embedding, orig_gene_id, orig_rank_id, mask_locs, edge_index_list, num_nodes_list
+        # We have the learned cell embedding, no more need for MASKED gene_ids & expression
+        del gene_ids
+        del expression
+        
+        # IMPORTANT: Make sure to return the correct orig_gene_id & orig_rank_indices as these are the un-altered, unmasked training labels (do not return gene_ids & expression)
+        return combined_embedding, orig_gene_id, orig_rank_indices, mask_locs, edge_index_list, num_nodes_list
 
 
 # ------------------------------
