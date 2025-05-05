@@ -33,10 +33,10 @@ class LitScGraphLLM(pl.LightningModule):
     def _step(self, batch, batch_idx):
         learned_cell_embedding, target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
         predicted_expression_id = self.rank_prediction_head(learned_cell_embedding)
-        gene_mask_locs, expression_mask_locs, both_mask_locs = mask_locs
-        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, both_mask_locs)
+        gene_mask_locs, expression_mask_locs, rank_mask_locs = mask_locs
+        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, rank_mask_locs)
         loss = L_mlm_rankonly
-        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, both_mask_locs)
+        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, rank_mask_locs)
         if type(batch) == dict:
             subset = batch["dataset_name"][0]
         else:
@@ -139,7 +139,7 @@ class GDTransformer(LitScGraphLLM):
     def forward(self, batch):        
         orig_gene_id = batch["orig_gene_id"]
         orig_rank_indices = batch["orig_rank_indices"]
-        mask = batch["both_mask"]
+        mask = batch["rank_mask"] # SELECT MASK OPTION HERE
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
         edge_index_list = batch["edge_index"]
         num_nodes_list = batch["num_nodes"]

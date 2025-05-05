@@ -1,11 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=PRETRAIN
+#SBATCH --job-name=TEST
 #SBATCH --output=./slurm_train_out/array_job_%A.out
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
+#SBATCH --nodelist=gpu-f-2
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus=2
 #SBATCH --constraint=h100
+#SBATCH --reservation=leo
 #SBATCH -p gpu
 
 #should not need this setting
@@ -60,10 +62,10 @@ srun python /hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py --c
 
 : <<'END_COMMENT'
 
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_4096" --run-name "PRETRAIN [CLS, 12Layer, both_mask:15%]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_4096" --run-name "PRETRAIN [CLS, 12Layer, rank_mask:15%]"
 
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096" --run-name "RUN [CLS, 3Layer]"
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_6L_4096" --run-name "RUN [CLS, 6Layer]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096" --run-name "RUN [CLS, 3Layer, rank_mask:15%]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_6L_4096" --run-name "RUN [CLS, 6Layer, rank_mask:15%]"
 
 sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_1DIFF_4096" --run-name "RUN [CLS, 12Layer, 1DIFF]"
 sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_2DIFF_A_4096" --run-name "RUN [CLS, 12Layer, 2DIFF:0,1]"
