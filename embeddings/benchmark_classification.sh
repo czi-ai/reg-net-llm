@@ -50,14 +50,27 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 # =*= scGraphLLM #=*=#
 # ===================#
 
+# python $benchmark_script \
+#     --dataset scglm_seq_len_512 \
+#     --split_config random \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix mye_512_random_split_2_layers_mean_pool \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5
+
 python $benchmark_script \
-    --dataset scglm_seq_len_512 \
+    --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001 \
     --split_config random \
     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-    --suffix mye_512_random_split_2_layers_mean_pool \
+    --suffix human_immune_scglm_cls_3L_12000_steps_MLM_001 \
     --use_weighted_ce \
     --task cls \
-    --target cell_type \
+    --target final_annotation \
     --lr 1e-2 \
     --batch_size 256 \
     --num_epochs 100 \

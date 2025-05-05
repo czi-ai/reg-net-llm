@@ -29,7 +29,13 @@ from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
 from scGraphLLM._globals import NUM_BINS
-from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions, save_embedding
+from utils import (
+    mask_values, 
+    get_locally_indexed_edges, 
+    get_locally_indexed_masks_expressions, 
+    save_embedding,
+    collect_metadata
+)
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -73,6 +79,7 @@ def get_edges_dict(edges_list):
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
+
     global_gene_df = pd.read_csv(args.gene_index_path)
     global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
     global_node_to_gene = global_gene_df.set_index("idx")["gene_name"].to_dict()
@@ -119,7 +126,8 @@ def main(args):
     )
     
     # Load model
-    model: GDTransformer = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_4096_TEST)
+    # model: GDTransformer = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_4096_TEST)
+    model = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_3L_4096)
     
     # Get embeddings
     print(f"Performing forward pass...")
@@ -182,12 +190,7 @@ def main(args):
     ], axis=0)
 
     # retain requested metadata
-    metadata = {}
-    for var in args.retain_obs_vars:
-        try:
-            metadata[var] = adata.obs[var]
-        except KeyError:
-            print(f"Key {var} not in observational metadata...")
+    metadata = collect_metadata(adata, args.retain_obs_vars)
 
     print("Saving emeddings...")
     # TODO: 1. Write embedding for each cell to embedding cache directory
@@ -234,6 +237,8 @@ def main(args):
         masked_expressions=masked_expressions,
         metadata=metadata
     )
+
+
 
 
 if __name__ == "__main__":
