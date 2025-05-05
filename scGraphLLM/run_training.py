@@ -26,14 +26,19 @@ def generate_random_string(length):
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
 def collate_fn(batch):
-    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
-            "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
-             "dataset_name" : []}
+    data = { 
+            "orig_gene_id" : [], 
+            "orig_expression_id" : [], 
+            "expression_mask" : [], 
+            "edge_index": [], 
+            "num_nodes" :[], 
+            "dataset_name" : []
+    }
     
     # Make a dictionary of lists from the list of dictionaries
-    for b in batch:
+    for cell in batch:
         for key in data.keys():
-            data[key].append(b[key])
+            data[key].append(cell[key])
 
     # Pad these dictionaries of lists
     for key in data.keys():
@@ -41,9 +46,9 @@ def collate_fn(batch):
             continue
         elif key == "orig_gene_id":
             pad_value = PAD_GENE_IDX
-        elif key == "orig_rank_indices":
-            pad_value = PAD_RANK_IDX
-        elif key == "gene_mask" or key == "rank_mask" or key == "both_mask":
+        elif key == "orig_expression_id":
+            pad_value = PAD_EXPRESSION_IDX
+        elif key == "expression_mask":
             pad_value = False
         data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
 
@@ -64,6 +69,7 @@ parser.add_argument('--config', type=str, help='path to model config file',requi
 parser.add_argument('--version', type=str, help='run version', default=None)
 parser.add_argument('--name', type=str, help='run name', default=None)
 parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, debug, predict, validate]', default=None, required=True)
+parser.add_argument('--devices', type=int, help='number of GPUs', default=None)
 parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only, no paths', default=None)
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
 
@@ -98,6 +104,10 @@ def main(args):
         if args.version is None or args.ckpt_file is None:
             raise ValueError("Must specify version and ckpt file for resume, predict, or validate mode")
         
+    devices = args.devices # This is an optional argument if you want to overwrite the number of devices specified in config.py
+    if devices != None: # Override the number of devices/GPUs
+            mconfig['trainer_config']['devices']=devices
+    
     version = args.version
     if version is None:
         ## this does not break for ddp processes 
@@ -200,7 +210,6 @@ def main(args):
         raise NotImplementedError(f"mode {mode} not implemented")
 
     ##  copy checkpoints to shared dir and clean up only on 1 gpu 
-
     if ((mconfig['trainer_config']['devices'] == 1) or (torch.distributed.get_rank() == 0)) and (mode != "debug") :
         if copy_checkpoints:
             time.sleep(30) ## potentially wait for other processes to finish writing to disk

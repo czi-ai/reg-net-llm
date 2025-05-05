@@ -1,0 +1,26 @@
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Current SDK version is 0.18.3
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Configure stats pid to 1144758
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Loading settings from /home/leo.dupire/.config/wandb/settings
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Loading settings from /hpc/mydata/leo.dupire/GLM/scGraphLLM/wandb/settings
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Loading settings from environment variables: {}
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Applying setup settings: {'mode': None, '_disable_service': None}
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Inferring run settings from compute environment: {'program_relpath': 'scGraphLLM/run_training.py', 'program_abspath': '/hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py', 'program': '/hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py'}
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_setup.py:_flush():79] Applying login settings: {}
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_init.py:_log_setup():532] Logging user logs to /hpc/mydata/leo.dupire/GLM/scGraphLLM/wandb/run-20250504_182411-v92r913w/logs/debug.log
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_init.py:_log_setup():533] Logging internal logs to /hpc/mydata/leo.dupire/GLM/scGraphLLM/wandb/run-20250504_182411-v92r913w/logs/debug-internal.log
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_init.py:init():617] calling init triggers
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_init.py:init():624] wandb.init called with sweep_config: {}
+config: {}
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_init.py:init():667] starting backend
+2025-05-04 18:24:11,984 INFO    MainThread:1144758 [wandb_init.py:init():671] sending inform_init request
+2025-05-04 18:24:11,985 INFO    MainThread:1144758 [backend.py:_multiprocessing_setup():104] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2025-05-04 18:24:11,986 INFO    MainThread:1144758 [wandb_init.py:init():684] backend started and connected
+2025-05-04 18:24:11,989 INFO    MainThread:1144758 [wandb_init.py:init():779] updated telemetry
+2025-05-04 18:24:12,046 INFO    MainThread:1144758 [wandb_init.py:init():812] communicating run to backend with 90.0 second timeout
+2025-05-04 18:24:12,565 INFO    MainThread:1144758 [wandb_init.py:init():863] starting run threads in backend
+2025-05-04 18:24:12,769 INFO    MainThread:1144758 [wandb_run.py:_console_start():2465] atexit reg
+2025-05-04 18:24:12,769 INFO    MainThread:1144758 [wandb_run.py:_redirect():2313] redirect: wrap_raw
+2025-05-04 18:24:12,769 INFO    MainThread:1144758 [wandb_run.py:_redirect():2378] Wrapping output streams.
+2025-05-04 18:24:12,769 INFO    MainThread:1144758 [wandb_run.py:_redirect():2403] Redirects installed.
+2025-05-04 18:24:12,771 INFO    MainThread:1144758 [wandb_init.py:init():907] run started, returning control to user process
+2025-05-04 18:24:13,582 WARNING MsgRouterThr:1144758 [router.py:message_loop():77] message_loop has been closed

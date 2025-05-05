@@ -73,6 +73,7 @@ def run_cache(
         if ncells % 1000 == 0:
             print(f"Processed {ncells} cells", end="\r")
 
+        # Get this cell/metacell's index number
         cell_number = expression.index[i]
         
         if msplit == "valSG":
@@ -84,12 +85,15 @@ def run_cache(
         else:
             split = msplit
         
+        # Path to which the file will be cached
         outfile = f"{cache_dir}/{split}/{cell_type}_{cell_number}.pt"
         if (os.path.exists(outfile)) and (not overwrite):
             ncells+=1
             continue
         
+        # Get this cell/metacell's expression
         cell: pd.Series = expression.iloc[i, :]
+        
         # filter out genes with 0 expression
         if only_expressed_genes:
             cell = cell[cell != ZERO_IDX]
@@ -103,7 +107,7 @@ def run_cache(
         if max_seq_length is not None and cell.shape[0] > max_seq_length:
             cell = cell.nlargest(n=max_seq_length)
 
-        # Subset network to only include genes in the cell
+        # Subset network to only include genes expressed in the cell
         network_cell = network[
             network[REG_VALS].isin(cell.index) & 
             network[TAR_VALS].isin(cell.index)
@@ -167,11 +171,7 @@ def cache_aracane_and_bins(
         skipped = 0
         ncells = 0
         
-        # msplit, ####
-        # min_genes_per_graph=MIN_GENES_PER_GRAPH, ####
-        # max_seq_length=None, ####
-        
-        for outdir_info in aracne_outdir_info: # If single==True, then this will only run once (for that single cell-type)
+        for outdir_info in aracne_outdir_info: # If single == True, then this will only run once (for that single cell-type)
             cell_type = outdir_info[0].split('/')[-2] # Get the cell-type's name that is currently being cached
             print(f"Caching: {cell_type}...")
             
@@ -211,46 +211,32 @@ class GraphTransformerDataset(torchDataset):
         return len(self.cached_files)
 
     def __getitem__(self, idx):
-        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         node_indices = data.x
-        ## for each mask type, create boolean mask of the same shape as node_indices
+        # For each mask type, create boolean mask of the same shape as node_indices
         if self.mask_fraction == 0:
-            gene_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
-            rank_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
-            both_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
+            expression_mask = torch.zeros(node_indices.shape[0], dtype=torch.bool)
         else:
-            gene_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
-            rank_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
-            both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
+            expression_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
-        # mask the tensors
-        # node_indices[gene_mask, 0] = MASK_GENE_IDX
-        # node_indices[rank_mask, 1] = MASK_RANK_IDX
-        # node_indices[both_mask, :] = torch.tensor([MASK_GENE_IDX, MASK_RANK_IDX], dtype=node_indices.dtype)
-        
-        # add CLS
+        # Add CLS
         cls = torch.tensor([[CLS_GENE_IDX, CLS_TOKEN]], dtype=node_indices.dtype)
         node_indices = torch.cat([cls, node_indices], dim=0) # CLS can never be masked
 
-        # add False to masks
-        gene_mask = torch.cat([torch.tensor([False]), gene_mask])
-        rank_mask = torch.cat([torch.tensor([False]), rank_mask])
-        both_mask = torch.cat([torch.tensor([False]), both_mask])
+        # Add False to mask accounting for CLS
+        expression_mask = torch.cat([torch.tensor([False]), expression_mask])
 
         orig_gene_indices = node_indices[:, 0].clone()
-        orig_rank_indices = node_indices[:, 1].clone()
+        orig_expression_indices = node_indices[:, 1].clone()
         num_nodes = node_indices.shape[0] - 1 # discount the cls node
        
         # graph positional encoding
-        #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
+        # spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
         return {
             "orig_gene_id" : orig_gene_indices, 
-            "orig_rank_indices" : orig_rank_indices, 
-            "gene_mask" : gene_mask, 
-            "rank_mask" : rank_mask, 
-            "both_mask" : both_mask,
+            "orig_expression_id" : orig_expression_indices, 
+            "expression_mask" : expression_mask, 
             "edge_index": data.edge_index,
             "num_nodes": num_nodes,
             #"spectral_pe": spectral_pe,

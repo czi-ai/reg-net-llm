@@ -6,7 +6,7 @@ import lightning.pytorch as pl
 
 from scGraphLLM.GNN_modules import *
 from scGraphLLM.MLP_modules import *
-from scGraphLLM._globals import * ## these define the indices for the special tokens 
+from scGraphLLM._globals import * ## these define the id for the special tokens 
 from scGraphLLM.transformer_modules import *
 
 class LitScGraphLLM(pl.LightningModule):
@@ -18,12 +18,12 @@ class LitScGraphLLM(pl.LightningModule):
             padding_idx=PAD_GENE_IDX
         )
         
-        self.rank_embedding = torch.nn.Embedding(
-            num_embeddings=config.model_config.num_ranks, 
+        self.expression_embedding = torch.nn.Embedding(
+            num_embeddings=config.model_config.num_expression_bins, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_RANK_IDX
+            padding_idx=PAD_EXPRESSION_IDX
         )
-        self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
+        self.expression_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_expression_bins)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
         
@@ -32,41 +32,41 @@ class LitScGraphLLM(pl.LightningModule):
     
     def _step(self, batch, batch_idx):
         learned_cell_embedding, target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
-        predicted_expression_id = self.rank_prediction_head(learned_cell_embedding)
-        gene_mask_locs, expression_mask_locs, rank_mask_locs = mask_locs
-        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, rank_mask_locs)
-        loss = L_mlm_rankonly
-        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, rank_mask_locs)
+        predicted_expression = self.expression_prediction_head(learned_cell_embedding)
+        expression_mask_locs = mask_locs
+        
+        L_mlm_expression = self.mlm_loss(predicted_expression, target_expression_ids, expression_mask_locs)
+        loss = L_mlm_expression
+        expression_perplexity = self.pseudo_perp(predicted_expression, target_expression_ids, expression_mask_locs)
+        
         if type(batch) == dict:
             subset = batch["dataset_name"][0]
         else:
             subset = batch.dataset_name[0]
 
-        self.log(f'{subset}_loss', loss, batch_size=1, add_dataloader_idx=False)
-        self.log(f'{subset}_mlm_rankonly_loss', L_mlm_rankonly, batch_size=expression_mask_locs.sum(), add_dataloader_idx=False)
-        self.log(f"{subset}_rank_perplexity", rank_pp, batch_size=1, add_dataloader_idx=False)
+        self.log(f'{subset}_loss', loss, batch_size=1, add_dataloader_idx=False, sync_dist=True) 
+        # self.log(f'{subset}_mlm_expression_loss', L_mlm_expression, batch_size=expression_mask_locs.sum(), add_dataloader_idx=False, sync_dist=True)
+        self.log(f"{subset}_expression_perplexity", expression_perplexity, batch_size=1, add_dataloader_idx=False, sync_dist=True)
         return loss
         
     def training_step(self, batch, batch_idx):
         loss = self._step(batch, batch_idx)
         return loss
         
-
     def validation_step(self, batch, batch_idx, dataloader_idx):
         loss = self._step(batch, batch_idx)
         return loss
 
-
-    def mlm_loss(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
+    def mlm_loss(self, predicted_gene_id, expression_global_gene_id, mask_locs):
         masked_predictions = predicted_gene_id[mask_locs, :] ## because we record the location of the masked tokens, we cna retrieve just the masked tokens, and collapse the first dimension, ie mapping from n x r x G to m x G where m is the number of masked tokens
-        labels = rank_global_gene_indices[mask_locs]
+        labels = expression_global_gene_id[mask_locs]
         loss = F.cross_entropy(masked_predictions,labels)
         return loss
 
-    def pseudo_perp(self, predicted_gene_id, rank_global_gene_indices, mask_locs):
+    def pseudo_perp(self, predicted_gene_id, expression_global_gene_id, mask_locs):
         
         masked_predictions = predicted_gene_id[mask_locs, :] ## because we record the location of the masked tokens, we cna retrieve just the masked tokens, and collapse the first dimension, ie mapping from n x r x G to m x G where m is the number of masked tokens
-        labels = rank_global_gene_indices[mask_locs]
+        labels = expression_global_gene_id[mask_locs]
 
         # Get softmax probabilities
         sft = nn.Softmax(dim=1)
@@ -138,13 +138,13 @@ class GDTransformer(LitScGraphLLM):
             padding_idx=PAD_GENE_IDX
         )
         
-        self.rank_embedding = torch.nn.Embedding(
-            num_embeddings=config.model_config.num_ranks, 
+        self.expression_embedding = torch.nn.Embedding(
+            num_embeddings=config.model_config.num_expression_bins, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_RANK_IDX
+            padding_idx=PAD_EXPRESSION_IDX
         )
         
-        self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
+        self.expression_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_expression_bins)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
         self.use_attn_mask = self.tconfig.use_attn_mask
@@ -152,30 +152,27 @@ class GDTransformer(LitScGraphLLM):
 
     def forward(self, batch):        
         orig_gene_id = batch["orig_gene_id"]
-        orig_rank_indices = batch["orig_rank_indices"]
-        mask = batch["rank_mask"] # SELECT MASK OPTION HERE
-        pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
+        orig_expression_id = batch["orig_expression_id"]
+        mask = batch["expression_mask"]
         edge_index_list = batch["edge_index"]
         num_nodes_list = batch["num_nodes"]
+        pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
         
         # IMPORTANT: Copy/clone the gene IDs and expression tensors, altering the originals will alter the training labels
         gene_ids = orig_gene_id.clone()
-        expression = orig_rank_indices.clone()
+        expression = orig_expression_id.clone() # Note above mainly applies to expression
         
         # Mask specified gene IDs and expression values
-        gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
-        expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
+        expression[mask] = torch.tensor(MASK_EXPRESSION_IDX, dtype=gene_ids.dtype)
         
         # shape assertions for graph features
         if self.use_PE:
             assert pe.shape[1] == gene_ids.shape[1], f"Expect seqlen to be {gene_ids.shape[1]}, Got {pe.shape[1]}"
         
-        mask_locs = [batch["gene_mask"], batch["rank_mask"], batch["both_mask"]]
-        
         node_embedding = self.gene_embedding(gene_ids) 
-        rank_embedding = self.rank_embedding(expression)
+        expression_embedding = self.expression_embedding(expression)
         
-        combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
+        combined_embedding = torch.concat([node_embedding, expression_embedding], dim=2)
         
         if self.tconfig.num_encoder_layers == 1:
             combined_embedding = self.transformer_encoder(combined_embedding, p=pe, 
@@ -191,8 +188,8 @@ class GDTransformer(LitScGraphLLM):
         del gene_ids
         del expression
         
-        # IMPORTANT: Make sure to return the correct orig_gene_id & orig_rank_indices as these are the un-altered, unmasked training labels (do not return gene_ids & expression)
-        return combined_embedding, orig_gene_id, orig_rank_indices, mask_locs, edge_index_list, num_nodes_list
+        # IMPORTANT: Make sure to return the correct orig_gene_id & orig_expression_id as these are the un-altered, unmasked training labels (do not return gene_ids & expression)
+        return combined_embedding, orig_gene_id, orig_expression_id, mask, edge_index_list, num_nodes_list
 
 
 # ------------------------------
@@ -219,7 +216,6 @@ class Perturb_GDTransformer(GDTransformer):
         num_nodes_list = batch["num_nodes"]
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None
         
-        # FIXME - WE SPLIT THE NODE_EMBEDDING INTO GENE/RANK_EMBEDDING
         ctrl_exp_embedding = self.node_embedding(x_c)
         
         if self.tconfig.num_encoder_layers == 1:
@@ -265,17 +261,17 @@ class Perturb_GDTransformer(GDTransformer):
     def training_step(self, batch, batch_idx):
         x_c, x_p, x_p_hat = self(batch)
         loss, mmd, ate_align = self.fine_tune_loss(x_c, x_p, x_p_hat)
-        self.log("train_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False)
-        self.log("mmd_train", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False)
-        self.log("ATE_align_train", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("train_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False, sync_dist=True)
+        self.log("mmd_train", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False, sync_dist=True)
+        self.log("ATE_align_train", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False, sync_dist=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
         x_c, x_p, x_p_hat = self(batch)
         loss, mmd, ate_align = self.fine_tune_loss(x_c, x_p, x_p_hat)
-        self.log("val_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False)
-        self.log("mmd_val", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False)
-        self.log("ATE_align_val", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("val_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False, sync_dist=True)
+        self.log("mmd_val", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False, sync_dist=True)
+        self.log("ATE_align_val", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False, sync_dist=True)
         return loss
     
     def configure_optimizers(self):

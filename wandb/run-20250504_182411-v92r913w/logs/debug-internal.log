@@ -1,0 +1,18 @@
+{"time":"2025-05-04T18:24:12.002881114-07:00","level":"INFO","msg":"using version","core version":"0.18.3"}
+{"time":"2025-05-04T18:24:12.002893682-07:00","level":"INFO","msg":"created symlink","path":"/hpc/mydata/leo.dupire/GLM/scGraphLLM/wandb/run-20250504_182411-v92r913w/logs/debug-core.log"}
+{"time":"2025-05-04T18:24:12.005918108-07:00","level":"ERROR","msg":"dialing: google: could not find default credentials. See https://cloud.google.com/docs/authentication/external/set-up-adc for more information"}
+{"time":"2025-05-04T18:24:12.034267497-07:00","level":"INFO","msg":"created new stream","id":"v92r913w"}
+{"time":"2025-05-04T18:24:12.034282832-07:00","level":"INFO","msg":"stream: started","id":"v92r913w"}
+{"time":"2025-05-04T18:24:12.034296152-07:00","level":"INFO","msg":"handler: started","stream_id":{"value":"v92r913w"}}
+{"time":"2025-05-04T18:24:12.034335813-07:00","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"v92r913w"}}
+{"time":"2025-05-04T18:24:12.034434456-07:00","level":"INFO","msg":"sender: started","stream_id":{"value":"v92r913w"}}
+{"time":"2025-05-04T18:24:12.569530224-07:00","level":"INFO","msg":"wandb-core","!BADKEY":null}
+{"time":"2025-05-04T18:24:12.572787933-07:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-05-04T18:24:13.581997572-07:00","level":"INFO","msg":"stream: closing","id":"v92r913w"}
+{"time":"2025-05-04T18:24:13.582012774-07:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-05-04T18:24:13.611584922-07:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-05-04T18:24:15.914805179-07:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-05-04T18:24:16.030866209-07:00","level":"INFO","msg":"handler: closed","stream_id":{"value":"v92r913w"}}
+{"time":"2025-05-04T18:24:16.030903156-07:00","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"v92r913w"}}
+{"time":"2025-05-04T18:24:16.031037578-07:00","level":"INFO","msg":"sender: closed","stream_id":{"value":"v92r913w"}}
+{"time":"2025-05-04T18:24:16.032083246-07:00","level":"INFO","msg":"stream: closed","id":"v92r913w"}

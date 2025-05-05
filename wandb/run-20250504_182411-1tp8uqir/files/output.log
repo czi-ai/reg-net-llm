@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py", line 230, in <module>
+    main(args)
+  File "/hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py", line 182, in main
+    trainer.fit(litmodel, train_dataloaders = train_transformer_dl, val_dataloaders = val_transformer_dl)
+  File "/hpc/mydata/leo.dupire/anaconda/23.1.0-3/x86_64/envs/scllm/lib/python3.9/site-packages/lightning/pytorch/trainer/trainer.py", line 538, in fit
+    call._call_and_handle_interrupt(
+  File "/hpc/mydata/leo.dupire/anaconda/23.1.0-3/x86_64/envs/scllm/lib/python3.9/site-packages/lightning/pytorch/trainer/call.py", line 46, in _call_and_handle_interrupt
+    return trainer.strategy.launcher.launch(trainer_fn, *args, trainer=trainer, **kwargs)
+  File "/hpc/mydata/leo.dupire/anaconda/23.1.0-3/x86_64/envs/scllm/lib/python3.9/site-packages/lightning/pytorch/strategies/launchers/subprocess_script.py", line 99, in launch
+    self.cluster_environment.validate_settings(num_devices=self.num_processes, num_nodes=self.num_nodes)
+  File "/hpc/mydata/leo.dupire/anaconda/23.1.0-3/x86_64/envs/scllm/lib/python3.9/site-packages/lightning/fabric/plugins/environments/slurm.py", line 163, in validate_settings
+    raise ValueError(
+ValueError: You set `devices=2` in Lightning, but the number of tasks per node configured in SLURM `--ntasks-per-node=8` does not match. HINT: Set `devices=8`.
