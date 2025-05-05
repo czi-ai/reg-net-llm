@@ -19,7 +19,6 @@ import glob
 from config import *
 from torch_geometric.loader import DataLoader
 from wandb_checkpoint import SaveModelEveryNSteps
-# import torchsummary
 from scGraphLLM._globals import *
 
 def generate_random_string(length):

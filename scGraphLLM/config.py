@@ -172,10 +172,11 @@ graph_kernel_attn_4096_TEST = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
@@ -220,10 +221,11 @@ graph_kernel_attn_4096 = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
@@ -268,10 +270,11 @@ graph_kernel_attn_1DIFF_4096 = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
@@ -316,10 +319,11 @@ graph_kernel_attn_2DIFF_A_4096 = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
@@ -364,10 +368,11 @@ graph_kernel_attn_2DIFF_B_4096 = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
@@ -412,10 +417,11 @@ graph_kernel_attn_3L_4096 = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
@@ -460,10 +466,11 @@ graph_kernel_attn_6L_4096 = Config({
         "loss":"mlm"
     }),
     "optim_config":Config({
-        "optimizer": torch.optim.Adam,
+        "optimizer": torch.optim.AdamW,
         "args":{
-            "lr": 0.0001,
-            "betas": [0.9, 0.999]
+            "lr": 0.00005,
+            "betas": [0.9, 0.999],
+            "weight_decay": 0.0001,
          }
     }),
     "repo_name":"scGraphLLM",
