@@ -29,7 +29,13 @@ from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
 from scGraphLLM._globals import NUM_BINS
-from utils import mask_values, get_locally_indexed_edges, get_locally_indexed_masks_expressions, save_embedding
+from utils import (
+    mask_values, 
+    get_locally_indexed_edges, 
+    get_locally_indexed_masks_expressions, 
+    save_embedding,
+    collect_metadata
+)
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
 gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
@@ -55,34 +61,11 @@ parser.add_argument("--mask_value", type=float, default=1e-4)
 parser.add_argument("--retain_obs_vars", nargs="+", default=[])
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
+parser.add_argument("--batch_size", type=int, default=256)
 parser.add_argument("--cache", action="store_true")
 args = parser.parse_args()
 
 
-def collate_fn(batch):
-    data = {
-        "orig_gene_id" : [], 
-        "orig_rank_indices" : [], 
-        "gene_mask" : [], 
-        "rank_mask" : [], 
-        "both_mask" : [], 
-        "edge_index": [], 
-        "num_nodes" :[], 
-        # "spectral_pe" : [], 
-        "dataset_name" : [] 
-    }
-    
-    # Make a dictionary of lists from the list of dictionaries
-    for b in batch:
-        for key in data.keys():
-            data[key].append(b[key])
-
-    # Pad these dictionaries of lists
-    for key in data.keys():
-        if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
-            data[key] = pad_sequence(data[key], batch_first=True).squeeze()
-
-    return data
 
 def get_edges_dict(edges_list):
     edges = {}
@@ -96,6 +79,7 @@ def get_edges_dict(edges_list):
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
+
     global_gene_df = pd.read_csv(args.gene_index_path)
     global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
     global_node_to_gene = global_gene_df.set_index("idx")["gene_name"].to_dict()
@@ -136,13 +120,14 @@ def main(args):
     
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=16,
+        batch_size=args.batch_size,
         shuffle=False,
-        collate_fn=collate_fn
+        collate_fn=scglm_collate_fn
     )
     
     # Load model
-    model: GDTransformer = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_manitou)
+    # model: GDTransformer = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_4096_TEST)
+    model = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_3L_4096)
     
     # Get embeddings
     print(f"Performing forward pass...")
@@ -174,35 +159,38 @@ def main(args):
             embedding_list.append(embedding.cpu().numpy())
             seq_lengths.append(batch["num_nodes"])
 
-    seq_lengths = np.concatenate(seq_lengths, axis=0)
+    seq_lengths = np.concatenate(seq_lengths, axis=0) # increment for cls token
     max_seq_length = max(seq_lengths)
     edges = get_edges_dict(edges_list)
     embeddings = np.concatenate([
-        np.pad(emb, pad_width=((0, 0), (0, max_seq_length - emb.shape[1]), (0, 0)), 
+        np.pad(emb, pad_width=((0, 0), (0, max_seq_length + 1 - emb.shape[1]), (0, 0)), # +1 to account for CLS token
                mode="constant", constant_values=0)
         for emb in embedding_list
-    ], axis=0) 
+    ], axis=0)
+
+    # split embedding into cls and gene embeddings
+    x_cls, x = embeddings[:,[0],:], embeddings[:,1:,:]
+
     input_gene_ids = np.concatenate([
-        np.pad(gene_ids, pad_width=((0, 0), (0, max_seq_length - gene_ids.shape[1])), 
+        np.pad(gene_ids, pad_width=((0, 0), (0, max_seq_length + 1 - gene_ids.shape[1])), 
                mode="constant", constant_values=global_gene_to_node['<PAD>'])
         for gene_ids in input_gene_ids_list
     ], axis=0)
     input_genes = np.vectorize(global_node_to_gene.get)(input_gene_ids)
-    # get original expression
+
+    # remove cls token
+    input_genes = input_genes[:, 1:]
+    
+    # get original expression, exluding cls
     expression = np.concatenate([
         np.pad(adata_original[i, genes[:seq_lengths[i]]].X.toarray(), 
                pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
                mode="constant", constant_values=0)
-        for i, genes in enumerate(input_genes)
+        for i, genes in enumerate(input_genes) # exclude cls token
     ], axis=0)
 
     # retain requested metadata
-    metadata = {}
-    for var in args.retain_obs_vars:
-        try:
-            metadata[var] = adata.obs[var]
-        except KeyError:
-            print(f"Key {var} not in observational metadata...")
+    metadata = collect_metadata(adata, args.retain_obs_vars)
 
     print("Saving emeddings...")
     # TODO: 1. Write embedding for each cell to embedding cache directory
@@ -213,7 +201,8 @@ def main(args):
             file=args.emb_path,
             cache=args.cache,
             cache_dir=args.emb_cache,
-            x=embeddings,
+            x=x,
+            x_cls=x_cls,
             seq_lengths=seq_lengths,
             edges=edges,
             masked_edges=masked_edges,
@@ -226,7 +215,8 @@ def main(args):
             file=args.emb_path,
             cache=args.cache,
             cache_dir=args.emb_cache,
-            x=embeddings,
+            x=x,
+            x_cls=x_cls,
             expression=expression,
             seq_lengths=seq_lengths,
             edges=edges,
@@ -239,13 +229,16 @@ def main(args):
         file=args.emb_path,
         cache=args.cache,
         cache_dir=args.emb_cache,
-        x=embeddings,
+        x=x,
+        x_cls=x_cls,
         seq_lengths=seq_lengths,
         edges=edges,
         masks=masks,
         masked_expressions=masked_expressions,
         metadata=metadata
     )
+
+
 
 
 if __name__ == "__main__":

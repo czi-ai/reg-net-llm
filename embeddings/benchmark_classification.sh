@@ -64,10 +64,10 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --patience 5
 
 python $benchmark_script \
-    --dataset human_immune_scglm_5000_steps \
+    --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001 \
     --split_config random \
     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-    --suffix human_immune_scglm_5000_steps \
+    --suffix human_immune_scglm_cls_3L_12000_steps_MLM_001 \
     --use_weighted_ce \
     --task cls \
     --target final_annotation \

@@ -31,12 +31,12 @@ class LitScGraphLLM(pl.LightningModule):
         pass
     
     def _step(self, batch, batch_idx):
-        learned_cell_embedding,  target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
-        predicted_expression_id= self.rank_prediction_head(learned_cell_embedding)
-        gene_mask_locs, expression_mask_locs, both_mask_locs = mask_locs
-        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, expression_mask_locs)
+        learned_cell_embedding, target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
+        predicted_expression_id = self.rank_prediction_head(learned_cell_embedding)
+        gene_mask_locs, expression_mask_locs, rank_mask_locs = mask_locs
+        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, rank_mask_locs)
         loss = L_mlm_rankonly
-        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, expression_mask_locs)
+        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, rank_mask_locs)
         if type(batch) == dict:
             subset = batch["dataset_name"][0]
         else:
@@ -92,9 +92,19 @@ class GDTransformer(LitScGraphLLM):
     def __init__(self, config):
         super().__init__(config)
         self.tconfig = config.transformer_config
-        
-        if self.tconfig.num_encoder_layers == 1:
-            self.transformer_encoder = FlashTransformerEncoderLayer(
+
+        self.transformer_encoder = nn.ModuleList()
+        for i in range(self.tconfig.num_encoder_layers):
+            # Below if-statement ensures the application of GK diffusion to the desired layers
+            if type(self.tconfig.use_flash_attn) == list: # Check if ONLY specified transformer layers will use GK diffusion
+                use_attn = False # Default assumes no GK diffusion on this layer
+                if i in self.tconfig.use_flash_attn: # If this transformer layer should use GK diffusion
+                    use_attn = True
+            else:
+                use_attn = self.tconfig.use_flash_attn # Where self.tconfig.use_flash_attn is a boolean value  
+
+            self.transformer_encoder.append(
+                FlashTransformerEncoderLayer(
                     self.tconfig.transformer_dim.input_dim, 
                     self.tconfig.num_heads, 
                     self.tconfig.transformer_dim.feed_dim, 
@@ -105,32 +115,8 @@ class GDTransformer(LitScGraphLLM):
                     use_PE=self.tconfig.use_pe,
                     use_flash_attn=self.tconfig.use_flash_attn,
                     fine_tuning=self.tconfig.fine_tuning,
-                )
-        else:
-            self.transformer_encoder = nn.ModuleList()
-            for i in range(self.tconfig.num_encoder_layers):
-                # Below if-statement ensures the application of GK diffusion to the desired layers
-                if type(self.tconfig.use_flash_attn) == list: # Check if ONLY specified transformer layers will use GK diffusion
-                    use_attn = False # Default assumes no GK diffusion on this layer
-                    if i in self.tconfig.use_flash_attn: # If this transformer layer should use GK diffusion
-                        use_attn = True
-                else:
-                    use_attn = self.tconfig.use_flash_attn # Where self.tconfig.use_flash_attn is a boolean value  
-
-                self.transformer_encoder.append(
-                    FlashTransformerEncoderLayer(
-                        self.tconfig.transformer_dim.input_dim, 
-                        self.tconfig.num_heads, 
-                        self.tconfig.transformer_dim.feed_dim, 
-                        self.tconfig.dropout, 
-                        self.tconfig.activation, 
-                        self.tconfig.batch_first,
-                        use_attn_mask=self.tconfig.use_attn_mask,
-                        use_PE=self.tconfig.use_pe,
-                        use_flash_attn=self.tconfig.use_flash_attn,
-                        fine_tuning=self.tconfig.fine_tuning,
-                    )   
-                )
+                )   
+            )
         
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 
@@ -150,35 +136,47 @@ class GDTransformer(LitScGraphLLM):
         self.use_attn_mask = self.tconfig.use_attn_mask
         self.use_PE = self.tconfig.use_pe
 
-    def forward(self, batch):
+    def forward(self, batch):        
         orig_gene_id = batch["orig_gene_id"]
-        orig_rank_id = batch["orig_rank_indices"]
+        orig_rank_indices = batch["orig_rank_indices"]
+        mask = batch["rank_mask"] # SELECT MASK OPTION HERE
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None # shape = (batch_size, seq_len, d_emb)
         edge_index_list = batch["edge_index"]
         num_nodes_list = batch["num_nodes"]
         
+        # IMPORTANT: Copy/clone the gene IDs and expression tensors, altering the originals will alter the training labels
+        gene_ids = orig_gene_id.clone()
+        expression = orig_rank_indices.clone()
+        
+        # Mask specified gene IDs and expression values
+        gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
+        expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
+        
         # shape assertions for graph features
         if self.use_PE:
-            assert pe.shape[1] == orig_gene_id.shape[1], f"Expect seqlen to be {orig_gene_id.shape[1]}, Got {pe.shape[1]}"
+            assert pe.shape[1] == gene_ids.shape[1], f"Expect seqlen to be {gene_ids.shape[1]}, Got {pe.shape[1]}"
         
         mask_locs = [batch["gene_mask"], batch["rank_mask"], batch["both_mask"]]
         
-        node_embedding = self.gene_embedding(orig_gene_id) 
-        rank_embedding = self.rank_embedding(orig_rank_id)
+        node_embedding = self.gene_embedding(gene_ids) 
+        rank_embedding = self.rank_embedding(expression)
         
         combined_embedding = torch.concat([node_embedding, rank_embedding], dim=2)
         
-        if self.tconfig.num_encoder_layers == 1:
-            combined_embedding = self.transformer_encoder(combined_embedding, p=pe, 
-                                                          edge_index_list=edge_index_list, 
-                                                          num_nodes_list=num_nodes_list)
-        else:
-            for encoder_layer in self.transformer_encoder:
-                combined_embedding = encoder_layer(combined_embedding, p=pe, 
-                                               edge_index_list=edge_index_list, 
-                                               num_nodes_list=num_nodes_list)
+        for encoder_layer in self.transformer_encoder:
+            combined_embedding = encoder_layer(
+                combined_embedding, 
+                p=pe, 
+                edge_index_list=edge_index_list, 
+                num_nodes_list=num_nodes_list
+            )
         
-        return combined_embedding, orig_gene_id, orig_rank_id, mask_locs, edge_index_list, num_nodes_list
+        # We have the learned cell embedding, no more need for MASKED gene_ids & expression
+        del gene_ids
+        del expression
+        
+        # IMPORTANT: Make sure to return the correct orig_gene_id & orig_rank_indices as these are the un-altered, unmasked training labels (do not return gene_ids & expression)
+        return combined_embedding, orig_gene_id, orig_rank_indices, mask_locs, edge_index_list, num_nodes_list
 
 
 # ------------------------------

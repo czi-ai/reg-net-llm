@@ -90,3 +90,15 @@ def save_embedding(file, x, cache=False, cache_dir=None, **features):
                 data[k] = v[i]
 
         torch.save(data, os.path.join(cache_dir, f"emb_{i:06d}.pt"))
+
+
+def collect_metadata(adata, retain_obs_vars):
+    metadata = {}
+    for var in retain_obs_vars:
+        if var == "obs_id":
+            adata.obs["obs_id"] = adata.obs.index
+        try:
+            metadata[var] = adata.obs[var]
+        except KeyError:
+            print(f"Key {var} not in observational metadata...")
+    return metadata

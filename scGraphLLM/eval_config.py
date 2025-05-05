@@ -87,10 +87,16 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_5000_steps/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
     ],
-    # "human_immune_scglm_001": [
-    #     f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/embedding.npz"
-    #     for cell_type in IMMUNE_CELL_TYPES
-    # ]
+
+    "human_immune_scglm_6000_steps_cls": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_12L_6000_steps/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
+
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ]
 
 })
 
