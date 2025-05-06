@@ -29,9 +29,9 @@ CELL_TYPES = [
 
 IMMUNE_CELL_TYPES = [
     # Train
-    "cd14_monocytes",
-    "cd20_b_cells",
-    "cd8_t_cells",
+    "cd14_monocytes", # 'CD14+ Monocytes'
+    "cd20_b_cells", # 
+    "cd8_t_cells", # 'CD8+ T cells'
     "nkt_cells",
     # Val
     "erythrocytes",
@@ -83,21 +83,26 @@ EMBEDDING_DATASETS = ({
     ],
 
     # HUMAN IMMUNE
-    "human_immune_scglm_5000_steps": [
-        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_5000_steps/cached_embeddings"
-        for cell_type in IMMUNE_CELL_TYPES
-    ],
-
-    "human_immune_scglm_6000_steps_cls": [
-        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_12L_6000_steps/cached_embeddings"
-        for cell_type in IMMUNE_CELL_TYPES
-    ],
-
+    # scGraphLLM
     "human_immune_scglm_cls_3L_12000_steps_MLM_001": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
-    ]
-
+    ],
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_edge_mask_0.15/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
+    # Geneformer
+    "human_immune_geneformer_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/geneformer/aracne_4096_seq_len_2048/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
+    # scGPT
+    "human_immune_scgpt_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scgpt/aracne_4096_seq_len_2048/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
+    # scFoundation
 })
 
 SPLIT_CONFIGS = {
@@ -118,7 +123,7 @@ SPLIT_CONFIGS = {
         "ratio_config": (1.0, None, None)
     }),
     "human_immune": Config({
-        "metadata_config": ("cancer_type", (None, ["erythrocytes", "cd16_monocytes"], ["cd4_t_cells", "monocyte-derived_dendritic_cells", "nk_cells"])),
+        "metadata_config": ("final_annotation", (None, ['Erythrocytes', 'CD16+ Monocytes'], ['CD4+ T cells', 'Monocyte-derived dendritic cells', 'NK cells'])),
         "ratio_config": (1.0, None, None)
     })
 }

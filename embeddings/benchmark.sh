@@ -84,10 +84,15 @@ echo "Running Benchmark Script..."
 
 # (This is only meaningful for scGLM)
 python $benchmark_script \
+  --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
+  --split_config human_immune \
   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
-  --model scglm \
-  --suffix aracne_4096_mask_0.45 \
-  --task mgm
+  --suffix aracne_4096_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
+  --task mgm \
+  --lr 1e-3 \
+  --num_epochs 200 \
+  --patience 5
+
 
 #================================#
 #=*= MGM using GATConv Layer  #=*#
@@ -102,14 +107,14 @@ python $benchmark_script \
 #   --task mgm \
 #   --use_gat
 
-python $benchmark_script \
-  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
-  --model gf \
-  --suffix aracne_4096_mask_0.45_gat \
-  --task mgm \
-  --use_gat \
-  --generate_edge_masks \
-  --mask_ratio 0.45
+# python $benchmark_script \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
+#   --model gf \
+#   --suffix aracne_4096_mask_0.45_gat \
+#   --task mgm \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --mask_ratio 0.45
 
 # python $benchmark_script \
 #   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \

@@ -32,6 +32,7 @@ ARACNE_N_HVG=4096
 #=*= scGPT #=*=#
 #==============#
 
+# mamba deactivate
 # mamba activate scgpt
 
 # scgpt_embedding_script="/hpc/mydata/rowan.cassius/scGraphLLM/embeddings/scgpt_embedding.py"
@@ -41,60 +42,95 @@ ARACNE_N_HVG=4096
     
 #     python $scgpt_embedding_script \
 #         --data_dir "$immune_cell_type_dir/$cell_type" \
-#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scgpt/aracne_$ARACNE_N_HVG" \
+#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scgpt/aracne_${ARACNE_N_HVG}_seq_len_2048" \
 #         --model_dir /hpc/mydata/rowan.cassius/scGPT/scGPT_human \
 #         --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
 #         --scgpt_rootdir /hpc/mydata/rowan.cassius/scGPT \
-#         --sample_n_cells 1000
+#         --retain_obs_vars final_annotation batch sample_id obs_id \
+#         --sample_n_cells 1000 \
+#         --cache
 # done
 
 #=====================#
 #=*= scFoundation #=*=#
 #=====================#
 
-# mamba activate scllm
+mamba deactivate
+mamba activate scllm
 
-# scf_embedding_script="/hpc/mydata/rowan.cassius/scGraphLLM/embeddings/scfoundation_embedding.py"
+scf_embedding_script="/hpc/mydata/rowan.cassius/scGraphLLM/embeddings/scfoundation_embedding.py"
 
-
-# for cell_type in "${immune_cell_types[@]}"; do
-#     echo "Querying scGPT embeddings for cell type: $cell_type..."
+for cell_type in "${immune_cell_types[@]}"; do
+    echo "Querying scFoundation embeddings for cell type: $cell_type..."
     
-#     python $scf_embedding_script \
-#         --data_dir "$immune_cell_type_dir/$cell_type" \
-#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scfoundation/aracne_$ARACNE_N_HVG" \
-#         --model_path /hpc/mydata/rowan.cassius/scFoundation/model/models/models.ckpt \
-#         --gene_index_path /hpc/mydata/rowan.cassius/scFoundation/model/OS_scRNA_gene_index.19264.tsv \
-#         --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
-#         --scf_rootdir /hpc/mydata/rowan.cassius/scFoundation \
-#         --sample_n_cells 1000
-# done
+    python $scf_embedding_script \
+        --data_dir "$immune_cell_type_dir/$cell_type" \
+        --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scfoundation/aracne_${ARACNE_N_HVG}_seq_len_2048" \
+        --model_path /hpc/mydata/rowan.cassius/scFoundation/model/models/models.ckpt \
+        --gene_index_path /hpc/mydata/rowan.cassius/scFoundation/model/OS_scRNA_gene_index.19264.tsv \
+        --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
+        --scf_rootdir /hpc/mydata/rowan.cassius/scFoundation \
+        --retain_obs_vars final_annotation batch sample_id obs_id \
+        --sample_n_cells 1000 \
+        --cache
+done
 
 # ===================#
 # =*= scGraphLLM #=*=#
 # ===================#
 
-mamba activate scllm
+# mamba deactivate
+# mamba activate scllm
 
-scglm_embedding_script="/hpc/mydata/rowan.cassius/scGraphLLM/embeddings/scglm_embedding.py"
+# scglm_embedding_script="/hpc/mydata/rowan.cassius/scGraphLLM/embeddings/scglm_embedding.py"
 
-for cell_type in "${immune_cell_types[@]}"; do
-    echo "Querying scGraphLLM embeddings for cell type: $cell_type..."
+# for cell_type in "${immune_cell_types[@]}"; do
+#     echo "Querying scGraphLLM embeddings for cell type: $cell_type..."
+
+#     # Without Edge Masks
+#     python $scglm_embedding_script \
+#         --data_dir "$immune_cell_type_dir/$cell_type" \
+#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001" \
+#         --model_path "/hpc/mydata/leo.dupire/GLM/model_out/PRETRAIN [CLS, 3Layer, rank_mask:15%, lr:0.00005, AdamW]:2025-05-05@01:26:24/checkpoints/epoch=0-step=12000.ckpt" \
+#         --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv \
+#         --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
+#         --retain_obs_vars final_annotation batch sample_id obs_id \
+#         --sample_n_cells 1000 \
+#         --cache
+
+#     # With Edge Masks
+#     python $scglm_embedding_script \
+#         --data_dir "$immune_cell_type_dir/$cell_type" \
+#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001_edge_mask_0.15" \
+#         --model_path "/hpc/mydata/leo.dupire/GLM/model_out/PRETRAIN [CLS, 3Layer, rank_mask:15%, lr:0.00005, AdamW]:2025-05-05@01:26:24/checkpoints/epoch=0-step=12000.ckpt" \
+#         --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv \
+#         --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
+#         --retain_obs_vars final_annotation batch sample_id obs_id \
+#         --sample_n_cells 1000 \
+#         --cache \
+#         --use_masked_edges \
+#         --mask_fraction 0.15 \
+#         --use_masked_edges
+# done
+
+
+# ===================#
+# =*= Geneformer #=*=#
+# ===================#
+
+# mamba deactivate
+# mamba activate llm
+
+# gf_embedding_script="/hpc/mydata/rowan.cassius/scGraphLLM/embeddings/geneformer_embedding.py"
+
+# for cell_type in "${immune_cell_types[@]}"; do
+#     echo "Querying scGraphLLM embeddings for cell type: $cell_type..."
     
-    python $scglm_embedding_script \
-        --data_dir "$immune_cell_type_dir/$cell_type" \
-        --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001_edge_mask_0.15" \
-        --model_path "/hpc/mydata/leo.dupire/GLM/model_out/PRETRAIN [CLS, 3Layer, rank_mask:15%, lr:0.00005, AdamW]:2025-05-05@01:26:24/checkpoints/epoch=0-step=12000.ckpt" \
-        --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv \
-        --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
-        --retain_obs_vars final_annotation batch sample_id obs_id \
-        --sample_n_cells 1000 \
-        --cache \
-        --use_masked_edges \
-        --mask_fraction 0.15 \
-        --use_masked_edges
-done
-
-
-# model with good classification
-# --model_path "/hpc/mydata/leo.dupire/GLM/model_out/TEST [CLS, 12Layer]:2025-05-02@03:18:08/checkpoints/epoch=0-step=6000.ckpt.ckpt" \
+#     python $gf_embedding_script \
+#         --data_dir "$immune_cell_type_dir/$cell_type" \
+#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/geneformer/aracne_${ARACNE_N_HVG}_seq_len_2048" \
+#         --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
+#         --retain_obs_vars final_annotation batch sample_id obs_id \
+#         --sample_n_cells 1000 \
+#         --cache
+# done

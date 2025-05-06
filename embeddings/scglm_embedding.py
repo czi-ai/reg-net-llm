@@ -186,7 +186,7 @@ def main(args):
         np.pad(adata_original[i, genes[:seq_lengths[i]]].X.toarray(), 
                pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
                mode="constant", constant_values=0)
-        for i, genes in enumerate(input_genes) # exclude cls token
+        for i, genes in enumerate(input_genes)
     ], axis=0)
 
     # retain requested metadata

@@ -100,6 +100,7 @@ class EmbeddingDataset(Dataset):
                 if data["seq_lengths"] > self.max_seq_length:
                     self.max_seq_length = data["seq_lengths"]
 
+            print(f"Loaded metadata with keys: {self.metadata.keys()}")
             if self.target_metadata_key is not None:
                 self.encode_labels()
             
@@ -928,7 +929,7 @@ def split_dataset(dataset, ratio_config=(None, None, None), metadata_config=None
     
     meta_split_datasets = [None, None, None]
     if metadata_config:
-        key, split_values = metadata_config    
+        key, split_values = metadata_config  
         metadata = pd.DataFrame(dataset.metadata)
         meta_split_datasets = [
             Subset(dataset, indices=metadata[metadata[key].isin(values)].index.tolist()) 
@@ -992,7 +993,8 @@ def main(args):
         dataset = EmbeddingDatasetWithEdgeMasks(
             paths=args.data_paths,
             generate_edge_masks=args.generate_edge_masks,
-            mask_ratio=args.mask_ratio
+            mask_ratio=args.mask_ratio,
+            with_metadata=True
         )
         collate_fn = partial(embedding_collate_fn, masked_edges=True)
     elif args.task == "mlm":

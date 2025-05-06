@@ -11,7 +11,8 @@ from utils import (
     mask_values, 
     get_locally_indexed_edges, 
     get_locally_indexed_masks_expressions, 
-    save_embedding
+    save_embedding,
+    collect_metadata
 )
 
 geneformer_dir = dirname(dirname(abspath(importlib.util.find_spec("geneformer").origin)))
@@ -111,12 +112,7 @@ def main(args):
     ], axis=0)
 
     # retain requested metadata
-    metadata = {}
-    for var in args.retain_obs_vars:
-        try:
-            metadata[var] = adata.obs[var].tolist()
-        except KeyError:
-            print(f"Key {var} not in observational metadata...")
+    metadata = collect_metadata(adata, args.retain_obs_vars)
 
     if args.mask_fraction is None:
         save_embedding(
