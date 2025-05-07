@@ -356,7 +356,7 @@ def make_aracne_counts(
         max_n_sample=500, 
         min_perc_nz=0.001,
         top_n_hvg=None,
-        groupby_var="cluster",
+        groupby_var=None,
         regulators=["tf", "cotf"],
         aracne_dir=None
     ):
@@ -393,8 +393,11 @@ def make_aracne_counts(
         if aracne_adata.shape[0] > max_n_sample:
             sc.pp.subsample(aracne_adata, n_obs=max_n_sample)
         elif aracne_adata.shape[0] < min_n_sample:
-            logger.info(f"Data has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
+            logger.info(f"Data has insufficient sample size of {aracne_adata.shape[0]:,} for ARACNe inference")
             raise ValueError
+
+    print("Writing aracne anndata...")
+    print(aracne_adata)
 
     write_adata_to_csv_buffered(
         aracne_adata, 
@@ -422,7 +425,7 @@ def aracne_preprocess(adata, min_perc_nz, top_n_hvg, regulators):
         hvg_union_regs = set(hvg.index.to_list()).union(set(regulators))
         adata = adata[:, adata.var_names.isin(hvg_union_regs)]
     else:
-        perc_nz = adata.X.sum(axis=0) / adata.shape[1]
+        perc_nz = np.array((adata.X != 0).sum(axis=0)).flatten() / adata.shape[0]
         adata = adata[:, perc_nz > min_perc_nz]
     return adata
 
@@ -441,8 +444,9 @@ def make_metacells(
         adata, 
         target_depth,
         compression, 
-        target_sum, 
-        random_state, 
+        target_sum,
+        random_state,
+        n_cells_per_metacell=None,
         save_path=None, 
         size=None,
         groupby_var="cluster",
@@ -462,7 +466,8 @@ def make_metacells(
                     pca_slot="X_pca", 
                     dist_slot="corr_dist", 
                     size=int(groups[name] * compression) if size is None else size, 
-                    min_median_depth=target_depth, 
+                    n_cells_per_metacell=n_cells_per_metacell,
+                    min_median_depth=None, 
                     clusters_slot=None,
                     key_added=f"metacells",
                     seed=random_state,
@@ -491,7 +496,8 @@ def make_metacells(
             pca_slot="X_pca", 
             dist_slot="corr_dist", 
             size=int(len(adata) * compression) if size is None else size, 
-            min_median_depth=target_depth, 
+            min_median_depth=target_depth,
+            n_cells_per_metacell=n_cells_per_metacell, 
             clusters_slot=None,
             key_added=f"metacells",
             seed=random_state,
@@ -629,6 +635,7 @@ def main(args):
             adata=adata,
             target_depth=args.metacells_target_depth,
             compression=args.metacells_compression,
+            n_cells_per_metacell=args.n_cells_per_metacell,
             size=args.metacells_size,
             target_sum=args.target_sum,
             groupby_var=args.groupby_var,
@@ -639,6 +646,9 @@ def main(args):
         logger.info(f"Made {metacells.shape[0]:,} meta cells with sparsity = {qc_metacells['sparsity']:2f}")  
     else:
         logger.info(f"'metacells' not in steps, skipping generation of metacells...")
+
+    print("Metacells...")
+    print(metacells)
 
     #### Quantization ####
     if "quantize" in args.steps:
@@ -663,7 +673,7 @@ def main(args):
     #### ARACNe ####
     if "aracne" in args.steps:
         qc_aracne = make_aracne_counts(
-            adata=metacells if "metacells" in args.steps else adata,
+            adata=(metacells if "metacells" in args.steps else adata),
             min_n_sample=args.aracne_min_n,
             max_n_sample=args.aracne_max_n,
             min_perc_nz=args.aracne_min_perc_nz,
@@ -711,9 +721,10 @@ if __name__ == "__main__":
     parser.add_argument("--protein_coding", type=bool, default=True)
     parser.add_argument("--sample_index_vars", nargs="+")
     parser.add_argument("--groupby_var", type=str, default=None, help="`cluster`, `sample_id`, or any variable already in obs, None for no grouping")
-    parser.add_argument("--metacells_target_depth", type=float, default=10000)
+    parser.add_argument("--metacells_target_depth", type=float, default=None)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
+    parser.add_argument("--n_cells_per_metacell", type=int, default=3)
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
     parser.add_argument("--aracne_min_perc_nz", type=float, default=0.01)
