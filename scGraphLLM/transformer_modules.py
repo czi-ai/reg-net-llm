@@ -320,8 +320,8 @@ class FlashMHASelfMaskKV(nn.Module):
             self.rot_emb = RotaryEmbeddingESM(self.head_dim)
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
         if fine_tuning:
-            self.perturb_emb = PerturbEmbedding(max_hop=4, embed_dim=self.d_model, 
-                                            hidden_dim=100, output_dim=self.d_model)
+            self.perturb_emb = PerturbEmbedding(max_hop=4, embed_dim=self.d_model, hidden_dim=100, output_dim=self.d_model,
+                                                total_gene_dim=NUM_GENE_PERTURB, batch_size=BATCH_SIZE)
 
     def forward(self, q, k,v, key_padding_mask=None, 
                 edge_index_list=None, num_nodes_list=None, perturb_one_hot=None):
@@ -344,19 +344,24 @@ class FlashMHASelfMaskKV(nn.Module):
             q, k = self.rot_emb(q, k, seq_dimension=-3)
             
         if self.kernel_attn:
-            q_genes = q[:, 1:, :, :]
-            q_cls = q[:, 0, :, :]
-            q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
-            
-            # shift query by perturbational embedding if observing perturb seq data
-            if self.fine_tuning:
+            if not self.fine_tuning:
+                # cls token is only in pre-training
+                q_genes = q[:, 1:, :, :]
+                q_cls = q[:, 0, :, :]
+                q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)    
+                q_final = torch.cat([q_cls.unsqueeze(1), q_genes_diffused], dim=1)
+                q_final = q_final.bfloat16()
+            else:
+                # shift query by perturbational embedding if observing perturb seq data
+                q_genes = q
+                q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
                 assert perturb_one_hot is not None, "need perturbation labels"
                 perturb_bias = self.perturb_emb(edge_index_list, num_nodes_list, perturb_one_hot)
                 assert q_genes_diffused.shape == perturb_bias.shape
                 q_genes_diffused += perturb_bias
-                
-            q_final = torch.cat([q_cls.unsqueeze(1), q_genes_diffused], dim=1)
-            q_final = q_final.bfloat16()
+                q_final = q_genes_diffused
+        else:
+            q_final = q
                 
             
         q_final = rearrange(q_final.type(dtype), 'b s h d -> (b s) h d',

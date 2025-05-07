@@ -8,6 +8,7 @@ from scGraphLLM.GNN_modules import *
 from scGraphLLM.MLP_modules import *
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.transformer_modules import *
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 
 class LitScGraphLLM(pl.LightningModule):
     def __init__(self, config):
@@ -26,17 +27,19 @@ class LitScGraphLLM(pl.LightningModule):
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
+        self.lr_peak = 3e-4
+        self.warmup_frac = 0.10
         
     def forward(self, batch):
         pass
     
     def _step(self, batch, batch_idx):
-        learned_cell_embedding, target_gene_ids, target_expression_ids, mask_locs, edge_index_list, num_nodes_list = self(batch)
+        learned_cell_embedding, _, target_expression_ids, mask_locs, _, _ = self(batch)
         predicted_expression_id = self.rank_prediction_head(learned_cell_embedding)
-        gene_mask_locs, expression_mask_locs, rank_mask_locs = mask_locs
-        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, rank_mask_locs)
+        _, expression_mask_locs, _ = mask_locs
+        L_mlm_rankonly = self.mlm_loss(predicted_expression_id, target_expression_ids, expression_mask_locs)
         loss = L_mlm_rankonly
-        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, rank_mask_locs)
+        rank_pp = self.pseudo_perp(predicted_expression_id, target_expression_ids, expression_mask_locs)
         if type(batch) == dict:
             subset = batch["dataset_name"][0]
         else:
@@ -81,8 +84,23 @@ class LitScGraphLLM(pl.LightningModule):
 
     def configure_optimizers(self):
         optim_fn = self.optim_config["optimizer"]
-        optimizer = optim_fn(self.parameters(), **self.optim_config.args)
-        return optimizer
+        lr_peak = self.lr_peak
+        optimizer = optim_fn(self.parameters(), lr=lr_peak, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01)
+        total_steps = self.trainer.estimated_stepping_batches
+        warm_steps  = int(self.warmup_frac * total_steps)
+        print(f"Total steps: {total_steps}, Warmup steps: {warm_steps}")
+        
+        # dynamic scheduler
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[
+                LinearLR(optimizer, start_factor=1e-5, end_factor=1.0, total_iters=warm_steps),
+                CosineAnnealingLR(optimizer, T_max=total_steps - warm_steps)
+            ],
+            milestones=[warm_steps]
+        )
+        return {"optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
 
 # -------------------------
 # Pre-training Model
@@ -163,7 +181,7 @@ class GDTransformer(LitScGraphLLM):
         expression = orig_rank_indices.clone()
         
         # Mask specified gene IDs and expression values
-        gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
+        #gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
         expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
         
         # shape assertions for graph features
@@ -210,33 +228,38 @@ class Perturb_GDTransformer(GDTransformer):
         if config.model_config.freeze_encoder:
             for param in self.transformer_encoder.parameters():
                 param.requires_grad = False
+        
+        self.linear_proj = nn.Linear(1, config.model_config.node_embedding_dim * 2)
 
     def forward(self, batch):
-        x_c = batch["ctrl_exp"]
-        x_p = batch["perturb_exp"]
-        r_p = batch['perturb_one_hot']
-        edge_index_list = batch["edge_index"]
-        num_nodes_list = batch["num_nodes"]
+        x_c = torch.log1p(batch['control']['orig_rank_indices'])
+        x_p = torch.log1p(batch['perturbed']['orig_rank_indices'])
+        r_p = batch['perturbed']['perturbation']
+        
+        edge_index_list = batch['control']["edge_index"]
+        num_nodes_list = batch['control']["num_nodes"]
         pe = batch["spectral_pe"].to(torch.float32) if self.use_PE else None
         
-        # FIXME - WE SPLIT THE NODE_EMBEDDING INTO GENE/RANK_EMBEDDING
-        ctrl_exp_embedding = self.node_embedding(x_c)
+        x_in = x_c.view(-1, 1).float().to(torch.bfloat16)
+        exp_embedding = self.linear_proj(x_in).view(x_c.shape[0], x_c.shape[1], -1)
+        
         
         if self.tconfig.num_encoder_layers == 1:
-            pert_exp_embedding = self.transformer_encoder(ctrl_exp_embedding, p=pe, 
+            exp_embedding = self.transformer_encoder(exp_embedding, p=pe, 
                                                      edge_index_list=edge_index_list, 
                                                      num_nodes_list=num_nodes_list,
                                                      perturb_one_hot=r_p)
         else:
             for encoder_layer in self.transformer_encoder:
-                pert_exp_embedding = encoder_layer(ctrl_exp_embedding, p=pe, 
-                                               edge_index_list=edge_index_list, 
-                                               num_nodes_list=num_nodes_list,
-                                               perturb_one_hot=r_p)
-        x_p_hat = self.expression_pred_head(pert_exp_embedding).squeeze()
+                exp_embedding = encoder_layer(exp_embedding, p=pe, 
+                                              edge_index_list=edge_index_list, 
+                                              num_nodes_list=num_nodes_list,
+                                              perturb_one_hot=r_p)
+        x_p_hat = self.expression_pred_head(exp_embedding).squeeze()
         assert x_p_hat.shape == x_p.shape
         return x_c, x_p, x_p_hat
     
+    # might need linear runtime version
     def MMD(self, x_p, x_p_hat, bandwidth=1.0):
         gamma = 1.0 / (2 * bandwidth**2)
         yy = torch.cdist(x_p, x_p, p=2)**2
@@ -250,6 +273,24 @@ class Perturb_GDTransformer(GDTransformer):
         
         return k_xx.mean() + k_yy.mean() - 2 * k_xy.mean()
     
+    # notice that variance is shrinked in this
+    def MMD_lin_time(self, x_p, x_p_hat, bandwidth=1.0):
+        gamma = 1.0 / (2 * bandwidth**2)
+        if x_p.shape[0] % 2 != 0:
+            x_p = x_p[:-1]
+        if x_p_hat.shape[0] % 2 != 0:
+            x_p_hat = x_p_hat[:-1]
+
+        x1, x2 = x_p[0::2], x_p[1::2]
+        y1, y2 = x_p_hat[0::2], x_p_hat[1::2]
+
+        k_xx = torch.exp(-gamma * ((x1 - x2) ** 2).sum(dim=1))
+        k_yy = torch.exp(-gamma * ((y1 - y2) ** 2).sum(dim=1))
+        k_xy1 = torch.exp(-gamma * ((x1 - y2) ** 2).sum(dim=1))
+        k_xy2 = torch.exp(-gamma * ((x2 - y1) ** 2).sum(dim=1))
+        return (k_xx + k_yy - k_xy1 - k_xy2).mean()
+        
+    
     def ATE_alignment(self, x_c, x_p, x_p_hat):
         # expectation over cells
         ate_gt = torch.abs(x_p - x_c).mean()
@@ -257,7 +298,7 @@ class Perturb_GDTransformer(GDTransformer):
         return 1 - torch.dot(ate_gt, ate_pred) / (torch.norm(ate_gt) * torch.norm(ate_pred))
         
     def fine_tune_loss(self, x_c, x_p, x_p_hat, bandwidth=1.0):
-        mmd = self.MMD(x_p, x_p_hat, bandwidth)
+        mmd = self.MMD_lin_time(x_p, x_p_hat, bandwidth)
         ate_align = self.ATE_alignment(x_c, x_p, x_p_hat)
         loss = mmd + ate_align
         return loss, mmd, ate_align

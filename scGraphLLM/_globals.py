@@ -13,4 +13,5 @@ PAD_RANK_IDX=(NUM_BINS-1) + 1 # The padding token
 MASK_RANK_IDX=(NUM_BINS-1) + 2 # The mask token
 CLS_TOKEN = (NUM_BINS-1) + 3 # CLS token
 BETA = 0.1 # Diffusion rate
-
+NUM_GENE_PERTURB = 7948 # Number of total genes in perturb seq data
+BATCH_SIZE = 8 # Fine-tuning batch size

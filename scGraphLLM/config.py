@@ -477,3 +477,71 @@ graph_kernel_attn_6L_4096 = Config({
     "wandb_user":"aqlab",
     "wandb_project":"scGraphLLM",
 })
+
+
+"""
+--------------------------------
+Finetune configurations
+--------------------------------
+"""
+graph_kernel_attn_finetune_config = Config({
+    "transformer_dim": transformer_dim,
+    "num_heads": 8,
+    "num_encoder_layers": 3,
+    "activation": "gelu",
+    "dropout": 0.1,
+    "batch_first": True,
+    "use_pe": False,
+    "use_attn_mask": True,
+    "use_flash_attn": True,
+    "fine_tuning": True
+})
+
+dataconfig_perturb = Config({
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_140k/train", "dataset_name": "train"}),
+        "val": [
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_140k/val", "dataset_name":"val"})
+            ],
+        "test": [
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_140k/test", "dataset_name":"test"})
+            ],
+        "run_test":False, 
+        "num_workers": 8,
+        "batch_size": 8
+    })
+
+graph_kernel_attn_4096_perturb = Config({
+    "model": models.Perturb_GDTransformer,
+    "model_config": node_hyperparams,
+    "transformer_config": graph_kernel_attn_finetune_config,
+    "data_config": dataconfig_perturb,
+    "trainer_config": Config({
+        "max_epochs" : 10,
+        "accelerator" : "gpu",
+        "max_time": "05:00:00:00",
+        "devices" : 2,
+        "precision":"bf16",
+        "num_sanity_val_steps" : 0,
+        "log_every_n_steps" : 10,
+        "val_check_interval":0.05,
+        "num_nodes":  1,
+        "strategy" :"ddp_find_unused_parameters_true",
+        "checkpoint_config": {
+                                "save_top_k": -1, # Save all checkpoints
+                                "every_n_train_steps" : 1000 # Save every 5000 training steps
+                            }
+    }),
+    "loss_config":Config({
+        "loss":"mlm"
+    }),
+    "optim_config":Config({
+        "optimizer": torch.optim.Adam,
+        "args":{
+            "lr": 0.0001,
+            "betas": [0.9, 0.999]
+         }
+    }),
+    "repo_name":"scGraphLLM",
+    "wandb_user":"aqlab",
+    "wandb_project":"scGraphLLM",
+})

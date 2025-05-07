@@ -41,7 +41,8 @@ class PerturbEmbedding(nn.Module):
     Input: graphs, perturbation design mat 
     perturb_one_hot: (cell, gene)
     """
-    def __init__(self, max_hop, embed_dim, hidden_dim, output_dim, perturb_one_hot):
+    def __init__(self, max_hop, embed_dim, hidden_dim, output_dim, 
+                 total_gene_dim, batch_size):
         super().__init__()
         self.max_hop = max_hop
         self.embed_dim = embed_dim
@@ -51,10 +52,13 @@ class PerturbEmbedding(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, output_dim)
         ) 
-        self.emb_p = nn.Embedding(perturb_one_hot.shape[0], embed_dim)
+        self.num_genes = total_gene_dim
+        self.proj = nn.Linear(batch_size, embed_dim)
     
     def forward(self, edge_index_list, num_nodes_list, perturb_one_hot):
-        init_emb = self.emb_p(perturb_one_hot.T.argmax(dim=1)) # (gene, embed_dim)
+        one_hot_mat = torch.nn.functional.one_hot(perturb_one_hot, num_classes=self.num_genes).float().T
+        init_emb = self.proj(one_hot_mat) # (gene, embed_dim)
+        assert init_emb.shape == (self.num_genes, self.embed_dim)
         batch_of_emb = []
         device = perturb_one_hot.device
         for i in range(len(edge_index_list)):

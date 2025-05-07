@@ -5,7 +5,7 @@ import json
 import os
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from torch.nn.utils.rnn import pad_sequence
 from utils import update_mconfig_from_dict
 import argparse
@@ -143,7 +143,7 @@ def main(args):
     if mode in {"train", "resume", "debug", "validate"}:
         
         ### Set up PTL trainer callbacks
-        callbacks = []
+        callbacks = [LearningRateMonitor(logging_interval="step")]
         ## do not checkpoint every epoch,  will save time 
         #callbacks.append(ModelCheckpoint(filename = "latest-{epoch}-{step}"))
         
@@ -179,7 +179,9 @@ def main(args):
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         litmodel = model_fn(mconfig)
-        trainer.fit(litmodel, train_dataloaders = train_transformer_dl, val_dataloaders = val_transformer_dl)
+        trainer.fit(litmodel, 
+                    train_dataloaders = train_transformer_dl, 
+                    val_dataloaders = val_transformer_dl)
 
     elif mode == "resume":
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))

@@ -1,13 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=TEST
+#SBATCH --job-name=PRETRAIN
 #SBATCH --output=./slurm_train_out/array_job_%A.out
-#SBATCH --time=1-00:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --nodes=1
-#SBATCH --nodelist=gpu-f-2
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus=2
-#SBATCH --constraint=h100
-#SBATCH --reservation=leo
 #SBATCH -p gpu
 
 #should not need this setting
@@ -47,14 +44,14 @@ done
 
 module load mamba
 module load cuda/12.1.1_530.30.02
-mamba activate scllm
-# mamba activate scllm_2
+# mamba activate scllm
+mamba activate scllm_2
 
 echo
-echo "Initiating GLM training..."
+echo "Initiating pre training..."
 echo
 
-srun python /hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py --config="$CONFIG_NAME" --mode="train" --name="$RUN_NAME"
+srun python /home/mingxuan.zhang/scGraphLLM/scGraphLLM/run_training.py --config="$CONFIG_NAME" --mode="train" --name="$RUN_NAME"
 
 ##########################################################################################
 #################################### EXAMPLE COMMANDS ####################################
