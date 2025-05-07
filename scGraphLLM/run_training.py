@@ -72,7 +72,6 @@ parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, debu
 parser.add_argument('--devices', type=int, help='number of GPUs', default=None)
 parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only, no paths', default=None)
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
-
 args = parser.parse_args()
 
 def main(args):

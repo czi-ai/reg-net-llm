@@ -17,6 +17,8 @@ scripts/.ARACNe3_cached
 scripts/slurm_out
 scripts/ID_corrupted/corrupted_files
 scripts/ID_corrupted/out
+test/test_cache_cxg
+test/test_cache_rep
 slurm_data_out/
 *slurm*
 */lightning_logs/*
