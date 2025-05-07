@@ -20,18 +20,18 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 # =*= Geneformer #=*=#
 # ===================#
 
-# python $benchmark_script \
-#     --dataset human_immune_geneformer_seq_len_2048 \
-#     --split_config random \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
-#     --suffix human_immune_geneformer_seq_len_2048 \
-#     --use_weighted_ce \
-#     --task cls \
-#     --target final_annotation \
-#     --lr 1e-2 \
-#     --batch_size 256 \
-#     --num_epochs 100 \
-#     --patience 5
+python $benchmark_script \
+    --dataset human_immune_geneformer_seq_len_2048 \
+    --split_config random \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
+    --suffix human_immune_geneformer_seq_len_2048 \
+    --use_weighted_ce \
+    --task cls \
+    --target final_annotation \
+    --lr 1e-2 \
+    --batch_size 256 \
+    --num_epochs 100 \
+    --patience 5
 
 # python $benchmark_script 
 #     --dataset gf \
@@ -46,15 +46,12 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --patience 5
 
 
-# ===================#
-# =*= scGraphLLM #=*=#
-# ===================#
-
+# Myeloid Dataset
 # python $benchmark_script \
-#     --dataset scglm_seq_len_512 \
-#     --split_config random \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix mye_512_random_split_2_layers_mean_pool \
+#     --dataset gf_seq_len_2048 \
+#     --split_config mye \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
+#     --suffix mye_gf_seq_len_2048_linear_good_graph \
 #     --use_weighted_ce \
 #     --task cls \
 #     --target cell_type \
@@ -62,6 +59,13 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --batch_size 256 \
 #     --num_epochs 100 \
 #     --patience 5
+
+
+# ===================#
+# =*= scGraphLLM #=*=#
+# ===================#
+
+# Human Immune Dataset 
 
 # python $benchmark_script \
 #     --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001 \
@@ -75,6 +79,21 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --batch_size 256 \
 #     --num_epochs 100 \
 #     --patience 5
+
+# Myeloid Dataset
+# python $benchmark_script \
+#     --dataset mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048 \
+#     --split_config mye \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_linear_good_graph \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5
+
 
 # python $benchmark_script \
 #     --dataset scglm \
@@ -93,15 +112,30 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 # =*= scGPT #=*=#
 # ==============#
 
-python $benchmark_script \
-    --dataset human_immune_scgpt_seq_len_2048 \
-    --split_config random \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
-    --suffix human_immune_scgpt_seq_len_2048 \
-    --use_weighted_ce \
-    --task cls \
-    --target final_annotation \
-    --lr 1e-2 \
-    --batch_size 256 \
-    --num_epochs 100 \
-    --patience 5
+# python $benchmark_script \
+#     --dataset human_immune_scgpt_seq_len_2048 \
+#     --split_config random \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
+#     --suffix human_immune_scgpt_seq_len_2048 \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target final_annotation \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5
+
+
+# Myeloid Dataset
+# python $benchmark_script \
+#     --dataset scgpt_seq_len_2048 \
+#     --split_config mye \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
+#     --suffix mye_scgpt_seq_len_2048_linear_good_graph \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5

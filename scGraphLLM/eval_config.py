@@ -9,12 +9,12 @@ CELL_TYPES = [
     'Mono_CD14',
     'cDC2_CD1C',
     'Macro_LYVE1',
-    'Macro_SPP1',
+    # 'Macro_SPP1',
     'Macro_NLRP3',
-    'Macro_GPNMB',
-    'Macro_INHBA',
-    'Macro_IL1B',
-    'cDC2_CXCR4hi',
+    # 'Macro_GPNMB',
+    # 'Macro_INHBA',
+    # 'Macro_IL1B',
+    # 'cDC2_CXCR4hi',
     # 'cDC2_CD1A', # exclude due to insufficient edge count (< 500)
     # 'Macro_FN1',
     # 'pDC_LILRA4',
@@ -81,6 +81,12 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scgpt/seq_len_512/cached_embeddings"
         for cell_type in CELL_TYPES
     ],
+    # new scGLM model
+    "mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+    
 
     # HUMAN IMMUNE
     # scGraphLLM

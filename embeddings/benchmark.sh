@@ -83,46 +83,55 @@ echo "Running Benchmark Script..."
 #====================================#
 
 # (This is only meaningful for scGLM)
+# python $benchmark_script \
+#   --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
+#   --split_config human_immune \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
+#   --suffix aracne_4096_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
+#   --task mgm \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
+
+
+#=================================#
+#=*= MGM using GATConv Layer  #=*=#
+#=================================#
+
+mask_ratio=0.15
+
 python $benchmark_script \
-  --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
+  --dataset human_immune_geneformer_seq_len_2048 \
   --split_config human_immune \
-  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
-  --suffix aracne_4096_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
+  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
+  --suffix human_immune_geneformer_seq_len_2048_mask_0.15 \
   --task mgm \
+  --mask_ratio $mask_ratio \
+  --use_gat \
+  --generate_edge_masks \
   --lr 1e-3 \
   --num_epochs 200 \
   --patience 5
-
-
-#================================#
-#=*= MGM using GATConv Layer  #=*#
-#================================#
-
-# mask_ratio=0.3
 
 # python $benchmark_script \
 #   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
 #   --model scglm \
 #   --suffix aracne_4096_gat \
-#   --task mgm \
-#   --use_gat
+  # --task mgm \
+  # --use_gat
 
-# python $benchmark_script \
-#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
-#   --model gf \
-#   --suffix aracne_4096_mask_0.45_gat \
-#   --task mgm \
-#   --use_gat \
-#   --generate_edge_masks \
-#   --mask_ratio 0.45
-
-# python $benchmark_script \
-#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
-#   --model scgpt \
-#   --suffix aracne_4096_gat \
-#   --task mgm \
-#   --use_gat \
-#   --generate_edge_masks
+python $benchmark_script \
+  --dataset human_immune_scgpt_seq_len_2048 \
+  --split_config human_immune \
+  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
+  --suffix human_immune_scgpt_seq_len_2048_mask_0.15 \
+  --task mgm \
+  --mask_ratio $mask_ratio \
+  --use_gat \
+  --generate_edge_masks \
+  --lr 1e-3 \
+  --num_epochs 200 \
+  --patience 5
 
 # python $benchmark_script \
 #   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scfoundation \

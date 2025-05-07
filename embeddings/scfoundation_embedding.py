@@ -23,7 +23,8 @@ from utils import (
     mask_values, 
     get_locally_indexed_edges, 
     get_locally_indexed_masks_expressions, 
-    save_embedding
+    save_embedding,
+    collect_metadata
 )
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
@@ -58,6 +59,40 @@ from load import *
 from get_embedding import main_gene_selection
 
 VOCAB_SIZE = 19264
+
+
+def gatherData(data, labels, pad_token_id, max_seq_length=None):
+    # Step 1: Mask non-expressed genes
+    none_labels = ~labels
+    labels = labels.float()
+    labels[none_labels] = -float('Inf')
+
+    # Step 2: Add positional bias to prioritize early columns in ties
+    tmp_data = torch.tensor([(i + 1) * 20000 for i in range(labels.shape[1] - 1, -1, -1)],
+                            device=labels.device)
+    labels += tmp_data
+
+    # Step 3: Determine how many genes to select
+    if max_seq_length is None:
+        value_nums = (~none_labels).sum(1)  # number of expressed genes per cell
+        max_seq_length = int(value_nums.max().item())
+
+    # Step 4: Pad data and labels to ensure enough entries
+    fake_data = torch.full((data.shape[0], max_seq_length), pad_token_id, device=data.device)
+    data = torch.hstack([data, fake_data])
+
+    fake_label = torch.full((labels.shape[0], max_seq_length), -float('Inf'), device=labels.device)
+    labels = torch.hstack([labels, fake_label])
+
+    # Step 5: Select top-k expressed gene indices
+    topk_indices = labels.topk(max_seq_length, dim=1).indices
+
+    # Step 6: Gather data and return
+    new_data = torch.gather(data, dim=1, index=topk_indices)
+    padding_labels = (new_data == pad_token_id)
+
+    return new_data, padding_labels
+
 
 def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature, input_type, pre_normalized, tgthighres, output_type, pool_type, max_seq_length=None):
     #Inference
@@ -122,12 +157,12 @@ def get_embedding(pretrainmodel: torch.nn.Module, pretrainconfig, gexpr_feature,
 
             # data_gene_ids = torch.arange(VOCAB_SIZE+2, device=pretrain_gene_x.device).repeat(pretrain_gene_x.shape[0], 1)
             value_labels = pretrain_gene_x > 0
-            x, x_padding = gatherData(pretrain_gene_x, value_labels, pretrainconfig['pad_token_id'])
+            x, x_padding = gatherData(pretrain_gene_x, value_labels, pretrainconfig['pad_token_id'], max_seq_length=max_seq_length)
             # position_gene_ids, _ = gatherData(data_gene_ids, value_labels, pretrainconfig['pad_token_id'])
             
             # raw embedding tensor
             if output_type=='raw':
-                position_gene_ids, _ = gatherData(data_gene_ids, value_labels, pretrainconfig['pad_token_id'])
+                position_gene_ids, _ = gatherData(data_gene_ids, value_labels, pretrainconfig['pad_token_id'], max_seq_length=max_seq_length)
                 position_gene_ids_list.append(position_gene_ids.detach().cpu().numpy())
                 x = pretrainmodel.token_emb(torch.unsqueeze(x, 2).float(), output_weight = 0)
                 position_emb = pretrainmodel.pos_emb(position_gene_ids)
@@ -311,7 +346,7 @@ def main(args):
     # Load data
     gexpr_feature = preprocess_data(
         gexpr_feature=data_df, 
-        vocab_size=VOCAB_SIZE, 
+        vocab_size=VOCAB_SIZE,
         gene_list=gene_list, 
         pre_normalized=True, 
         input_type="singlecell", 
@@ -336,7 +371,8 @@ def main(args):
         pre_normalized="T",
         tgthighres="t4",
         output_type="raw",
-        pool_type=None
+        pool_type=None,
+        max_seq_length=args.max_seq_length + 2 # add 2 to account for special tokens
     )
     
     id_symbol_map = pd.Series(gexpr_feature.columns).to_dict()
@@ -365,12 +401,8 @@ def main(args):
         for i, genes in enumerate(genes_ensg)
     ], axis=0)
 
-    metadata = {}
-    for var in args.retain_obs_vars:
-        try:
-            metadata[var] = data_original.obs[var].tolist()
-        except KeyError:
-            print(f"Key {var} not in observational metadata...")
+    # get metadata
+    metadata = collect_metadata(data, args.retain_obs_vars)
 
     if args.mask_fraction is None:
         save_embedding(

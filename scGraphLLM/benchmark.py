@@ -52,6 +52,13 @@ import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
+# colors
+NEUTRAL = (.1, .1, .1)
+BLUE = (.0, .4, .8)
+RED = (.8, 0, .1)
+PURPLE = (.3, .3, 0.5)
+GREEN = (.2, .5, 0.3)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def send_to_gpu(data):
@@ -801,11 +808,6 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
                     fpr_test, tpr_test, auc_score_test, precision_test, recall_test, apr_test, 
                     save_path=None):
 
-    NEUTRAL = (.1, .1, .1)
-    BLUE = (.0, .4, .8)
-    RED = (.8, 0, .1)
-    PURPLE = (.3, .3, 0.5)
-    GREEN = (.2, .5, 0.3)
     plt.style.use("ggplot")
     fig, ax = plt.subplots(1, 2, figsize=(18, 8))
 
@@ -858,15 +860,21 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
     return fig, ax
 
 
-def plot_confusion_matrix(y, yhat, save_path=None):
-
-    GREEN = (0.2, 0.5, 0.3)
-    LIGHT_GREEN = tuple(0.5 * g + 0.5 for g in GREEN)
-    custom_cmap = LinearSegmentedColormap.from_list("white_to_lightgreen", [(1, 1, 1), LIGHT_GREEN])
+def plot_confusion_matrix(y, yhat, normalize=True, title="Confusion Matrix", base_color=GREEN, save_path=None):
+    
+    light_color = tuple(0.5 * g + 0.5 for g in base_color)
+    custom_cmap = LinearSegmentedColormap.from_list(name="light_color", colors=[(1, 1, 1), light_color])
 
     # Compute confusion matrix
-    labels = sorted(np.unique(np.concatenate([y, yhat])))  # or custom list
+    labels = sorted(np.unique(np.concatenate([y, yhat])))
     cm = confusion_matrix(y, yhat, labels=labels)
+    
+    if normalize:
+        row_sums = cm.sum(axis=1, keepdims=True)
+        cm = np.divide(cm, row_sums, where=row_sums != 0)  # avoid division by zero
+
+    # Calculate metrics
+    accuracy = accuracy_score(y, yhat)
 
     # Plot using matplotlib
     fig, ax = plt.subplots(figsize=(16, 14))
@@ -875,7 +883,9 @@ def plot_confusion_matrix(y, yhat, save_path=None):
     # Add text annotations
     for i in range(len(cm)):
         for j in range(len(cm)):
-            ax.text(j, i, f"{cm[i, j]:,}", ha='center', va='center', color='black', fontsize=15)
+            value = cm[i, j]
+            display_val = f"{value:.2f}" if normalize else f"{int(value):,}"
+            ax.text(j, i, display_val, ha='center', va='center', color='black', fontsize=15)
 
     # Set labels
     ax.set_xticks(np.arange(len(labels)))
@@ -885,13 +895,12 @@ def plot_confusion_matrix(y, yhat, save_path=None):
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_xlabel('Predicted label', fontsize=20)
     ax.set_ylabel('True label', fontsize=20)
-    ax.set_title('Confusion Matrix', fontsize=20)
+    ax.set_title(f"{title} (Accuracy = {accuracy:.3f})", fontsize=25)
 
     if save_path is not None:
         fig.savefig(save_path)
-        
-    return fig, ax
 
+    return fig, ax
 
 
 def print_dataset_info(name, dataset):
@@ -1044,7 +1053,7 @@ def main(args):
             num_classes=dataset.num_classes,
             class_weights=dataset.class_weights if args.use_weighted_ce else None,
             use_gat=args.use_gat,
-            num_layers=2,
+            num_layers=1,
             pooling="mean"
         )
     elif args.task == "expr":
