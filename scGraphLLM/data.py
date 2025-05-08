@@ -127,7 +127,7 @@ def run_cache(
 
         edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
         edge_weights = torch.tensor(np.array(edges[MI_VALS]))
-        node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
+        node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.int16) # should this be local_gene_to_node?
         data = Data(
             x=node_expression, 
             edge_index=edge_list, 

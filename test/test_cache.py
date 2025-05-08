@@ -84,10 +84,10 @@ class TestRunCachePERTURBED(unittest.TestCase):
             columns=["regulator.values", "target.values", "mi.values", "scc.values", "count.values"]
         )
 
-        X = np.array([[10, 0, 0, 0, 0, 0, 2, 0],
-            [0, 8, 4, 6, 2, 0, 3, 0], 
-            [3, 0, 1, 0, 4, 0, 0, 6], 
-            [2, 40, 1, 3, 3, 8, 0, 23]])
+        X = np.array([[10.4, 0, 0, 0.3, 0, 0, 2.00, 0],
+            [0, 8.235, 4.1, 6.003, 2, 0, 3.01, 0], 
+            [3, 0, 1.27, 0, 4.9, 0, 0, 6.88], 
+            [2.3, 40.1, 1.13, 3.76, 3.76, 8.5, 0, 23.65]])
         
         obs = pd.DataFrame(index=['Cell1', 'Cell2', 'Cell3', 'Cell4'])
         obs["gene_id"] = pd.Series(["ENSG00000000419", "non-targeting", "ENSG00000000460", "ENSG00000000005"], index=obs.index)
