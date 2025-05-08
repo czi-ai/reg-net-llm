@@ -162,7 +162,12 @@ def run_cache_perturbation(
         only_expressed_genes=True,
         skipped=0, 
         ncells=0, 
+<<<<<<< HEAD
         verbose=False
+=======
+        verbose=False,
+        test_mode=False
+>>>>>>> fa69415937e29c1812f6fd71e22c73808d04c1ad
     ):
     """
     Assign local ARACNe graph to each cell and cache each cell
@@ -215,6 +220,7 @@ def run_cache_perturbation(
             if ncells % 1000 == 0:
                 print(f"Processed {ncells} cells", end="\r")
                 
+<<<<<<< HEAD
             # Randomly assign this cell to train, val, or test
             dataset_type_list = ['train', 'val', 'test']
             dataset_type_probabilities = [0.7, 0.2, 0.1] # train, val, test
@@ -222,6 +228,19 @@ def run_cache_perturbation(
             
             # Path to which the file will be cached
             outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
+=======
+            if test_mode: # Only for unit-testing
+                outfile = f"{cache_dir}/{msplit}/{split}/{cell_type}_{i}.pt"
+            else:
+                # Randomly assign this cell to train, val, or test
+                dataset_type_list = ['train', 'val', 'test']
+                dataset_type_probabilities = [0.7, 0.2, 0.1] # train, val, test
+                dataset_type = np.random.choice(dataset_type_list, p=dataset_type_probabilities)
+                
+                # Path to which the file will be cached
+                outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
+                
+>>>>>>> fa69415937e29c1812f6fd71e22c73808d04c1ad
             if (os.path.exists(outfile)) and (not overwrite):
                 ncells+=1
                 continue
@@ -325,6 +344,7 @@ def cache_aracane_and_bins(
                     cache_dir=cache_dir, 
                     overwrite=overwrite, 
                     msplit=msplit, # Change this to seen_graph 
+<<<<<<< HEAD
                     perturbation_var=perturbation_var,
                     valsg_split_ratio=valsg_split_ratio, 
                     cell_type=cell_type, 
@@ -332,6 +352,15 @@ def cache_aracane_and_bins(
                     max_seq_length=None,
                     skipped=skipped, 
                     ncells=ncells
+=======
+                    perturbation_var=perturbation_var, 
+                    valsg_split_ratio=valsg_split_ratio, 
+                    cell_type=cell_type, 
+                    min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+                    max_seq_length=None, 
+                    skipped=skipped, 
+                    ncells=ncells 
+>>>>>>> fa69415937e29c1812f6fd71e22c73808d04c1ad
                 )
                 
             else: # Normal binned expression dataset
@@ -419,6 +448,149 @@ class GraphTransformerDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
                                 num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
+
+
+################################################################################################
+##################################### PERTURBATION DATASET #####################################
+################################################################################################    
+
+# PerturbationDataset provides a control cell and perturbed cell pair from the same cell-line
+# The control cell is sampled randomly from the control population, whereas the perturbed cell is fetched as per usual using indexing
+# The perturbed cell information consists of both the expected cell information (node indices, rank indices, etc.) as well as a single index value
+# representing the perturbed gene's index in the expression matrix columns
+class PerturbationDataset(torchDataset):
+    def __init__(self, cache_dir:str, dataset_name:str, debug:bool=False):
+        """
+        Args:
+            aracne_outdirs (List[str]): list of aracne outdirs. Must be a fullpath 
+            global_gene_to_node_file (str): path to file that maps gene name to integer index 
+            cache_dir (str): path to directory where the processed data will be stored
+        """ 
+        print(cache_dir)     
+        self.debug = debug
+        self.cached_files_perturbed = [cache_dir+"/" + f for f in os.listdir(f"{cache_dir}/perturbed") if f.endswith(".pt")]
+        self.cached_files_control = [cache_dir+"/" + f for f in os.listdir(f"{cache_dir}/control") if f.endswith(".pt")]
+        self.num_control = len(self.cached_files_control) # Record number of control cells for random sampling in __getitem__()
+        self.dataset_name = dataset_name
+
+    def __len__(self):
+        if self.debug:
+            return 1000
+        print(len(self.cached_files))
+        return len(self.cached_files)
+
+    def __getitem__(self, idx, mask_fraction = 0.1):        
+        ######## CONTROL CELL ########
+        # Get cell from the control population
+        control_idx = random.randrange(0, self.num_control) # Get a random index
+        control_cell = torch.load(self.cached_files_control[idx], weights_only=False) # Select random control cell
+        control_node_indices = control_cell.x
+        
+        control_gene_indices = control_node_indices[:, 0].clone()
+        control_rank_indices = control_node_indices[:, 1].clone()
+        control_num_nodes = control_node_indices.shape[0]
+        
+        control_dict = {
+                        "orig_gene_id" : control_gene_indices, 
+                        "orig_rank_indices" : control_rank_indices, 
+                        "edge_index": control_cell.edge_index,
+                        "num_nodes": control_num_nodes,
+                        }
+        
+        
+        ######## PERTURBED CELL ########
+        # Get perturbed cell & one-hot perturbation vector
+        perturbed_cell = torch.load(self.cached_files_perturbed[idx], weights_only=False) # Select perturbed cell
+        perturbed_node_indices = perturbed_cell.x
+        perturbation = perturbed_cell.perturbation # One-hot vector representing which gene was perturbed
+        
+        perturbed_gene_indices = perturbed_node_indices[:, 0].clone()
+        perturbed_rank_indices = perturbed_node_indices[:, 1].clone()
+        perturbed_num_nodes = perturbed_node_indices.shape[0]
+        
+        perturbed_dict = {
+                            "perturbation": perturbation, # Perturbation one-hot vector
+                            "orig_gene_id" : perturbed_gene_indices, 
+                            "orig_rank_indices" : perturbed_rank_indices, 
+                            "edge_index": perturbed_cell.edge_index,
+                            "num_nodes": num_nodes,
+                         }
+
+
+        # graph positional encoding
+        # spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
+        
+        return {
+                "control" : control_dict,
+                "perturbed": perturbed_dict,
+                "dataset_name" : self.dataset_name
+                }
+
+
+class PerturbationDataModule(pl.LightningDataModule):
+    def __init__(self, data_config, collate_fn=None):
+        super().__init__()
+        self.data_config = data_config
+        self.train_ds = PerturbationDataset(**data_config.train)
+        self.val_ds = [PerturbationDataset(**val) for val in data_config.val]
+        
+        if collate_fn: # If a collate function is specified
+            self.collate_fn = collate_fn
+        else: # Otherwise use default
+            self.collate_fn = self.perturbation_collate_fn
+        
+        if data_config.run_test:
+            self.test_ds = [PerturbationDataset(**test) for test in data_config.test]
+    
+    def perturbation_collate_fn(self, batch):
+        control = { 
+            "orig_gene_id" : [],
+            "orig_rank_indices" : [],
+            "edge_index": [],
+            "num_nodes" :[],
+        }
+
+        perturbed = { 
+            "perturbation": [],
+            "orig_gene_id" : [],
+            "orig_rank_indices" : [],
+            "edge_index": [],
+            "num_nodes" :[],
+        }
+        
+        # Create lists of values (for each sample in the batch) for each key (orig_gene_id, orig_rank_indices, etc.)
+        for sample in batch:
+            for key in control.keys():
+                control[key].append(sample["control"][key])
+                perturbed[key].append(sample["perturbed"][key])
+            perturbed["perturbation"].append(sample["perturbed"]["perturbation"]) # manually add perturbation information as this is not a key in control.keys()
+            
+        # Pad these lists
+        for key in control.keys():
+            if (key != "edge_index") and (key != "num_nodes"):
+                control[key] = pad_sequence(control[key], batch_first=True)
+                perturbed[key] = pad_sequence(perturbed[key], batch_first=True)
+            # perturbed["perturbation"] = pad_sequence(perturbed["perturbation"], batch_first=True) # Not needed as these should all already be the same size 
+        
+        one_hot_dim = perturbed["perturbation"][0].shape
+        assert all([prt.shape == one_hot_dim for prt in perturbed["perturbation"]]) # Check all perturbations one-hot vectors are the same shape
+
+        data = {
+            "control": control,
+            "perturbed": perturbed,
+            "dataset_name" : batch[0]["dataset_name"]
+        }
+        return data    
+    
+    def train_dataloader(self):
+        return torchDataLoader(self.train_ds, batch_size=self.data_config.batch_size, 
+                               num_workers=self.data_config.num_workers, collate_fn=self.collate_fn)
+    def val_dataloader(self):
+        return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, 
+                                num_workers=self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [torchDataLoader(test_ds, batch_size=self.data_config.batch_size, 
+                                num_workers=self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
 
 
 if __name__ == "__main__":
