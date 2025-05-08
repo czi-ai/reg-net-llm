@@ -162,12 +162,8 @@ def run_cache_perturbation(
         only_expressed_genes=True,
         skipped=0, 
         ncells=0, 
-<<<<<<< HEAD
-        verbose=False
-=======
         verbose=False,
         test_mode=False
->>>>>>> fa69415937e29c1812f6fd71e22c73808d04c1ad
     ):
     """
     Assign local ARACNe graph to each cell and cache each cell
@@ -220,7 +216,6 @@ def run_cache_perturbation(
             if ncells % 1000 == 0:
                 print(f"Processed {ncells} cells", end="\r")
                 
-<<<<<<< HEAD
             # Randomly assign this cell to train, val, or test
             dataset_type_list = ['train', 'val', 'test']
             dataset_type_probabilities = [0.7, 0.2, 0.1] # train, val, test
@@ -228,7 +223,7 @@ def run_cache_perturbation(
             
             # Path to which the file will be cached
             outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
-=======
+
             if test_mode: # Only for unit-testing
                 outfile = f"{cache_dir}/{msplit}/{split}/{cell_type}_{i}.pt"
             else:
@@ -240,7 +235,6 @@ def run_cache_perturbation(
                 # Path to which the file will be cached
                 outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
                 
->>>>>>> fa69415937e29c1812f6fd71e22c73808d04c1ad
             if (os.path.exists(outfile)) and (not overwrite):
                 ncells+=1
                 continue
@@ -344,15 +338,6 @@ def cache_aracane_and_bins(
                     cache_dir=cache_dir, 
                     overwrite=overwrite, 
                     msplit=msplit, # Change this to seen_graph 
-<<<<<<< HEAD
-                    perturbation_var=perturbation_var,
-                    valsg_split_ratio=valsg_split_ratio, 
-                    cell_type=cell_type, 
-                    min_genes_per_graph=MIN_GENES_PER_GRAPH,
-                    max_seq_length=None,
-                    skipped=skipped, 
-                    ncells=ncells
-=======
                     perturbation_var=perturbation_var, 
                     valsg_split_ratio=valsg_split_ratio, 
                     cell_type=cell_type, 
@@ -360,7 +345,6 @@ def cache_aracane_and_bins(
                     max_seq_length=None, 
                     skipped=skipped, 
                     ncells=ncells 
->>>>>>> fa69415937e29c1812f6fd71e22c73808d04c1ad
                 )
                 
             else: # Normal binned expression dataset
