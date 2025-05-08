@@ -330,13 +330,13 @@ def cache_aracane_and_bins(
                     cache_dir=cache_dir, 
                     overwrite=overwrite, 
                     msplit=msplit, # Change this to seen_graph 
-                    perturbation_var=perturbation_var,
+                    perturbation_var=perturbation_var, 
                     valsg_split_ratio=valsg_split_ratio, 
                     cell_type=cell_type, 
-                    min_genes_per_graph=MIN_GENES_PER_GRAPH,
-                    max_seq_length=None,
+                    min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+                    max_seq_length=None, 
                     skipped=skipped, 
-                    ncells=ncells
+                    ncells=ncells 
                 )
                 
             else: # Normal binned expression dataset

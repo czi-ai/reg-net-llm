@@ -19,6 +19,8 @@ scripts/ID_corrupted/corrupted_files
 scripts/ID_corrupted/out
 test/test_cache_cxg
 test/test_cache_rep
+embeddings/parallel_embeddings.sh
+embeddings/start_parallel_embeddings_cache.sh
 slurm_data_out/
 *slurm*
 */lightning_logs/*
