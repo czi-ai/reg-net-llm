@@ -62,6 +62,7 @@ graph_kernel_attn_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": True,
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -75,6 +76,7 @@ graph_kernel_attn_1DIFF_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": [0],
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -88,6 +90,7 @@ graph_kernel_attn_2DIFF_A_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": [0, 1],
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -101,6 +104,7 @@ graph_kernel_attn_2DIFF_B_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": [0, 6],
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -114,6 +118,7 @@ graph_kernel_attn_3L_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": True,
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -127,6 +132,7 @@ graph_kernel_attn_3L_1DIFF_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": [0],
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -140,6 +146,7 @@ graph_kernel_attn_6L_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": True,
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 
@@ -153,6 +160,7 @@ graph_kernel_attn_6L_3DIFF_config = Config({
     "use_pe": False,
     "use_attn_mask": True,
     "use_flash_attn": [0, 1, 2],
+    "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
 

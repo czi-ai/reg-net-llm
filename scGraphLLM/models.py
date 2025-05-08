@@ -105,6 +105,7 @@ class GDTransformer(LitScGraphLLM):
                     use_PE=self.tconfig.use_pe,
                     use_flash_attn=self.tconfig.use_flash_attn,
                     fine_tuning=self.tconfig.fine_tuning,
+                    residual_query_ratio=self.tconfig.residual_query_ratio
                 )
         else:
             self.transformer_encoder = nn.ModuleList()
@@ -129,6 +130,7 @@ class GDTransformer(LitScGraphLLM):
                         use_PE=self.tconfig.use_pe,
                         use_flash_attn=self.tconfig.use_flash_attn,
                         fine_tuning=self.tconfig.fine_tuning,
+                        residual_query_ratio=self.tconfig.residual_query_ratio
                     )   
                 )
         
@@ -175,14 +177,16 @@ class GDTransformer(LitScGraphLLM):
         combined_embedding = torch.concat([node_embedding, expression_embedding], dim=2)
         
         if self.tconfig.num_encoder_layers == 1:
-            combined_embedding = self.transformer_encoder(combined_embedding, p=pe, 
+            combined_embedding = self.transformer_encoder(combined_embedding, 
+                                                          p=pe, 
                                                           edge_index_list=edge_index_list, 
                                                           num_nodes_list=num_nodes_list)
         else:
             for encoder_layer in self.transformer_encoder:
-                combined_embedding = encoder_layer(combined_embedding, p=pe, 
-                                               edge_index_list=edge_index_list, 
-                                               num_nodes_list=num_nodes_list)
+                combined_embedding = encoder_layer(combined_embedding,
+                                                   p=pe, 
+                                                   edge_index_list=edge_index_list, 
+                                                   num_nodes_list=num_nodes_list)
         
         # We have the learned cell embedding, no more need for MASKED gene_ids & expression
         del gene_ids
@@ -219,16 +223,18 @@ class Perturb_GDTransformer(GDTransformer):
         ctrl_exp_embedding = self.node_embedding(x_c)
         
         if self.tconfig.num_encoder_layers == 1:
-            pert_exp_embedding = self.transformer_encoder(ctrl_exp_embedding, p=pe, 
-                                                     edge_index_list=edge_index_list, 
-                                                     num_nodes_list=num_nodes_list,
-                                                     perturb_one_hot=r_p)
+            pert_exp_embedding = self.transformer_encoder(ctrl_exp_embedding, 
+                                                          p=pe, 
+                                                          edge_index_list=edge_index_list, 
+                                                          num_nodes_list=num_nodes_list,
+                                                          perturb_one_hot=r_p)
         else:
             for encoder_layer in self.transformer_encoder:
-                pert_exp_embedding = encoder_layer(ctrl_exp_embedding, p=pe, 
-                                               edge_index_list=edge_index_list, 
-                                               num_nodes_list=num_nodes_list,
-                                               perturb_one_hot=r_p)
+                pert_exp_embedding = encoder_layer(ctrl_exp_embedding, 
+                                                   p=pe, 
+                                                   edge_index_list=edge_index_list, 
+                                                   num_nodes_list=num_nodes_list,
+                                                   perturb_one_hot=r_p)
         x_p_hat = self.expression_pred_head(pert_exp_embedding).squeeze()
         assert x_p_hat.shape == x_p.shape
         return x_c, x_p, x_p_hat
