@@ -348,6 +348,9 @@ class FlashMHASelfMaskKV(nn.Module):
             q_cls = q[:, 0, :, :]
             q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
             
+            # Adding the line below for residual mixing
+            q_genes_diffused = 0.5 * q_genes + 0.5 * q_genes_diffused
+            
             # shift query by perturbational embedding if observing perturb seq data
             if self.fine_tuning:
                 assert perturb_one_hot is not None, "need perturbation labels"
