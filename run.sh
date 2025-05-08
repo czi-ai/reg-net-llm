@@ -3,11 +3,9 @@
 #SBATCH --output=./slurm_train_out/array_job_%A.out
 #SBATCH --time=5-00:00:00
 #SBATCH --nodes=1
-#SBATCH --nodelist=gpu-f-2
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus=4
 #SBATCH --constraint=h100
-#SBATCH --reservation=leo
 #SBATCH -p gpu
 
 #should not need this setting
@@ -72,9 +70,12 @@ srun python /hpc/mydata/leo.dupire/GLM/scGraphLLM/scGraphLLM/run_training.py --c
 
 : <<'END_COMMENT'
 
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096" --run-name "PRETRAIN [CLS, 3Layer, expression_mask:15%, lr:0.00005, AdamW]"
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096_sc" --run-name "PRETRAIN Single Cell [CLS, 3Layer, expression_mask:15%, lr:0.00005, AdamW]"
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_6L_4096" --run-name "PRETRAIN [CLS, 6Layer, expression_mask:15%, lr:0.00005, AdamW]"
-sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_4096" --run-name "PRETRAIN [CLS, 12Layer, expression_mask:15%, lr:0.00005, AdamW]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096" --run-name "PRETRAIN [CLS, 3Layer, 3Diff, lr:5e-5, Q-mixing]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_1DIFF_4096" --run-name "PRETRAIN [CLS, 3Layer, 1Diff, lr:5e-5, Q-mixing]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_6L_3DIFF_4096" --run-name "PRETRAIN [CLS, 6Layer, 3Diff, lr:5e-5, Q-mixing]"
+
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_3L_4096_sc" --run-name "PRETRAIN Single Cell [CLS, 3Layer, expression_mask:15%, lr:5e-5, AdamW]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_6L_4096" --run-name "PRETRAIN [CLS, 6Layer, expression_mask:15%, lr:5e-5, AdamW]"
+sbatch /hpc/mydata/leo.dupire/GLM/scGraphLLM/run.sh --config "graph_kernel_attn_4096" --run-name "PRETRAIN [CLS, 12Layer, expression_mask:15%, lr:5e-5, AdamW]"
 
 END_COMMENT

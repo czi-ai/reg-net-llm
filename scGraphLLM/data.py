@@ -299,7 +299,7 @@ def cache_aracane_and_bins(
         perturbation_var="gene_id",
         overwrite:bool=False, 
         single=False, 
-        valsg_split_ratio = 0.2 # 0.2 makes it closer to equal size between SG and HOG
+        valsg_split_ratio = 0.2 # 0.2 makes it closer to equal size between SG and HOG 
     ):
     """ 
     Calls run_cache() function. Transforms and caches the cell-types' ARACNe graphs with their corresponding expression bins.
@@ -320,7 +320,7 @@ def cache_aracane_and_bins(
         global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
         skipped = 0
         ncells = 0
-        
+         
         for outdir_info in aracne_outdir_info: # If single == True, then this will only run once (for that single cell-type)
             cell_type = outdir_info[0].split('/')[-2] # Get the cell-type's name that is currently being cached
             print(f"Caching: {cell_type}...")

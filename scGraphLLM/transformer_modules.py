@@ -290,6 +290,7 @@ class FlashMHASelfMaskKV(nn.Module):
             num_heads, 
             batch_first, 
             attention_dropout, 
+            residual_query_ratio=0,
             mode="self", 
             bias=True, 
             causal=False, 
@@ -307,6 +308,7 @@ class FlashMHASelfMaskKV(nn.Module):
         self.causal = causal
         self.kernel_attn = kernel_attn
         self.dropout_p = attention_dropout
+        self.residual_query_ratio = residual_query_ratio
         self.mode = mode 
         self.num_heads = num_heads
         assert self.d_model % num_heads == 0, f"emb {self.d_model} must be divisible by num_heads {num_heads}"
@@ -323,7 +325,7 @@ class FlashMHASelfMaskKV(nn.Module):
             self.perturb_emb = PerturbEmbedding(max_hop=4, embed_dim=self.d_model, 
                                             hidden_dim=100, output_dim=self.d_model)
 
-    def forward(self, q, k,v, key_padding_mask=None, 
+    def forward(self, q, k, v, key_padding_mask=None, 
                 edge_index_list=None, num_nodes_list=None, perturb_one_hot=None):
         """
         Credit: some elements adopted from OpenFold:
@@ -347,6 +349,9 @@ class FlashMHASelfMaskKV(nn.Module):
             q_genes = q[:, 1:, :, :]
             q_cls = q[:, 0, :, :]
             q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
+            
+            # Adding the line below for residual mixing
+            q_genes_diffused = self.residual_query_ratio * q_genes + (1 - self.residual_query_ratio) * q_genes_diffused
             
             # shift query by perturbational embedding if observing perturb seq data
             if self.fine_tuning:
@@ -670,6 +675,7 @@ class FlashTransformerEncoderLayer(nn.Module):
             use_attn_mask=False, 
             use_PE=False,
             fine_tuning=False, 
+            residual_query_ratio=0,
             layer_norm_eps=1e-5, 
             norm_first=False,
             lora_qv_rank=None, 
@@ -694,8 +700,10 @@ class FlashTransformerEncoderLayer(nn.Module):
         if use_flash_attn:
             self.self_attention = FlashMHASelfMaskKV(
                 d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                attention_dropout=dropout, use_rotary_emb=use_rotary_emb, 
-                kernel_attn=use_attn_mask, fine_tuning=self.fine_tuning
+                attention_dropout=dropout,
+                use_rotary_emb=use_rotary_emb, 
+                kernel_attn=use_attn_mask, fine_tuning=self.fine_tuning,
+                residual_query_ratio=residual_query_ratio
             )
         else:
             self.self_attention = CustomTorchMHASelf(
