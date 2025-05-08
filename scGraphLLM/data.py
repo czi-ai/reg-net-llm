@@ -4,6 +4,7 @@ from torch.utils.data import Dataset as torchDataset
 from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
+import anndata as ad
 
 import os
 from os.path import join
@@ -16,14 +17,14 @@ import lightning.pytorch as pl
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
+from scGraphLLM._globals import * ## imported global variables are all caps 
 
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
 MI_VALS = "mi.values"
 
-# from scGraphLLM.graph_op import spectral_PE
-from scGraphLLM._globals import * ## imported global variables are all caps 
-
+gene_to_node = pd.read_csv("/hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv", index_col=0)
+INCLUDED_ENSG = gene_to_node.index[2:]
 
 rng = default_rng(42)
 def save(obj, file):
@@ -57,7 +58,6 @@ def run_cache(
     """
     Assign local ARACNe graph to each cell and cache each cell
     """
-    os.makedirs(join(cache_dir, msplit), exist_ok=True)
     # remove unknown genes
     expression = expression[expression.columns[expression.columns.isin(global_gene_to_node)]]
     # remove edges due to unknown genes
@@ -72,9 +72,6 @@ def run_cache(
     for i in range(expression.shape[0]):
         if ncells % 1000 == 0:
             print(f"Processed {ncells} cells", end="\r")
-
-        # Get this cell/metacell's index number
-        cell_number = expression.index[i]
         
         if msplit == "valSG":
             rand = rng.random()
@@ -84,6 +81,9 @@ def run_cache(
                 split = msplit
         else:
             split = msplit
+        
+        # Get this cell/metacell's index number
+        cell_number = expression.index[i]
         
         # Path to which the file will be cached
         outfile = f"{cache_dir}/{split}/{cell_type}_{cell_number}.pt"
@@ -108,6 +108,10 @@ def run_cache(
             cell = cell.nlargest(n=max_seq_length)
 
         # Subset network to only include genes expressed in the cell
+        if not only_expressed_genes:
+            print("IMPLEMENT THE ONLY EXPRESSED GENES CAPABILITY HERE! NOT CURRENTLY USED!")
+            print("I SUSPECT IT'S JUST: network_cell = network")
+            exit()
         network_cell = network[
             network[REG_VALS].isin(cell.index) & 
             network[TAR_VALS].isin(cell.index)
@@ -143,10 +147,143 @@ def run_cache(
     return (skipped, ncells)
 
 
+def run_cache_perturbation(
+        network, 
+        expression, 
+        global_gene_to_node, 
+        cache_dir, 
+        overwrite, 
+        msplit, 
+        valsg_split_ratio, 
+        cell_type, 
+        perturbation_var="gene_id",
+        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+        max_seq_length=None, 
+        only_expressed_genes=True,
+        skipped=0, 
+        ncells=0, 
+        verbose=False
+    ):
+    """
+    Assign local ARACNe graph to each cell and cache each cell
+    """
+    # remove unknown genes
+    # genes_to_keep = expression.var_names.isin(global_gene_to_node) # Ensure the genes (columns) are in the global list
+    # expression = expression[:, genes_to_keep] # Filter the AnnData object to only include those genes
+    
+    # remove edges due to unknown genes
+    network = network[
+        network[REG_VALS].isin(global_gene_to_node) & 
+        network[TAR_VALS].isin(global_gene_to_node)
+    ]
+    # network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
+    # common_genes = list(set(network_genes).intersection(set(expression.var.index)))
+    # expression = expression[:, common_genes]
+
+    # Below, any cells where perturbation_var is 'nan' - or the perturbed gene is not in the column genes - are discarded
+    gene_ids = expression.obs[perturbation_var] # Get the perturbed gene ids
+    control_mask = (gene_ids == "non-targeting") # Mask accounting for cells with non-targeting intervention
+    perturbed_mask = gene_ids.isin(expression.var.index).to_numpy() # Mask accounting for cells with perturbed genes that are included in our dataset
+
+    control_cells = expression[control_mask] # Get the control cells from the perturbation dataset
+    perturbed_cells = expression[perturbed_mask] # Get the perturbed cells from the perturbation dataset
+
+    print("Number of control cells:", control_cells.shape[0])
+    print("Number of perturbed cells:", perturbed_cells.shape[0])
+    
+    # Convert to pandas DataFrames
+    perturbation_ENSGs = perturbed_cells.obs[perturbation_var].reset_index(drop=True) # Series object of perturbation for each cell (after filtering cells)
+    perturbation_ids = [perturbed_cells.var.index.get_loc(gene) for gene in perturbation_ENSGs]
+    
+    control_df = pd.DataFrame(control_cells.X.toarray(), columns=control_cells.var.index).reset_index(drop=True)
+    perturbed_df = pd.DataFrame(perturbed_cells.X.toarray(), columns=perturbed_cells.var.index).reset_index(drop=True)
+
+    # Gene ordering must be the same across 'control_cells' and 'perturbed_cells'
+    assert control_cells.var.index.equals(perturbed_cells.var.index) # Check that genes are in the same order for both control and perturbed datasets
+
+    # split = "control"
+    # split = "perturbed"
+    for split in ["control", "perturbed"]:
+        # Pick dataset
+        if split == "control":
+            dataset = control_df
+        else:
+            dataset = perturbed_df
+        
+        # Run caching for this dataset
+        for i in range(dataset.shape[0]):
+            if ncells % 1000 == 0:
+                print(f"Processed {ncells} cells", end="\r")
+                
+            # Randomly assign this cell to train, val, or test
+            dataset_type_list = ['train', 'val', 'test']
+            dataset_type_probabilities = [0.7, 0.2, 0.1] # train, val, test
+            dataset_type = np.random.choice(dataset_type_list, p=dataset_type_probabilities)
+            
+            # Path to which the file will be cached
+            outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
+            if (os.path.exists(outfile)) and (not overwrite):
+                ncells+=1
+                continue
+            
+            # Get this cell's expression
+            cell: pd.Series = dataset.iloc[i, :]
+            
+            if cell[cell != 0].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
+                skipped += 1
+                ncells+=1
+                continue
+
+            # Subset network to only include genes expressed in the cell
+            network_cell = network[
+                network[REG_VALS].isin(cell.index) & 
+                network[TAR_VALS].isin(cell.index)
+            ]
+
+            local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+
+            with warnings.catch_warnings(): # Suppress annoying pandas warnings
+                warnings.simplefilter("ignore") 
+                edges = network_cell[[REG_VALS, TAR_VALS, MI_VALS]]
+                edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
+                edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
+
+            edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
+            edge_weights = torch.tensor(np.array(edges[MI_VALS]))
+            node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.float)
+            
+            if split == "control": # Control cell doesn't have the perturbation attribute
+                data = Data(
+                    x=node_expression, 
+                    edge_index=edge_list, 
+                    edge_weight=edge_weights
+                )
+            else: # Perturbed cell
+                perturbation = perturbation_ids[i]
+                data = Data(
+                    x=node_expression, 
+                    edge_index=edge_list, 
+                    edge_weight=edge_weights,
+                    perturbation=perturbation
+                )
+            
+            torch.save(data, outfile)
+            ncells += 1
+            
+            if verbose:
+                try:
+                    torch.load(outfile)
+                    print(outfile)
+                except:
+                    print(outfile, "-------- Failed")
+            
+    return (skipped, ncells)
+
 def cache_aracane_and_bins(
         aracne_outdir_info : List[List[str]], 
         gene_to_node_file:str, 
         cache_dir:str, 
+        perturbation_var="gene_id",
         overwrite:bool=False, 
         single=False, 
         valsg_split_ratio = 0.2 # 0.2 makes it closer to equal size between SG and HOG
@@ -176,23 +313,43 @@ def cache_aracane_and_bins(
             print(f"Caching: {cell_type}...")
             
             aracne_out = outdir_info[0]
+            msplit = outdir_info[1]
             network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t") # Get the ARACNe network for this cell-type
-            expression = pd.read_csv(str(Path(aracne_out).parents[0]) + "/binned_expression.csv") # Get expression (most likely in binned format)
-
-            skipped, ncells = run_cache(
-                network=network, 
-                expression=expression, 
-                global_gene_to_node=global_gene_to_node, 
-                cache_dir=cache_dir, 
-                overwrite=overwrite, 
-                msplit=outdir_info[1], # Change this to seen_graph
-                valsg_split_ratio=valsg_split_ratio, 
-                cell_type=cell_type, 
-                min_genes_per_graph=MIN_GENES_PER_GRAPH,
-                max_seq_length=None,
-                skipped=skipped, 
-                ncells=ncells
-            )
+            if msplit == "perturbed": # If this is a perturbation dataset
+                expression = ad.read_h5ad(str(Path(aracne_out).parents[0]) + "/cells.h5ad", backed="r") # Get perturbation dataset - only raw/un-binned expression data is used for perturbation
+                assert all(expression.var.index.isin(INCLUDED_ENSG)) # Make sure ALL the genes (columns) in the dataset are genes we are able to tokenize
+                skipped, ncells = run_cache_perturbation(
+                    network=network, 
+                    expression=expression, 
+                    global_gene_to_node=global_gene_to_node, 
+                    cache_dir=cache_dir, 
+                    overwrite=overwrite, 
+                    msplit=msplit, # Change this to seen_graph 
+                    perturbation_var=perturbation_var,
+                    valsg_split_ratio=valsg_split_ratio, 
+                    cell_type=cell_type, 
+                    min_genes_per_graph=MIN_GENES_PER_GRAPH,
+                    max_seq_length=None,
+                    skipped=skipped, 
+                    ncells=ncells
+                )
+                
+            else: # Normal binned expression dataset
+                expression = pd.read_csv(str(Path(aracne_out).parents[0]) + "/binned_expression.csv") # Get expression (most likely in binned format)
+                skipped, ncells = run_cache(
+                    network=network, 
+                    expression=expression, 
+                    global_gene_to_node=global_gene_to_node, 
+                    cache_dir=cache_dir, 
+                    overwrite=overwrite, 
+                    msplit=msplit, # Change this to seen_graph
+                    valsg_split_ratio=valsg_split_ratio, 
+                    cell_type=cell_type, 
+                    min_genes_per_graph=MIN_GENES_PER_GRAPH,
+                    max_seq_length=None,
+                    skipped=skipped, 
+                    ncells=ncells
+                )
 
         print(f"\n**DONE**\nSkipped {skipped} cells")
         print(f"loaded {ncells} cells")
@@ -271,6 +428,7 @@ if __name__ == "__main__":
     parser.add_argument("--aracane-outdir-md", type=str, help="File containing a list of aracne outdirs; `ls path/to/aracaneOutdirs/* > <input>` ")
     parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")
     parser.add_argument("--cache-dir", type=str, help="Directory to store the processed data")
+    parser.add_argument("--perturbation-var", type=str, default=None)
     parser.add_argument("--num-proc", type=int, help="Number of processes to use", default=1)
     parser.add_argument("--single-index", type=int, help="Index in --aracane-outdir-md to path to specific cell-type aracne for single cell-type caching (mainly used with parallelization)", default=0)
     parser.add_argument("--debug", action="store_true", default=False, help="Run in debug mode")
@@ -282,13 +440,25 @@ if __name__ == "__main__":
     # Read the data directories and their associated dataset label (train, valSG, valHG)
     aracane_metadata = pd.read_csv(args.aracane_outdir_md, names = ["aracne_out", "split"]).values
     
-    # Create cache directories for each dataset (train, valSG, valHG)
-    unique_subsets = np.unique(aracane_metadata[:,1])
-    Path(f"{args.cache_dir}/train").mkdir(parents=True, exist_ok=True) # Train is not in the outdirs csv as (the way the code is written) train data is pulled from the valSG data
-    for subset in unique_subsets:
-        Path(f"{args.cache_dir}/{subset}").mkdir(parents=True, exist_ok=True)
-    sub_lists = np.array_split(aracane_metadata, num_proc)
-    args_list = [(sub_list, args.gene_to_node_file, args.cache_dir) for sub_list in sub_lists]
+    if aracane_metadata[0][1] == "perturbed": # Check if this is a perturbed dataset
+        # Create perturbation directories
+        Path(f"{args.cache_dir}/control").mkdir(parents=True, exist_ok=True)
+        Path(f"{args.cache_dir}/control/train").mkdir(parents=True, exist_ok=True)
+        Path(f"{args.cache_dir}/control/val").mkdir(parents=True, exist_ok=True)
+        Path(f"{args.cache_dir}/control/test").mkdir(parents=True, exist_ok=True)
+        
+        Path(f"{args.cache_dir}/perturbed").mkdir(parents=True, exist_ok=True)
+        Path(f"{args.cache_dir}/perturbed/train").mkdir(parents=True, exist_ok=True)
+        Path(f"{args.cache_dir}/perturbed/val").mkdir(parents=True, exist_ok=True)
+        Path(f"{args.cache_dir}/perturbed/test").mkdir(parents=True, exist_ok=True)
+    else:
+        # Create cache directories for each dataset (train, valSG, valHG)
+        unique_subsets = np.unique(aracane_metadata[:,1])
+        Path(f"{args.cache_dir}/train").mkdir(parents=True, exist_ok=True) # Train is not in the outdirs csv as (the way the code is written) train data is pulled from the valSG data
+        for subset in unique_subsets:
+            Path(f"{args.cache_dir}/{subset}").mkdir(parents=True, exist_ok=True)
+        sub_lists = np.array_split(aracane_metadata, num_proc)
+        args_list = [(sub_list, args.gene_to_node_file, args.cache_dir) for sub_list in sub_lists]
         
     if debug:
         print("DEBUG")
@@ -296,7 +466,7 @@ if __name__ == "__main__":
             cache_aracane_and_bins(*arg)
     elif (single_index) or (single_index == 0): # An index value has been given - corresponding to a specific cell-type to be process individually
         print("SINGLE CACHE")
-        cache_aracane_and_bins(aracane_metadata[single_index].reshape(1, 2), args.gene_to_node_file, args.cache_dir, single=True)
+        cache_aracane_and_bins(aracane_metadata[single_index].reshape(1, 2), args.gene_to_node_file, args.cache_dir, perturbation_var=args.perturbation_var, single=True)
     else:
         print("RUNNING MULTI-THREADED")
         with Pool(num_proc) as p:

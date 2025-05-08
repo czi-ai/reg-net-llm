@@ -19,3 +19,6 @@ cd /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted
 python corrupt.py "$DATASET" "$CACHE_DIR" "$SLURM_ARRAY_TASK_ID"
 
 # sbatch --array=1-100 /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted/scan.sh "train" "/hpc/projects/group.califano/GLM/data/meta_cell/cxg_4096"
+# sbatch --array=1-100 /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted/scan.sh "train" "/hpc/projects/group.califano/GLM/data/single_cell/replogle_200k/perturbed"
+# sbatch --array=1-100 /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted/scan.sh "val" "/hpc/projects/group.califano/GLM/data/single_cell/replogle_200k/perturbed"
+# sbatch --array=1-100 /hpc/projects/group.califano/GLM/scGraphLLM/scripts/ID_corrupted/scan.sh "test" "/hpc/projects/group.califano/GLM/data/single_cell/replogle_200k/perturbed"

@@ -3,7 +3,7 @@ PAD_GENE_IDX=0
 MASK_GENE_IDX=1
 CLS_GENE_IDX=19246
 
-ZERO_IDX=0 ## ONLY APPLIES TO EXPRESSION TOKENS: the lowest expression, aka gene with expression 0
+ZERO_IDX=0 ## ONLY APPLIES TO BINNED (NOT RAW) EXPRESSION TOKENS: the lowest expression, aka gene with expression 0
 MIN_GENES_PER_GRAPH=500 
 #NUM_GENES=19246 # This is the nubmer of genes + special tokens
 NUM_GENES=19247 # This is the nubmer of genes + special tokens

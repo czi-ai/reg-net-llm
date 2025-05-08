@@ -9,6 +9,7 @@ ARACNe3/
 __MACOSX/
 copy.sh
 data/
+out/
 download_data_cancer.sh
 notebooks/preprocess_cancer_samples.ipynb
 **scratch.py
