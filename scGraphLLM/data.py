@@ -125,8 +125,8 @@ def run_cache(
             edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
             edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
 
-        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
-        edge_weights = torch.tensor(np.array(edges[MI_VALS]))
+        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]]), dtype=torch.int16).T
+        edge_weights = torch.tensor(np.array(edges[MI_VALS]), dtype=torch.float16)
         node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.int16) # should this be local_gene_to_node?
         data = Data(
             x=node_expression, 
@@ -161,25 +161,20 @@ def run_cache_perturbation(
         max_seq_length=None, 
         only_expressed_genes=True,
         skipped=0, 
-        ncells=0, 
+        ncells=0,
+        partition=0,
         verbose=False,
         test_mode=False
     ):
     """
     Assign local ARACNe graph to each cell and cache each cell
     """
-    # remove unknown genes
-    # genes_to_keep = expression.var_names.isin(global_gene_to_node) # Ensure the genes (columns) are in the global list
-    # expression = expression[:, genes_to_keep] # Filter the AnnData object to only include those genes
     
     # remove edges due to unknown genes
     network = network[
         network[REG_VALS].isin(global_gene_to_node) & 
         network[TAR_VALS].isin(global_gene_to_node)
     ]
-    # network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
-    # common_genes = list(set(network_genes).intersection(set(expression.var.index)))
-    # expression = expression[:, common_genes]
 
     # Below, any cells where perturbation_var is 'nan' - or the perturbed gene is not in the column genes - are discarded
     gene_ids = expression.obs[perturbation_var] # Get the perturbed gene ids
@@ -222,10 +217,10 @@ def run_cache_perturbation(
             dataset_type = np.random.choice(dataset_type_list, p=dataset_type_probabilities)
             
             # Path to which the file will be cached
-            outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
+            outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{partition}_{i}.pt"
 
             if test_mode: # Only for unit-testing
-                outfile = f"{cache_dir}/{msplit}/{split}/{cell_type}_{i}.pt"
+                outfile = f"{cache_dir}/{msplit}/{split}/{cell_type}_{partition}_{i}.pt"
             else:
                 # Randomly assign this cell to train, val, or test
                 dataset_type_list = ['train', 'val', 'test']
@@ -233,7 +228,7 @@ def run_cache_perturbation(
                 dataset_type = np.random.choice(dataset_type_list, p=dataset_type_probabilities)
                 
                 # Path to which the file will be cached
-                outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{i}.pt"
+                outfile = f"{cache_dir}/{split}/{dataset_type}/{cell_type}_{partition}_{i}.pt"
                 
             if (os.path.exists(outfile)) and (not overwrite):
                 ncells+=1
@@ -261,9 +256,9 @@ def run_cache_perturbation(
                 edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
                 edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
 
-            edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
-            edge_weights = torch.tensor(np.array(edges[MI_VALS]))
-            node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.torch.float16)
+            edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]]), dtype=torch.int16).T
+            edge_weights = torch.tensor(np.array(edges[MI_VALS]), dtype=torch.float16)
+            node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.float16)
             
             if split == "control": # Control cell doesn't have the perturbation attribute
                 data = Data(
@@ -299,7 +294,9 @@ def cache_aracane_and_bins(
         perturbation_var="gene_id",
         overwrite:bool=False, 
         single=False, 
-        valsg_split_ratio = 0.2 # 0.2 makes it closer to equal size between SG and HOG 
+        valsg_split_ratio=0.2, # 0.2 makes it closer to equal size between SG and HOG 
+        num_partitions=1, # Optional, if parallelizing the perturbed dataset, determines how many partitions/parallel processes
+        partition=0 # Optional, if parallelizing the perturbed dataset, determines which partition to attend to
     ):
     """ 
     Calls run_cache() function. Transforms and caches the cell-types' ARACNe graphs with their corresponding expression bins.
@@ -330,10 +327,26 @@ def cache_aracane_and_bins(
             network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t") # Get the ARACNe network for this cell-type
             if msplit == "perturbed": # If this is a perturbation dataset
                 expression = ad.read_h5ad(str(Path(aracne_out).parents[0]) + "/cells.h5ad", backed="r") # Get perturbation dataset - only raw/un-binned expression data is used for perturbation
-                assert all(expression.var.index.isin(INCLUDED_ENSG)) # Make sure ALL the genes (columns) in the dataset are genes we are able to tokenize
+                
+                # Add parallelization functionality - specify which range of the expression samples are to be covered by this run
+                partition_size = (expression.shape[0] // num_partitions) + 1 
+                
+                start = partition * partition_size # Get the starting index for this partition
+                end = min((partition + 1) * partition_size, expression.shape[0]) # Get the end index for this partition
+
+                # Create a new AnnData object for the slice
+                expression_subset = expression[start:end, :].to_memory()
+                
+                # Ensure only the right genes and perturbations are included in the dataset
+                gene_mask = expression_subset.var_names.isin(global_gene_to_node)
+                pert_mask = expression_subset.obs[perturbation_var].isin(global_gene_to_node) | (expression_subset.obs[perturbation_var] == "non-targeting")
+                
+                expression_subset = expression_subset[pert_mask, gene_mask]
+                assert all(expression_subset.var.index.isin(INCLUDED_ENSG)) # Make sure ALL the genes (columns) in the dataset are genes we are able to tokenize
+                
                 skipped, ncells = run_cache_perturbation(
                     network=network, 
-                    expression=expression, 
+                    expression=expression_subset, 
                     global_gene_to_node=global_gene_to_node, 
                     cache_dir=cache_dir, 
                     overwrite=overwrite, 
@@ -343,6 +356,7 @@ def cache_aracane_and_bins(
                     cell_type=cell_type, 
                     min_genes_per_graph=MIN_GENES_PER_GRAPH, 
                     max_seq_length=None, 
+                    partition=partition,
                     skipped=skipped, 
                     ncells=ncells 
                 )
@@ -425,7 +439,7 @@ class GraphTransformerDataModule(pl.LightningDataModule):
     
     def train_dataloader(self):
         return torchDataLoader(self.train_ds, batch_size = self.data_config.batch_size, 
-                               num_workers = self.data_config.num_workers, collate_fn=self.collate_fn)
+                               num_workers = self.data_config.num_workers, collate_fn=self.collate_fn, shuffle=True)
     def val_dataloader(self):
         return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, 
                                 num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
@@ -586,6 +600,7 @@ if __name__ == "__main__":
     parser.add_argument("--cache-dir", type=str, help="Directory to store the processed data")
     parser.add_argument("--perturbation-var", type=str, default=None)
     parser.add_argument("--num-proc", type=int, help="Number of processes to use", default=1)
+    parser.add_argument("--partition", type=int, help="Which process index, if parallelizing", default=0)
     parser.add_argument("--single-index", type=int, help="Index in --aracane-outdir-md to path to specific cell-type aracne for single cell-type caching (mainly used with parallelization)", default=0)
     parser.add_argument("--debug", action="store_true", default=False, help="Run in debug mode")
     args = parser.parse_args()
@@ -622,7 +637,15 @@ if __name__ == "__main__":
             cache_aracane_and_bins(*arg)
     elif (single_index) or (single_index == 0): # An index value has been given - corresponding to a specific cell-type to be process individually
         print("SINGLE CACHE")
-        cache_aracane_and_bins(aracane_metadata[single_index].reshape(1, 2), args.gene_to_node_file, args.cache_dir, perturbation_var=args.perturbation_var, single=True)
+        cache_aracane_and_bins(
+            aracane_metadata[single_index].reshape(1, 2), 
+            args.gene_to_node_file, 
+            args.cache_dir, 
+            perturbation_var=args.perturbation_var, 
+            single=True,
+            num_partitions=num_proc, # Optional, if parallelizing the perturbed dataset, determines how many partitions/parallel processes
+            partition=args.partition # Optional, if parallelizing the perturbed dataset, determines which partition to attend to
+        )
     else:
         print("RUNNING MULTI-THREADED")
         with Pool(num_proc) as p:

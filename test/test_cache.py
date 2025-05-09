@@ -67,7 +67,7 @@ class TestRunCachePERTURBED(unittest.TestCase):
         global_gene_to_node = pd.read_csv("/hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv")
         self.global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
         self.data_dir = "/hpc/projects/group.califano/GLM/data/_cellxgene/data/tmp_out/ct"
-        self.cache_dir = "/hpc/mydata/leo.dupire/GLM/scGraphLLM/test/test_cache_rep"
+        self.cache_dir = "/hpc/projects/group.califano/GLM/scGraphLLM/test/test_cache_rep"
         self.min_genes_per_graph = 2
         
         self.network = pd.DataFrame(
