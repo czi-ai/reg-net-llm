@@ -1182,15 +1182,15 @@ def main(args):
 
         save_path_test = join(args.res_dir, "cm_test.png")
         print(f"Saving test confusion matrix to: {save_path_test}")
-        plot_confusion_matrix(y_test, yhat_test, save_path_test)
+        plot_confusion_matrix(y_test, yhat_test, normalize=True, save_path=save_path_test)
 
         save_path_train = join(args.res_dir, "cm_train.png")
         print(f"Saving train confusion matrix to: {save_path_train}")
-        plot_confusion_matrix(y_train, yhat_train, save_path_train)
+        plot_confusion_matrix(y_train, yhat_train, normalize=True, save_path=save_path_train)
 
         save_path_val = join(args.res_dir, "cm_val.png")
         print(f"Saving val confusion matrix to: {save_path_val}")
-        plot_confusion_matrix(y_val, yhat_val, save_path_val)
+        plot_confusion_matrix(y_val, yhat_val, normalize=True, save_path=save_path_val)
         
         save_data_path = join(args.res_dir, "cls_data.npz")
         print(f"Saving classification performance data to: {save_data_path}")

@@ -21,6 +21,7 @@ import pickle
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
 MI_VALS = "mi.values"
+SCC_VALS = "scc.values"
 
 # from scGraphLLM.graph_op import spectral_PE
 from scGraphLLM._globals import * ## imported global variables are all caps 
@@ -83,6 +84,7 @@ def run_cache(
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
+        with_edge_weights=True,
         skipped=0, 
         ncells=0, 
         verbose=False
@@ -123,41 +125,14 @@ def run_cache(
             continue
         
         cell: pd.Series = expression.iloc[i, :]
-        # filter out genes with 0 expression
-        if only_expressed_genes:
-            cell = cell[cell != ZERO_IDX]
 
         if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
             skipped += 1
             ncells+=1
             continue
 
-        # enforce max sequence length
-        if max_seq_length is not None and cell.shape[0] > max_seq_length:
-            cell = cell.nlargest(n=max_seq_length)
-
-        # Subset network to only include genes in the cell
-        network_cell = network[
-            network[REG_VALS].isin(cell.index) & 
-            network[TAR_VALS].isin(cell.index)
-        ]
-
-        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-
-        with warnings.catch_warnings(): # Suppress annoying pandas warnings
-            warnings.simplefilter("ignore") 
-            edges = network_cell[[REG_VALS, TAR_VALS, MI_VALS]]
-            edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
-            edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
-
-        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
-        edge_weights = torch.tensor(np.array(edges[MI_VALS]))
-        node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
-        data = Data(
-            x=node_expression, 
-            edge_index=edge_list, 
-            edge_weight=edge_weights
-        )
+        # filter out genes with 0 expression
+        data = get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
         
         torch.save(data, outfile)
         ncells += 1
@@ -170,6 +145,46 @@ def run_cache(
                 print(outfile, "-------- Failed")
         
     return (skipped, ncells)
+
+def get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell):
+    if only_expressed_genes:
+        cell = cell[cell != ZERO_IDX]
+
+    # enforce max sequence length
+    if max_seq_length is not None and cell.shape[0] > max_seq_length:
+        cell = cell.nlargest(n=max_seq_length)
+
+    # Subset network to only include genes in the cell
+    network_cell = network[
+        network[REG_VALS].isin(cell.index) & 
+        network[TAR_VALS].isin(cell.index)
+    ]
+
+    local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+
+    with warnings.catch_warnings(): # Suppress annoying pandas warnings
+        warnings.simplefilter("ignore")
+        edges = network_cell[[REG_VALS, TAR_VALS]]
+        edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
+        edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
+
+    edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
+    node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
+        
+    if with_edge_weights:
+        edge_weights = torch.tensor(np.array(network_cell[MI_VALS]))
+        data = Data(
+            x=node_expression, 
+            edge_index=edge_list, 
+            edge_weight=edge_weights
+        )
+    else:
+        data = Data(
+            x=node_expression, 
+            edge_index=edge_list
+        )
+        
+    return data
 
 
 def cache_aracane_and_bins(

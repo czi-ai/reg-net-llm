@@ -28,19 +28,53 @@ CELL_TYPES = [
 ]
 
 IMMUNE_CELL_TYPES = [
-    # Train
     "cd14_monocytes", # 'CD14+ Monocytes'
-    "cd20_b_cells", # 
+    "cd20_b_cells", # 'CD20 B cells'
     "cd8_t_cells", # 'CD8+ T cells'
-    "nkt_cells",
+    "nkt_cells", # NKT cells
     # Val
-    "erythrocytes",
-    "cd16_monocytes",
+    "erythrocytes", # 'Erythrocytes'
+    "cd16_monocytes", # 'CD16+ Monocytes'
     # Test
-    "cd4_t_cells",
-    "monocyte-derived_dendritic_cells",
-    "nk_cells"
+    "cd4_t_cells", # 'CD4+ T cells'
+    "monocyte-derived_dendritic_cells", # 'Monocyte-derived dendritic cells'
+    "nk_cells" # 'NK cells'
 ]
+
+human_immune_cell_names = [
+    'CD4+ T cells',
+    'CD14+ Monocytes',
+    'CD20+ B cells',
+    'NKT cells',
+    'NK cells',
+    'CD8+ T cells',
+    'Erythrocytes',
+    'Monocyte-derived dendritic cells',
+    'CD16+ Monocytes',
+    # 'HSPCs',
+    # 'Erythroid progenitors',
+    # 'Plasmacytoid dendritic cells',
+    # 'Monocyte progenitors',
+    # 'Megakaryocyte progenitors',
+    # 'CD10+ B cells',
+    # 'Plasma cells'
+]
+
+NETWORK_SETS = {
+    "human_immune_metacells_networks": {
+        'CD4+ T cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD14+ Monocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd14_monocytes/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD20+ B cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd20_b_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'NKT cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/nkt_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'NK cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/nk_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD8+ T cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd8_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'Erythrocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/erythrocytes/aracne_4096/consolidated-net_defaultid.tsv",
+        'Monocyte-derived dendritic cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/monocyte-derived_dendritic_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD16+ Monocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd16_monocytes/aracne_4096/consolidated-net_defaultid.tsv"
+    }
+}
+
+
 
 EMBEDDING_DATASETS = ({
     "gf_debug": [
@@ -53,6 +87,10 @@ EMBEDDING_DATASETS = ({
     ],
     "scglm": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+    "scglm_graph_metacells": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_metacells/cached_embeddings"
         for cell_type in CELL_TYPES
     ],
 
@@ -94,6 +132,10 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
     ],
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001_integrated_network": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_integrated_network/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_edge_mask_0.15/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
@@ -133,3 +175,6 @@ SPLIT_CONFIGS = {
         "ratio_config": (1.0, None, None)
     })
 }
+
+
+

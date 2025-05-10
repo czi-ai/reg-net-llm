@@ -1,3 +1,4 @@
+print("This is the top of the script...")
 import os
 os.environ["TORCH_USE_CUDA_DSA"] = "1"  # Enable device-side assertions
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # Make CUDA errors more visible
@@ -28,6 +29,7 @@ from scGraphLLM.preprocess import quantize_cells
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
+from scGraphLLM.eval_config import *
 from scGraphLLM._globals import NUM_BINS
 from utils import (
     mask_values, 
@@ -49,10 +51,14 @@ TAR_VALS = "target.values"
 MI_VALS = "mi.values"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", type=str, required=True)
+parser.add_argument("--data_dir", type=str, default=None)
+parser.add_argument("--cells_path", type=str, default=None)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--model_path", type=str, required=True)
-parser.add_argument("--aracne_dir", type=str, required=True)
+# parser.add_argument("--aracne_dir", type=str, required=True)
+parser.add_argument("--network_path", type=str)
+parser.add_argument("--infer_network", action="store_true")
+parser.add_argument("--networks", type=str, default=None)
 parser.add_argument("--max_seq_length", type=int, default=2048)
 parser.add_argument("--use_masked_edges", action="store_true")
 parser.add_argument("--mask_ratio", type=float, default=0.15)
@@ -63,7 +69,12 @@ parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 parser.add_argument("--batch_size", type=int, default=256)
 parser.add_argument("--cache", action="store_true")
-args = parser.parse_args()
+
+try:
+    args = parser.parse_args()
+except Exception as e:
+    print(f"Error in parsing arguments: {e}")
+    sys.exit(1)
 
 
 
@@ -76,6 +87,91 @@ def get_edges_dict(edges_list):
             i += 1
     return edges
 
+
+def run_infer_network_cache(
+        networks: dict, 
+        expression: sc.AnnData, 
+        global_gene_to_node, 
+        cache_dir, 
+        overwrite, 
+        msplit, 
+        valsg_split_ratio, 
+        cell_type, 
+        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
+        max_seq_length=None, 
+        only_expressed_genes=True,
+        with_edge_weights=True,
+        skipped=0, 
+        ncells=0, 
+        verbose=False
+    ):
+    """
+    Assign local ARACNe graph to each cell and cache each cell
+    """
+    os.makedirs(join(cache_dir, msplit), exist_ok=True)
+    expression = expression[:,expression.var_names[expression.var_names.isin(global_gene_to_node)]]
+
+    class_networks = {}
+    for name, path in networks.items():
+        network = pd.read_csv(path, sep="\t")
+        # remove edges due to unknown genes
+        network = network[
+            network[REG_VALS].isin(global_gene_to_node) & 
+            network[TAR_VALS].isin(global_gene_to_node)
+        ]
+        network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
+        common_genes = list(set(network_genes).intersection(set(expression.var_names)))
+        class_networks[name] = network, common_genes
+
+    for i in range(expression.n_obs):
+        if ncells % 10 == 0:
+            print(f"Processed {ncells} cells", end="\r")
+
+        cell_number = i
+        
+        if msplit == "valSG":
+            rand = rng.random()
+            if rand > valsg_split_ratio:
+                split = "train"
+            else:
+                split = msplit
+        else:
+            split = msplit
+        
+        outfile = f"{cache_dir}/{split}/{cell_type}_{cell_number}.pt"
+        if (os.path.exists(outfile)) and (not overwrite):
+            ncells+=1
+            continue
+
+        cell = pd.Series(expression.X[i, :], index=expression.var_names)
+        probs = expression.obsm["class_probs"][i,:]
+        classes = expression.uns["class_probs_names"]
+
+        if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
+            skipped += 1
+            ncells+=1
+            continue
+            
+        # infer network
+        class_name = classes[np.argmax(probs)]
+        network, common_genes = class_networks[class_name]
+        cell = cell[common_genes]
+
+        # filter out genes with 0 expression
+        data = get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
+        
+        torch.save(data, outfile)
+        ncells += 1
+        
+        if verbose:
+            try:
+                torch.load(outfile)
+                print(outfile)
+            except:
+                print(outfile, "-------- Failed")
+        
+    return (skipped, ncells)
+
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
@@ -83,7 +179,7 @@ def main(args):
     global_gene_df = pd.read_csv(args.gene_index_path)
     global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
     global_node_to_gene = global_gene_df.set_index("idx")["gene_name"].to_dict()
-    network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
+    
 
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
@@ -95,21 +191,42 @@ def main(args):
         adata.X = X_masked
     
     ranks = quantize_cells(adata.to_df(), n_bins=NUM_BINS, method="quantile")
-    run_cache(
-        network=network, 
-        expression=ranks, 
-        global_gene_to_node=global_gene_to_node, 
-        cache_dir=args.cache_dir,
-        overwrite=True, 
-        msplit="all", 
-        valsg_split_ratio=None, 
-        cell_type="cell",
-        max_seq_length=args.max_seq_length,
-        only_expressed_genes=True,
-        min_genes_per_graph=-1, 
-        skipped=0, 
-        ncells=0
-    )
+    ranks = sc.AnnData(X=ranks.values, obs=adata.obs, var=adata.var, uns=adata.uns, obsm=adata.obsm)
+    if args.infer_network:
+        run_infer_network_cache(
+            networks=args.networks, 
+            expression=ranks, 
+            global_gene_to_node=global_gene_to_node, 
+            cache_dir=args.cache_dir,
+            overwrite=True, 
+            msplit="all", 
+            valsg_split_ratio=None, 
+            cell_type="cell",
+            max_seq_length=args.max_seq_length,
+            only_expressed_genes=True,
+            with_edge_weights=False,
+            min_genes_per_graph=-1, 
+            skipped=0, 
+            ncells=0
+        )
+    else:
+        network = pd.read_csv(args.network_path, sep="\t")
+        run_cache(
+            network=network, 
+            expression=ranks, 
+            global_gene_to_node=global_gene_to_node, 
+            cache_dir=args.cache_dir,
+            overwrite=True, 
+            msplit="all", 
+            valsg_split_ratio=None, 
+            cell_type="cell",
+            max_seq_length=args.max_seq_length,
+            only_expressed_genes=True,
+            with_edge_weights=False,
+            min_genes_per_graph=-1, 
+            skipped=0, 
+            ncells=0
+        )
 
     dataset = GraphTransformerDataset(
         cache_dir=args.all_data_dir,
@@ -158,6 +275,22 @@ def main(args):
             input_gene_ids_list.append(target_gene_ids.cpu().numpy())
             embedding_list.append(embedding.cpu().numpy())
             seq_lengths.append(batch["num_nodes"])
+
+            # cache batch by batch
+            if args.cache:
+                
+                save_embedding(
+                    file=None,
+                    cache=True,
+                    cache_dir=args.emb_cache,
+                    x=x,
+                    x_cls=x_cls,
+                    seq_lengths=seq_lengths,
+                    edges=edges,
+                    masked_edges=masked_edges,
+                    non_masked_edges=non_masked_edges,
+                    metadata=metadata
+                )
 
     seq_lengths = np.concatenate(seq_lengths, axis=0) # increment for cls token
     max_seq_length = max(seq_lengths)
@@ -239,12 +372,10 @@ def main(args):
     )
 
 
-
-
 if __name__ == "__main__":
     print("Starting main execution...")
-    args.cells_path = join(args.data_dir, "cells.h5ad")
-    args.ranks_path = join(args.data_dir, "rank_raw.csv")
+    args.cells_path = join(args.data_dir, "cells.h5ad") if args.cells_path is None else args.cells_path
+    # args.ranks_path = join(args.data_dir, "rank_raw.csv")
     args.emb_path = join(args.out_dir, "embedding.npz")
     args.emb_cache = join(args.out_dir, "cached_embeddings")
     args.cache_dir = join(args.out_dir, "cache")
@@ -255,6 +386,8 @@ if __name__ == "__main__":
     os.makedirs(args.all_data_dir, exist_ok=True)
     if args.cache:
         os.makedirs(args.emb_cache, exist_ok=True)
+    if args.networks:
+        args.networks = NETWORK_SETS[args.networks]
 
     main(args)
 

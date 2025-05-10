@@ -576,7 +576,7 @@ def main(args):
         adata.obs.reset_index(inplace=True)
         adata.var.reset_index(inplace=True)
         check_index(adata.var, "feature_id")
-    elif args.dataset == "mye":
+    elif args.dataset in {"mye", "pancreas"}:
         counts = sc.AnnData(X=adata.X, obs=adata.obs)
         counts.var_names = adata.var_names
         counts.X = np.expm1(adata.X)
@@ -724,7 +724,7 @@ if __name__ == "__main__":
     parser.add_argument("--metacells_target_depth", type=float, default=None)
     parser.add_argument("--metacells_compression", type=float, default=0.2)
     parser.add_argument("--metacells_size", type=int, default=None)
-    parser.add_argument("--n_cells_per_metacell", type=int, default=3)
+    parser.add_argument("--n_cells_per_metacell", type=int, default=None)
     parser.add_argument("--aracne_min_n", type=int, default=250)
     parser.add_argument("--aracne_max_n", type=int, default=1000)
     parser.add_argument("--aracne_min_perc_nz", type=float, default=0.01)

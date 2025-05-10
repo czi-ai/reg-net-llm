@@ -20,18 +20,18 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 # =*= Geneformer #=*=#
 # ===================#
 
-python $benchmark_script \
-    --dataset human_immune_geneformer_seq_len_2048 \
-    --split_config random \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
-    --suffix human_immune_geneformer_seq_len_2048 \
-    --use_weighted_ce \
-    --task cls \
-    --target final_annotation \
-    --lr 1e-2 \
-    --batch_size 256 \
-    --num_epochs 100 \
-    --patience 5
+# python $benchmark_script \
+#     --dataset human_immune_geneformer_seq_len_2048 \
+#     --split_config random \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
+#     --suffix human_immune_geneformer_seq_len_2048 \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target final_annotation \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5
 
 # python $benchmark_script 
 #     --dataset gf \
@@ -66,12 +66,11 @@ python $benchmark_script \
 # ===================#
 
 # Human Immune Dataset 
-
 # python $benchmark_script \
-#     --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001 \
+#     --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_integrated_network \
 #     --split_config random \
 #     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix human_immune_scglm_cls_3L_12000_steps_MLM_001 \
+#     --suffix human_immune_scglm_cls_3L_12000_steps_MLM_001_integrated_network \
 #     --use_weighted_ce \
 #     --task cls \
 #     --target final_annotation \
@@ -81,18 +80,18 @@ python $benchmark_script \
 #     --patience 5
 
 # Myeloid Dataset
-# python $benchmark_script \
-#     --dataset mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048 \
-#     --split_config mye \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_linear_good_graph \
-#     --use_weighted_ce \
-#     --task cls \
-#     --target cell_type \
-#     --lr 1e-2 \
-#     --batch_size 256 \
-#     --num_epochs 100 \
-#     --patience 5
+python $benchmark_script \
+    --dataset scglm_graph_metacells \
+    --split_config mye \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+    --suffix mye_scglm_graph_metacells \
+    --use_weighted_ce \
+    --task cls \
+    --target cell_type \
+    --lr 1e-2 \
+    --batch_size 256 \
+    --num_epochs 100 \
+    --patience 5
 
 
 # python $benchmark_script \
