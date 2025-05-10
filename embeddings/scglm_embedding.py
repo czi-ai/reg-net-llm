@@ -14,12 +14,14 @@ import torch
 from torch.utils.data import DataLoader, SequentialSampler
 import os
 import sys
+import gc
 import importlib
 import json
 from pathlib import Path
 from tqdm import tqdm
 from typing import Optional, Union
 from os.path import join, dirname, abspath
+from functools import partial
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -68,6 +70,7 @@ parser.add_argument("--retain_obs_vars", nargs="+", default=[])
 parser.add_argument("--gene_index_path", type=str, required=True)
 parser.add_argument("--sample_n_cells", type=int, default=None)
 parser.add_argument("--batch_size", type=int, default=256)
+parser.add_argument("--skip_preprocess", action="store_true")
 parser.add_argument("--cache", action="store_true")
 
 try:
@@ -78,12 +81,12 @@ except Exception as e:
 
 
 
-def get_edges_dict(edges_list):
+def get_edges_dict(edges_list, base_index=0):
     edges = {}
     i = 0
     for lst in edges_list:
         for e in lst:
-            edges[i] = e
+            edges[base_index + i] = e
             i += 1
     return edges
 
@@ -172,14 +175,19 @@ def run_infer_network_cache(
         
     return (skipped, ncells)
 
+class GraphTransformerInferenceDataset(GraphTransformerDataset):
+    def __getitem__(self, idx):
+        item = super().__getitem__(idx)
+        item["obs_id"] = idx
+        return item
+
+
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
-
     global_gene_df = pd.read_csv(args.gene_index_path)
     global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
     global_node_to_gene = global_gene_df.set_index("idx")["gene_name"].to_dict()
-    
 
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
@@ -228,7 +236,7 @@ def main(args):
             ncells=0
         )
 
-    dataset = GraphTransformerDataset(
+    dataset = GraphTransformerInferenceDataset(
         cache_dir=args.all_data_dir,
         dataset_name="cells",
         debug=False,
@@ -239,7 +247,7 @@ def main(args):
         dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        collate_fn=scglm_collate_fn
+        collate_fn=partial(scglm_collate_fn, inference=True)
     )
     
     # Load model
@@ -259,77 +267,83 @@ def main(args):
     with torch.no_grad():
         for batch in dataloader:
             if args.use_masked_edges:
-                edges_list.append([e.cpu().numpy() for e in batch["edge_index"]])
+                edge_index = [e.cpu().numpy() for e in batch["edge_index"]]
                 # idendify edges to mask for each cell
                 # random edge mask returns a tuple (non_masked_edge_index, masked_edge_index)
                 random_edge_masks = [random_edge_mask(edge_index, mask_ratio=args.mask_ratio) for edge_index in batch["edge_index"]]
                 non_masked_edge_inices = [edge_mask[0] for edge_mask in random_edge_masks]
                 masked_edge_indices = [edge_mask[1] for edge_mask in random_edge_masks]
-                masked_edges_list.append(masked_edge_indices)
-                non_masked_edges_list.append(non_masked_edge_inices)
                 batch["edge_index"] = non_masked_edge_inices
                 embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
             else:
+                edge_index = [e.cpu().numpy() for e in batch["edge_index"]]
                 embedding, target_gene_ids, target_rank_ids, mask_locs, edge_index_list, num_nodes_list = model(send_to_gpu(batch))
-                edges_list.append([e.cpu().numpy() for e in edge_index_list])
-            input_gene_ids_list.append(target_gene_ids.cpu().numpy())
-            embedding_list.append(embedding.cpu().numpy())
-            seq_lengths.append(batch["num_nodes"])
+            
+            masked_edges_list_ = [masked_edge_indices] if args.use_masked_edges else None
+            non_masked_edges_list_ = [non_masked_edge_inices] if args.use_masked_edges else None
+            edges_list_ = [edge_index]
+            input_gene_ids_list_ = [target_gene_ids.cpu().numpy()]
+            embedding_list_ = [embedding.cpu().numpy()]
+            seq_lengths_ = [batch["num_nodes"]]
 
-            # cache batch by batch
+            # cache batch embeddings
             if args.cache:
-                
+                seq_lengths, edges, masked_edges, non_masked_edges, x_cls, x, input_genes, expression, metadata = get_scglm_embedding_vars(
+                    retain_obs_vars=args.retain_obs_vars, 
+                    adata=adata_original[batch["obs_id"],:],
+                    global_gene_to_node=global_gene_to_node, 
+                    global_node_to_gene=global_node_to_gene,
+                    embedding_list=embedding_list_, 
+                    edges_list=edges_list_,
+                    masked_edges_list=masked_edges_list_,
+                    non_masked_edges_list=non_masked_edges_list_,
+                    seq_lengths=seq_lengths_, 
+                    input_gene_ids_list=input_gene_ids_list_
+                )
                 save_embedding(
-                    file=None,
-                    cache=True,
+                    file=args.emb_path,
+                    cache=args.cache,
                     cache_dir=args.emb_cache,
+                    base_index=batch["obs_id"][0],
                     x=x,
                     x_cls=x_cls,
+                    expression=expression,
                     seq_lengths=seq_lengths,
                     edges=edges,
                     masked_edges=masked_edges,
                     non_masked_edges=non_masked_edges,
                     metadata=metadata
                 )
+                gc.collect()
+                continue
 
-    seq_lengths = np.concatenate(seq_lengths, axis=0) # increment for cls token
-    max_seq_length = max(seq_lengths)
-    edges = get_edges_dict(edges_list)
-    embeddings = np.concatenate([
-        np.pad(emb, pad_width=((0, 0), (0, max_seq_length + 1 - emb.shape[1]), (0, 0)), # +1 to account for CLS token
-               mode="constant", constant_values=0)
-        for emb in embedding_list
-    ], axis=0)
+            if args.use_masked_edges:
+                masked_edges_list += masked_edges_list_
+                non_masked_edges_list += non_masked_edges_list_
+            edges_list += edges_list_
+            input_gene_ids_list += input_gene_ids_list_
+            embedding_list += embedding_list_
+            seq_lengths += seq_lengths_
 
-    # split embedding into cls and gene embeddings
-    x_cls, x = embeddings[:,[0],:], embeddings[:,1:,:]
+    if args.cache:
+        return
 
-    input_gene_ids = np.concatenate([
-        np.pad(gene_ids, pad_width=((0, 0), (0, max_seq_length + 1 - gene_ids.shape[1])), 
-               mode="constant", constant_values=global_gene_to_node['<PAD>'])
-        for gene_ids in input_gene_ids_list
-    ], axis=0)
-    input_genes = np.vectorize(global_node_to_gene.get)(input_gene_ids)
-
-    # remove cls token
-    input_genes = input_genes[:, 1:]
-    
-    # get original expression, exluding cls
-    expression = np.concatenate([
-        np.pad(adata_original[i, genes[:seq_lengths[i]]].X.toarray(), 
-               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
-               mode="constant", constant_values=0)
-        for i, genes in enumerate(input_genes)
-    ], axis=0)
-
-    # retain requested metadata
-    metadata = collect_metadata(adata, args.retain_obs_vars)
+    seq_lengths, edges, x_cls, x, input_genes, expression, metadata = get_scglm_embedding_vars(
+        retain_obs_vars=args.retain_obs_vars, 
+        adata=adata_original,
+        global_gene_to_node=global_gene_to_node, 
+        global_node_to_gene=global_node_to_gene,  
+        embedding_list=embedding_list, 
+        edges_list=edges_list,
+        masked_edges_list=masked_edges_list,
+        non_masked_edges_list=non_masked_edges_list,
+        seq_lengths=seq_lengths, 
+        input_gene_ids_list=input_gene_ids_list
+    )
 
     print("Saving emeddings...")
     # TODO: 1. Write embedding for each cell to embedding cache directory
     if args.use_masked_edges:
-        masked_edges = get_edges_dict(masked_edges_list)
-        non_masked_edges = get_edges_dict(non_masked_edges_list)
         save_embedding(
             file=args.emb_path,
             cache=args.cache,
@@ -370,6 +384,49 @@ def main(args):
         masked_expressions=masked_expressions,
         metadata=metadata
     )
+
+def get_scglm_embedding_vars(retain_obs_vars, adata, global_gene_to_node, global_node_to_gene, embedding_list, edges_list, masked_edges_list, non_masked_edges_list, seq_lengths, input_gene_ids_list, base_index=0):
+    seq_lengths = np.concatenate(seq_lengths, axis=0) # increment for cls token
+    max_seq_length = max(seq_lengths)
+    edges = get_edges_dict(edges_list, base_index)
+
+    if masked_edges_list is not None and non_masked_edges_list is not None:
+        masked_edges = get_edges_dict(masked_edges_list, base_index)
+        non_masked_edges = get_edges_dict(non_masked_edges_list, base_index)
+    else:
+        masked_edges, non_masked_edges = None, None
+
+    embeddings = np.concatenate([
+        np.pad(emb, pad_width=((0, 0), (0, max_seq_length + 1 - emb.shape[1]), (0, 0)), # +1 to account for CLS token
+               mode="constant", constant_values=0)
+        for emb in embedding_list
+    ], axis=0)
+
+    # split embedding into cls and gene embeddings
+    x_cls, x = embeddings[:,[0],:], embeddings[:,1:,:]
+
+    input_gene_ids = np.concatenate([
+        np.pad(gene_ids, pad_width=((0, 0), (0, max_seq_length + 1 - gene_ids.shape[1])), 
+               mode="constant", constant_values=global_gene_to_node['<PAD>'])
+        for gene_ids in input_gene_ids_list
+    ], axis=0)
+    input_genes = np.vectorize(global_node_to_gene.get)(input_gene_ids)
+
+    # remove cls token
+    input_genes = input_genes[:, 1:]
+    
+    # get original expression, exluding cls
+    expression = np.concatenate([
+        np.pad(adata[i, genes[:seq_lengths[i]]].X.toarray(), 
+               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
+               mode="constant", constant_values=0)
+        for i, genes in enumerate(input_genes)
+    ], axis=0)
+
+    # retain requested metadata
+    metadata = collect_metadata(adata, retain_obs_vars)
+
+    return seq_lengths, edges, masked_edges, non_masked_edges, x_cls, x, input_genes, expression, metadata
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ from scGraphLLM._globals import * ## imported global variables are all caps
 
 rng = default_rng(42)
 
-def scglm_collate_fn(batch):
+def scglm_collate_fn(batch, inference=False):
     data = {
         "orig_gene_id": [], 
         "orig_rank_indices": [], 
@@ -40,6 +40,8 @@ def scglm_collate_fn(batch):
         "num_nodes" :[], 
         "dataset_name": []
     }
+    if inference:
+        data["obs_id"] = []
     
     # Make a dictionary of lists from the list of dictionaries
     for b in batch:
@@ -48,7 +50,7 @@ def scglm_collate_fn(batch):
 
     # Pad these dictionaries of lists
     for key in data.keys():
-        if (key == "dataset_name") or (key == "edge_index") or (key == "num_nodes"):
+        if key in {"dataset_name", "edge_index", "num_nodes", "obs_id"}:
             continue
         elif key == "orig_gene_id":
             pad_value = PAD_GENE_IDX

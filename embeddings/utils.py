@@ -59,8 +59,10 @@ def get_locally_indexed_masks_expressions(adata, masked_indices, input_genes):
     return masks,masked_expressions
 
 
+def save_embedding(file, x, cache=False, cache_dir=None, base_index=0, **features):
+    # remove Nones
+    features = {key: val for key, val in features.items() if val is not None}
 
-def save_embedding(file, x, cache=False, cache_dir=None, **features):
     if not cache:
         np.savez(file=file, allow_pickle=True, x=x, **features)
         return
@@ -89,7 +91,8 @@ def save_embedding(file, x, cache=False, cache_dir=None, **features):
             else:
                 data[k] = v[i]
 
-        torch.save(data, os.path.join(cache_dir, f"emb_{i:06d}.pt"))
+        index = i + base_index
+        torch.save(data, os.path.join(cache_dir, f"emb_{index:06d}.pt"))
 
 
 def collect_metadata(adata, retain_obs_vars):
