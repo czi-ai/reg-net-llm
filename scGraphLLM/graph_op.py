@@ -17,7 +17,7 @@ def _rescaled_L(edge_index, num_nodes, edge_weight=None):
     edge_index, edge_weight = remove_self_loops(edge_index, edge_weight) 
     if edge_weight is None:
         edge_weight = torch.ones(edge_index.size(1), dtype=torch.float32, device=edge_index.device)
-    row, col = edge_index[0], edge_index[1]
+    row, col = edge_index[0].long(), edge_index[1].long()
 
     if row.shape != edge_weight.shape:
         print(f"Shape mismatch: row={row.shape}, edge_weight={edge_weight.shape}")

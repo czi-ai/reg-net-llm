@@ -342,7 +342,6 @@ class FlashMHASelfMaskKV(nn.Module):
 
         if self.use_rotary_emb:
             q, k = self.rot_emb(q, k, seq_dimension=-3)
-            
         if self.kernel_attn:
             if not self.fine_tuning:
                 # cls token is only in pre-training
@@ -355,9 +354,7 @@ class FlashMHASelfMaskKV(nn.Module):
                 # shift query by perturbational embedding if observing perturb seq data
                 q_genes = q
                 q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
-                assert perturb_one_hot is not None, "need perturbation labels"
-                perturb_bias = self.perturb_emb(edge_index_list, num_nodes_list, perturb_one_hot)
-                assert q_genes_diffused.shape == perturb_bias.shape
+                perturb_bias = self.perturb_emb(edge_index_list, num_nodes_list, perturb_one_hot).reshape(b_size, s_size, h_size, d_size)
                 q_genes_diffused += perturb_bias
                 q_final = q_genes_diffused
         else:

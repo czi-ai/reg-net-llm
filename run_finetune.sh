@@ -5,7 +5,6 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus=2
-#SBATCH --constraint=h100
 #SBATCH -p gpu
 
 

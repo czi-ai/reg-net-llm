@@ -34,53 +34,60 @@ class LinkPredictHead(nn.Module):
         h = torch.sigmoid(self.net(x))
         return h
 
-
 class PerturbEmbedding(nn.Module):
-    """
-    Perturbational embedding
-    Input: graphs, perturbation design mat 
-    perturb_one_hot: (cell, gene)
-    """
     def __init__(self, max_hop, embed_dim, hidden_dim, output_dim, 
                  total_gene_dim, batch_size):
         super().__init__()
         self.max_hop = max_hop
         self.embed_dim = embed_dim
+
         self.net = nn.Sequential(
-            nn.Linear(max_hop * self.embed_dim, hidden_dim),
+            nn.Linear(max_hop * embed_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, output_dim)
-        ) 
+        )
+
         self.num_genes = total_gene_dim
         self.proj = nn.Linear(batch_size, embed_dim)
-    
+        self.bfloat16()
+
     def forward(self, edge_index_list, num_nodes_list, perturb_one_hot):
-        one_hot_mat = torch.nn.functional.one_hot(perturb_one_hot, num_classes=self.num_genes).float().T
-        init_emb = self.proj(one_hot_mat) # (gene, embed_dim)
+        dtype   = self.proj.weight.dtype        
+        device  = perturb_one_hot.device
+
+        # (gene, batch) one-hot → bf16 to match weights
+        one_hot_mat = (
+            torch.nn.functional.one_hot(
+                perturb_one_hot, num_classes=self.num_genes
+            )
+            .to(dtype=dtype, device=device)
+            .T                                   # (gene, batch)
+        )
+
+        init_emb = self.proj(one_hot_mat)        # (gene, embed_dim)
         assert init_emb.shape == (self.num_genes, self.embed_dim)
+
         batch_of_emb = []
-        device = perturb_one_hot.device
-        for i in range(len(edge_index_list)):
-            num_nodes = num_nodes_list[i]
-            edge_index = edge_index_list[i]
+        for edge_index, num_nodes in zip(edge_index_list, num_nodes_list):
             num_edges = edge_index.shape[1]
-            A = torch.sparse_coo_tensor(edge_index, 
-                                        torch.ones(num_edges, device=device), 
-                                        (num_nodes, num_nodes)).coalesce() # gene x gene
+            A = torch.sparse_coo_tensor(
+                    edge_index,
+                    torch.ones(num_edges, device=device, dtype=dtype),
+                    (num_nodes, num_nodes),
+                ).coalesce()                     # (gene, gene) bf16 sparse
+
             omega = []
-            # start shifting with k hop
-            for _ in self.max_hop:
-                H = init_emb
-                H = torch.sparse.mm(A, H)
+            for _ in range(self.max_hop):
+                H = torch.sparse.mm(A.to_dense(), init_emb)  # bf16 matmul
                 omega.append(H)
-                
-            omega = torch.stack(omega, dim=-1).reshape(num_nodes, -1) # (gene, embed_dim * k)
-            Omega = self.net(torch.cat(omega, dim=-1)) # (gene, d)
+
+            omega  = torch.stack(omega, dim=-1).reshape(num_nodes, -1)
+            Omega  = self.net(omega)
             batch_of_emb.append(Omega)
-        out = torch.stack(batch_of_emb, dim=0) # (cell, gene, d)
-        return out
-            
+
+        out = torch.stack(batch_of_emb, dim=0)   # (cell, gene, d)
+        return out                  
             
             
             

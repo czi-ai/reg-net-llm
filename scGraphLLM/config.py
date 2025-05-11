@@ -498,12 +498,12 @@ graph_kernel_attn_finetune_config = Config({
 })
 
 dataconfig_perturb = Config({
-        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_140k/train", "dataset_name": "train"}),
+        "train": Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_reduced/train", "dataset_name": "train"}),
         "val": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_140k/val", "dataset_name":"val"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_reduced/val", "dataset_name":"val"})
             ],
         "test": [
-            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_140k/test", "dataset_name":"test"})
+            Config({"cache_dir":"/hpc/projects/group.califano/GLM/data/single_cell/replogle_reduced/test", "dataset_name":"test"})
             ],
         "run_test":False, 
         "num_workers": 8,

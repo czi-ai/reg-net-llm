@@ -395,6 +395,7 @@ class PerturbationDataModule(pl.LightningDataModule):
                 control[key].append(sample["control"][key])
                 perturbed[key].append(sample["perturbed"][key])
             perturbed["perturbation"].append(sample["perturbed"]["perturbation"]) # manually add perturbation information as this is not a key in control.keys()
+        perturbed['perturbation'] = torch.tensor(perturbed['perturbation'])
             
         # Pad these lists
         for key in control.keys():
