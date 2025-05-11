@@ -341,7 +341,11 @@ class Perturb_GDTransformer(LitScGraphLLM):
         for b in bandwidths:
             mmd += self.MMD(x_p, x_p_hat, b)
         return mmd
-        
+    
+    def regression_loss(self, x_p, x_p_hat):
+        # regression loss
+        loss = F.mse_loss(x_p_hat, x_p)
+        return loss
     
     def ATE_alignment(self, x_c, x_p, x_p_hat):
         # expectation over cells
@@ -354,23 +358,26 @@ class Perturb_GDTransformer(LitScGraphLLM):
                        bandwidths=[0.1, 0.5, 1.0, 5.0, 10.0, 30.0]):
         mmd = self.MMD_multi(x_p, x_p_hat, bandwidths)
         ate_align = self.ATE_alignment(x_c, x_p, x_p_hat)
-        loss = mmd + ate_align
-        return loss, mmd, ate_align
+        recon = self.regression_loss(x_p, x_p_hat)
+        loss = recon + mmd + ate_align
+        return loss, mmd, ate_align, recon
         
     def training_step(self, batch, batch_idx):
         x_c, x_p, x_p_hat = self(batch)
-        loss, mmd, ate_align = self.fine_tune_loss(x_c, x_p, x_p_hat)
+        loss, mmd, ate_align, recon = self.fine_tune_loss(x_c, x_p, x_p_hat)
         self.log("train_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False)
         self.log("mmd_train", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False)
         self.log("ATE_align_train", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("L2_train", recon, batch_size=x_c.shape[0], add_dataloader_idx=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
         x_c, x_p, x_p_hat = self(batch)
-        loss, mmd, ate_align = self.fine_tune_loss(x_c, x_p, x_p_hat)
+        loss, mmd, ate_align, recon = self.fine_tune_loss(x_c, x_p, x_p_hat)
         self.log("val_loss", loss, batch_size=x_c.shape[0], add_dataloader_idx=False)
         self.log("mmd_val", mmd, batch_size=x_c.shape[0], add_dataloader_idx=False)
         self.log("ATE_align_val", ate_align, batch_size=x_c.shape[0], add_dataloader_idx=False)
+        self.log("L2_val", recon, batch_size=x_c.shape[0], add_dataloader_idx=False)
         return loss
     
     def configure_optimizers(self):
