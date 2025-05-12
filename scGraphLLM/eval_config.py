@@ -27,6 +27,23 @@ CELL_TYPES = [
     # 'cDC2_ISG15'
 ]
 
+PANCREAS_CELL_TYPES = [
+    'acinar',
+    'delta',
+    'beta',
+    'PSC',
+    'alpha',
+    'ductal',
+    'epsilon',
+    'PP',
+    # 'endothelial',
+    # 'macrophage',
+    # 'schwann',
+    # 'mast',
+    # 't_cell',
+    # 'MHC class II'
+]
+
 IMMUNE_CELL_TYPES = [
     "cd14_monocytes", # 'CD14+ Monocytes'
     "cd20_b_cells", # 'CD20 B cells'
@@ -71,7 +88,19 @@ NETWORK_SETS = {
         'Erythrocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/erythrocytes/aracne_4096/consolidated-net_defaultid.tsv",
         'Monocyte-derived dendritic cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/monocyte-derived_dendritic_cells/aracne_4096/consolidated-net_defaultid.tsv",
         'CD16+ Monocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd16_monocytes/aracne_4096/consolidated-net_defaultid.tsv"
+    },
+    "t_cell_network": {
+        'CD4+ T cells':    "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD14+ Monocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD20+ B cells':   "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'NKT cells':       "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'NK cells':        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD8+ T cells':    "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'Erythrocytes':    "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'Monocyte-derived dendritic cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+        'CD16+ Monocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
     }
+
 }
 
 
@@ -125,6 +154,11 @@ EMBEDDING_DATASETS = ({
         for cell_type in CELL_TYPES
     ],
     
+    # PANCREAS
+    "pancreas_scglm_cls_3L_12000_steps_MLM_001": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/annotation_pancreas/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_metacells/cached_embeddings"
+        for cell_type in PANCREAS_CELL_TYPES
+    ],
 
     # HUMAN IMMUNE
     # scGraphLLM
@@ -132,14 +166,25 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
     ],
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001_repro": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_repro/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_integrated_network": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_integrated_network/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
+    ],
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001_infer_network": [
+        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_infer_network/cached_embeddings"   
+    ],
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001_infer_network_sample": [
+        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/test_infer_network/cached_embeddings"
     ],
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_edge_mask_0.15/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
     ],
+
     # Geneformer
     "human_immune_geneformer_seq_len_2048": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/geneformer/aracne_4096_seq_len_2048/cached_embeddings"
@@ -154,6 +199,10 @@ EMBEDDING_DATASETS = ({
 })
 
 SPLIT_CONFIGS = {
+    "train_test_set": Config({
+        "metadata_config": ("set", (None, None, ["test"])),
+        "ratio_config": (0.9, 0.10, None)
+    }),
     "random": Config({
         "metadata_config": None,
         "ratio_config": (0.7, 0.1, 0.2)

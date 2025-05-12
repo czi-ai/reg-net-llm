@@ -16,6 +16,7 @@ import os
 import sys
 import gc
 import importlib
+import shutil
 import json
 from pathlib import Path
 from tqdm import tqdm
@@ -90,16 +91,17 @@ def get_edges_dict(edges_list, base_index=0):
             i += 1
     return edges
 
-
-def run_infer_network_cache(
-        networks: dict, 
-        expression: sc.AnnData, 
+def run_inference_cache(
+        network: pd.DataFrame,
+        expression: pd.DataFrame,
         global_gene_to_node, 
         cache_dir, 
         overwrite, 
         msplit, 
         valsg_split_ratio, 
-        cell_type, 
+        cell_type,
+        networks: dict = None,
+        classes: list = None,
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
@@ -112,24 +114,35 @@ def run_infer_network_cache(
     Assign local ARACNe graph to each cell and cache each cell
     """
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
-    expression = expression[:,expression.var_names[expression.var_names.isin(global_gene_to_node)]]
+    # remove unknown genes
+    expression = expression[expression.columns[expression.columns.isin(global_gene_to_node)]]
 
-    class_networks = {}
-    for name, path in networks.items():
-        network = pd.read_csv(path, sep="\t")
-        # remove edges due to unknown genes
+    assert (network is None) != (networks is None), "Either network or networks must be provided, not both"
+    infer_networks = networks is not None
+
+    if not infer_networks:
         network = network[
             network[REG_VALS].isin(global_gene_to_node) & 
             network[TAR_VALS].isin(global_gene_to_node)
         ]
-        network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
-        common_genes = list(set(network_genes).intersection(set(expression.var_names)))
-        class_networks[name] = network, common_genes
+        network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
+        common_genes = sorted(list(network_genes.intersection(set(expression.columns))))
+    else:
+        class_networks = {}
+        for name, network in networks.items():
+            network = network[
+                network[REG_VALS].isin(global_gene_to_node) & 
+                network[TAR_VALS].isin(global_gene_to_node)
+            ]
+            network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
+            common_genes = sorted(list(network_genes.intersection(set(expression.columns))))
+            class_networks[name] = network, common_genes
 
-    for i in range(expression.n_obs):
+    for i in range(expression.shape[0]):
         if ncells % 10 == 0:
             print(f"Processed {ncells} cells", end="\r")
 
+        obs_name = expression.index[i]
         cell_number = i
         
         if msplit == "valSG":
@@ -145,23 +158,21 @@ def run_infer_network_cache(
         if (os.path.exists(outfile)) and (not overwrite):
             ncells+=1
             continue
+        
+        if infer_networks:
+            cell_network, common_genes = class_networks[classes[i]]
+        else:
+            cell_network = network
 
-        cell = pd.Series(expression.X[i, :], index=expression.var_names)
-        probs = expression.obsm["class_probs"][i,:]
-        classes = expression.uns["class_probs_names"]
+        cell: pd.Series = expression.iloc[i, :][common_genes]
 
         if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
             skipped += 1
             ncells+=1
             continue
-            
-        # infer network
-        class_name = classes[np.argmax(probs)]
-        network, common_genes = class_networks[class_name]
-        cell = cell[common_genes]
 
-        # filter out genes with 0 expression
-        data = get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
+        data = get_cell_data(cell_network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
+        data.obs_name = obs_name
         
         torch.save(data, outfile)
         ncells += 1
@@ -174,12 +185,6 @@ def run_infer_network_cache(
                 print(outfile, "-------- Failed")
         
     return (skipped, ncells)
-
-class GraphTransformerInferenceDataset(GraphTransformerDataset):
-    def __getitem__(self, idx):
-        item = super().__getitem__(idx)
-        item["obs_id"] = idx
-        return item
 
 
 def main(args):
@@ -201,9 +206,13 @@ def main(args):
     ranks = quantize_cells(adata.to_df(), n_bins=NUM_BINS, method="quantile")
     ranks = sc.AnnData(X=ranks.values, obs=adata.obs, var=adata.var, uns=adata.uns, obsm=adata.obsm)
     if args.infer_network:
-        run_infer_network_cache(
-            networks=args.networks, 
-            expression=ranks, 
+        class_networks = {name: pd.read_csv(path, sep="\t") for name, path in args.networks.items()}
+        classes_hat = ranks.uns["class_probs_names"][ranks.obsm["class_probs"].argmax(axis=1)]
+        run_inference_cache(
+            network=None,
+            networks=class_networks,
+            classes=classes_hat, 
+            expression=ranks.to_df(),
             global_gene_to_node=global_gene_to_node, 
             cache_dir=args.cache_dir,
             overwrite=True, 
@@ -219,9 +228,9 @@ def main(args):
         )
     else:
         network = pd.read_csv(args.network_path, sep="\t")
-        run_cache(
+        run_inference_cache(
             network=network, 
-            expression=ranks, 
+            expression=ranks.to_df(), 
             global_gene_to_node=global_gene_to_node, 
             cache_dir=args.cache_dir,
             overwrite=True, 
@@ -236,11 +245,12 @@ def main(args):
             ncells=0
         )
 
-    dataset = GraphTransformerInferenceDataset(
+    dataset = GraphTransformerDataset(
         cache_dir=args.all_data_dir,
         dataset_name="cells",
         debug=False,
-        mask_fraction=0.0
+        inference=True,
+        mask_fraction=0.0,
     )
     
     dataloader = torch.utils.data.DataLoader(
@@ -264,6 +274,7 @@ def main(args):
     non_masked_edges_list = []
     seq_lengths = []
     input_gene_ids_list = []
+    n_obs = 0
     with torch.no_grad():
         for batch in dataloader:
             if args.use_masked_edges:
@@ -290,7 +301,7 @@ def main(args):
             if args.cache:
                 seq_lengths, edges, masked_edges, non_masked_edges, x_cls, x, input_genes, expression, metadata = get_scglm_embedding_vars(
                     retain_obs_vars=args.retain_obs_vars, 
-                    adata=adata_original[batch["obs_id"],:],
+                    adata=adata_original[batch["obs_name"],:],
                     global_gene_to_node=global_gene_to_node, 
                     global_node_to_gene=global_node_to_gene,
                     embedding_list=embedding_list_, 
@@ -304,7 +315,7 @@ def main(args):
                     file=args.emb_path,
                     cache=args.cache,
                     cache_dir=args.emb_cache,
-                    base_index=batch["obs_id"][0],
+                    base_index=n_obs,
                     x=x,
                     x_cls=x_cls,
                     expression=expression,
@@ -315,6 +326,9 @@ def main(args):
                     metadata=metadata
                 )
                 gc.collect()
+
+                n_obs += len(batch["num_nodes"])
+                print(f"Processed {n_obs:,} observations")
                 continue
 
             if args.use_masked_edges:
@@ -324,6 +338,13 @@ def main(args):
             input_gene_ids_list += input_gene_ids_list_
             embedding_list += embedding_list_
             seq_lengths += seq_lengths_
+
+            n_obs += len(batch["num_nodes"])
+            print(f"Processed {n_obs:,} observations")
+
+    # delete temporary cache dir
+    if os.path.isdir(args.cache_dir):
+        shutil.rmtree(args.cache_dir)
 
     if args.cache:
         return

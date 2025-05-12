@@ -66,32 +66,32 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 # ===================#
 
 # Human Immune Dataset 
-# python $benchmark_script \
-#     --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_integrated_network \
-#     --split_config random \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix human_immune_scglm_cls_3L_12000_steps_MLM_001_integrated_network \
-#     --use_weighted_ce \
-#     --task cls \
-#     --target final_annotation \
-#     --lr 1e-2 \
-#     --batch_size 256 \
-#     --num_epochs 100 \
-#     --patience 5
-
-# Myeloid Dataset
 python $benchmark_script \
-    --dataset scglm_graph_metacells \
-    --split_config mye \
+    --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_repro \
+    --split_config random \
     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-    --suffix mye_scglm_graph_metacells \
+    --suffix human_immune_scglm_cls_3L_12000_steps_MLM_001_repro_repro \
     --use_weighted_ce \
     --task cls \
-    --target cell_type \
+    --target final_annotation \
     --lr 1e-2 \
     --batch_size 256 \
     --num_epochs 100 \
     --patience 5
+
+# Myeloid Dataset
+# python $benchmark_script \
+#     --dataset scglm_graph_metacells \
+#     --split_config mye \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix mye_scglm_graph_metacells \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5
 
 
 # python $benchmark_script \
@@ -103,6 +103,20 @@ python $benchmark_script \
 #     --use_gat \
 #     --target cell_type \
 #     --lr 1e-2 \
+#     --num_epochs 100 \
+#     --patience 5
+
+# Pancreas Dataset
+# python $benchmark_script \
+#     --dataset pancreas_scglm_cls_3L_12000_steps_MLM_001 \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix pancreas_scglm_cls_3L_12000_steps_MLM_001 \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
 #     --num_epochs 100 \
 #     --patience 5
 

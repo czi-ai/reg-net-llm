@@ -41,7 +41,7 @@ def scglm_collate_fn(batch, inference=False):
         "dataset_name": []
     }
     if inference:
-        data["obs_id"] = []
+        data["obs_name"] = []
     
     # Make a dictionary of lists from the list of dictionaries
     for b in batch:
@@ -50,7 +50,7 @@ def scglm_collate_fn(batch, inference=False):
 
     # Pad these dictionaries of lists
     for key in data.keys():
-        if key in {"dataset_name", "edge_index", "num_nodes", "obs_id"}:
+        if key in {"dataset_name", "edge_index", "num_nodes", "obs_name"}:
             continue
         elif key == "orig_gene_id":
             pad_value = PAD_GENE_IDX
@@ -75,8 +75,8 @@ def load(file):
         return pickle.load(ifl)
 
 def run_cache(
-        network, 
-        expression, 
+        network: pd.DataFrame, 
+        expression: pd.DataFrame, 
         global_gene_to_node, 
         cache_dir, 
         overwrite, 
@@ -249,9 +249,10 @@ def cache_aracane_and_bins(
 
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction=0.15, debug:bool=False):
+    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction=0.15, debug:bool=False, inference=False):
         self.debug = debug
-        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.inference = inference
+        self.cached_files = sorted([cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")])
         self.dataset_name = dataset_name
         self.mask_fraction = mask_fraction
         print(f"Cache Directory: {cache_dir}")
@@ -296,7 +297,7 @@ class GraphTransformerDataset(torchDataset):
         # graph positional encoding
         #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
-        return {
+        item = {
             "orig_gene_id" : orig_gene_indices, 
             "orig_rank_indices" : orig_rank_indices, 
             "gene_mask" : gene_mask, 
@@ -307,6 +308,11 @@ class GraphTransformerDataset(torchDataset):
             #"spectral_pe": spectral_pe,
             "dataset_name" : self.dataset_name
         }
+        
+        if self.inference:
+            item["obs_name"] = getattr(data, "obs_name", None)
+
+        return item
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):

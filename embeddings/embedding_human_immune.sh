@@ -38,12 +38,12 @@ echo "Querying scGraphLLM embeddings from processed immune cells..."
 
 python $scglm_embedding_script \
   --cells_path /hpc/mydata/rowan.cassius/data/scGPT/human_immune/processed_human_immune.h5ad \
-  --out_dir data/scGPT/human_immune/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001_infer_network \
+  --out_dir /hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001_infer_network \
   --networks human_immune_metacells_networks \
   --infer_network \
   --model_path "/hpc/mydata/leo.dupire/GLM/model_out/PRETRAIN [CLS, 3Layer, rank_mask:15%, lr:0.00005, AdamW]:2025-05-05@01:26:24/checkpoints/epoch=0-step=12000.ckpt" \
   --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index_with_cls.csv \
-  --retain_obs_vars final_annotation batch sample_id obs_id \
+  --retain_obs_vars final_annotation batch set sample_id obs_id \
   --max_seq_length 2048 \
   --cache
 
@@ -107,16 +107,16 @@ python $scglm_embedding_script \
 # for cell_type in "${immune_cell_types[@]}"; do
 #     echo "Querying scGraphLLM embeddings for cell type: $cell_type..."
 
-    # # Without Edge Masks
-    # python $scglm_embedding_script \
-    #     --data_dir "$immune_cell_type_dir/$cell_type" \
-    #     --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001" \
-    #     --model_path "/hpc/mydata/leo.dupire/GLM/model_out/PRETRAIN [CLS, 3Layer, rank_mask:15%, lr:0.00005, AdamW]:2025-05-05@01:26:24/checkpoints/epoch=0-step=12000.ckpt" \
-    #     --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv \
-    #     --aracne_dir "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG" \
-    #     --retain_obs_vars final_annotation batch sample_id obs_id \
-    #     --sample_n_cells 1000 \
-    #     --cache
+#     # Without Edge Masks
+#     python $scglm_embedding_script \
+#         --data_dir "$immune_cell_type_dir/$cell_type" \
+#         --out_dir "$immune_cell_type_dir/$cell_type/embeddings/scglm/aracne_${ARACNE_N_HVG}_cls_3L_12000_steps_MLM_001_repro" \
+#         --model_path "/hpc/mydata/leo.dupire/GLM/model_out/PRETRAIN [CLS, 3Layer, rank_mask:15%, lr:0.00005, AdamW]:2025-05-05@01:26:24/checkpoints/epoch=0-step=12000.ckpt" \
+#         --gene_index_path /hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv \
+#         --network_path "$immune_cell_type_dir/$cell_type/aracne_$ARACNE_N_HVG/consolidated-net_defaultid.tsv" \
+#         --retain_obs_vars final_annotation batch sample_id obs_id \
+#         --sample_n_cells 1000 \
+#         --cache
 
     # # With Edge Masks
     # python $scglm_embedding_script \

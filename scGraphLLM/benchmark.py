@@ -106,6 +106,7 @@ class EmbeddingDataset(Dataset):
                     self.metadata[key].append(value)
                 if data["seq_lengths"] > self.max_seq_length:
                     self.max_seq_length = data["seq_lengths"]
+                self.metadata["seq_lengths"].append(data["seq_lengths"])
 
             print(f"Loaded metadata with keys: {self.metadata.keys()}")
             if self.target_metadata_key is not None:
