@@ -181,6 +181,11 @@ EMBEDDING_DATASETS = ({
         for cell_type in PANCREAS_CELL_TYPES
     ],
 
+    # Adamson
+    "adamson_scglm_cls_3L_12000_steps_MLM_001":[
+        "/hpc/projects/group.califano/GLM/data/adamson/embeddings/scglm/scglm_cls_3L_12000_steps_MLM_001/cached_embeddings"
+    ],
+
     # HUMAN IMMUNE
     # scGraphLLM
     "human_immune_scglm_cls_3L_12000_steps_MLM_001": [
