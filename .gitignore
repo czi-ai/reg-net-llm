@@ -24,6 +24,7 @@ test/test_cache_cxg
 test/test_cache_rep
 embeddings/parallel_embeddings.sh
 embeddings/start_parallel_embeddings_cache.sh
+replogle_out.log
 slurm_data_out/
 slurm_train_out/
 slurm_train_out/*
