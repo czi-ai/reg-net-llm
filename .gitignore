@@ -1,5 +1,6 @@
 *.pyc
 *.pyo
+*.egg-info
 .DS_Store
 .npy
  .condarc
@@ -9,6 +10,8 @@ ARACNe3/
 __MACOSX/
 copy.sh
 data/
+out/
+wandb/*
 download_data_cancer.sh
 notebooks/preprocess_cancer_samples.ipynb
 **scratch.py
@@ -17,6 +20,13 @@ scripts/.ARACNe3_cached
 scripts/slurm_out
 scripts/ID_corrupted/corrupted_files
 scripts/ID_corrupted/out
+test/test_cache_cxg
+test/test_cache_rep
+embeddings/parallel_embeddings.sh
+embeddings/start_parallel_embeddings_cache.sh
+replogle_out.log
 slurm_data_out/
+slurm_train_out/
+slurm_train_out/*
 *slurm*
 */lightning_logs/*
