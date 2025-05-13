@@ -908,11 +908,43 @@ def print_dataset_info(name, dataset):
     print(f"{name} Dataset: Number of cells: {len(dataset):,}, Max sequence length: {dataset.max_seq_length:,}, Embedding size: {dataset.embedding_dim:,}")
 
 
-def split_dataset(dataset, ratio_config=(None, None, None), metadata_config=None,  seed=42):
+import pandas as pd
+import torch
+from torch.utils.data import Subset, random_split
+
+def split_dataset(
+        dataset, 
+        ratio_config=(None, None, None), 
+        metadata_config=None,
+        filter_config=None,
+        seed=42):
     """
     Function for splitting a dataset into train, validation and test subsets 
-    according to metadata values and/or randomly.
+    according to metadata values and/or randomly. Additionally
     """
+    # get metadata as dataframe
+    if (metadata_config is not None) or (filter_config is not None):
+        metadata = pd.DataFrame(dataset.metadata)
+
+    # Filtering
+    if filter_config:
+        mask = pd.Series(True, index=metadata.index)
+        for key, config in filter_config.items():
+            values = config["values"]
+            mode = config.get("mode", "include")
+            if mode == "include":
+                mask &= metadata[key].isin(values)
+            elif mode == "exclude":
+                mask &= ~metadata[key].isin(values)
+            else:
+                raise ValueError(f"Unknown mode '{mode}' for filter_config[{key}]. Use 'include' or 'exclude'.")
+
+        filtered_indices = metadata[mask].index.tolist()
+        dataset = Subset(dataset, filtered_indices)
+
+        metadata = metadata.loc[filtered_indices].reset_index(drop=True)
+
+    # Splitting
     if ratio_config != (None, None, None):
         specified_ratios = [r for r in ratio_config if r is not None]
         if specified_ratios and not abs(sum(specified_ratios) - 1.0) < 1e-6:
@@ -939,8 +971,7 @@ def split_dataset(dataset, ratio_config=(None, None, None), metadata_config=None
     
     meta_split_datasets = [None, None, None]
     if metadata_config:
-        key, split_values = metadata_config  
-        metadata = pd.DataFrame(dataset.metadata)
+        key, split_values = metadata_config 
         meta_split_datasets = [
             Subset(dataset, indices=metadata[metadata[key].isin(values)].index.tolist()) 
                 if values is not None else None
@@ -1015,7 +1046,8 @@ def main(args):
     train_dataset, val_dataset, test_dataset = split_dataset(
         dataset=dataset,
         metadata_config=args.split_config.metadata_config,
-        ratio_config=args.split_config.ratio_config
+        ratio_config=args.split_config.ratio_config,
+        filter_config=getattr(args.split_config, "filter_config", None)
     )
     
     print(f"Training set size: {len(train_dataset)}")
@@ -1241,7 +1273,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_num_batches", type=int, default=None)
     parser.add_argument("--num_epochs", type=int, default=500)
     parser.add_argument("--patience", type=int, default=5)
-    parser.add_argument("--val_check_interval", type=Union[int, float], default=1.0)
+    parser.add_argument("--val_check_interval", type=float, default=1.0)
     parser.add_argument("--random_seed", default=0)
     # effectively, early stopping will kick in if the model has not improved after
     # seeing (batch_size * val_check_interval * patience) cells

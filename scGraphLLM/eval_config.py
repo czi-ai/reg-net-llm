@@ -248,6 +248,11 @@ SPLIT_CONFIGS = {
     "human_immune": Config({
         "metadata_config": ("final_annotation", (None, ['Erythrocytes', 'CD16+ Monocytes'], ['CD4+ T cells', 'Monocyte-derived dendritic cells', 'NK cells'])),
         "ratio_config": (1.0, None, None)
+    }),
+    "adamson": Config({
+        "metadata_config": None,
+        "ratio_config": (0.7, 0.1, 0.2),
+        "filter_config": {"control": {"values": [0], "mode": "include"}}
     })
 }
 
