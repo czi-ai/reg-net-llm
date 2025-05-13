@@ -245,6 +245,10 @@ def main(args):
             ncells=0
         )
 
+    # reclaim memory
+    del ranks
+    gc.collect()
+
     dataset = GraphTransformerDataset(
         cache_dir=args.all_data_dir,
         dataset_name="cells",

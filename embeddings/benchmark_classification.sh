@@ -123,7 +123,7 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 # Adamson Dataset
 python $benchmark_script \
     --dataset adamson_scglm_cls_3L_12000_steps_MLM_001 \
-    --split_config random \
+    --split_config adamson \
     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
     --suffix adamson_scglm_cls_3L_12000_steps_MLM_001 \
     --use_weighted_ce \
@@ -131,8 +131,9 @@ python $benchmark_script \
     --target condition \
     --lr 1e-2 \
     --batch_size 256 \
-    --num_epochs 100 \
-    --patience 5
+    --num_epochs 200 \
+    --patience 5 \
+    --val_check_interval 0.5
 
 
 # ==============#
