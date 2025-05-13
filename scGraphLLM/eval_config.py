@@ -34,7 +34,7 @@ PANCREAS_CELL_TYPES = [
     'PSC',
     'alpha',
     'ductal',
-    'epsilon',
+    # 'epsilon',
     'PP',
     # 'endothelial',
     # 'macrophage',
@@ -153,10 +153,31 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048/cached_embeddings"
         for cell_type in CELL_TYPES
     ],
+    "mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_pruned_graph_002": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_pruned_002/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+    "mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_pruned_graph_50": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_pruned_50/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+
     
     # PANCREAS
     "pancreas_scglm_cls_3L_12000_steps_MLM_001": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/annotation_pancreas/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_metacells/cached_embeddings"
+        for cell_type in PANCREAS_CELL_TYPES
+    ],
+    "pancreas_scgpt_seq_len_2048": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/annotation_pancreas/cell_type/{cell_type}/embeddings/scgpt/seq_len_2048/cached_embeddings"
+        for cell_type in PANCREAS_CELL_TYPES
+    ],
+    "pancreas_scglm_cls_3L_12000_steps_MLM_001_pruned_graph": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/annotation_pancreas/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_pruned_graph/cached_embeddings"
+        for cell_type in PANCREAS_CELL_TYPES
+    ],
+    "pancreas_scglm_cls_3L_12000_steps_MLM_001_pruned_graph_002": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/annotation_pancreas/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_pruned_graph_002/cached_embeddings"
         for cell_type in PANCREAS_CELL_TYPES
     ],
 
@@ -175,7 +196,7 @@ EMBEDDING_DATASETS = ({
         for cell_type in IMMUNE_CELL_TYPES
     ],
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_infer_network": [
-        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_infer_network/cached_embeddings"   
+        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_infer_network/cached_embeddings"
     ],
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_infer_network_sample": [
         "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/test_infer_network/cached_embeddings"
