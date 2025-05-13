@@ -1,5 +1,0 @@
-Initializing distributed: GLOBAL_RANK: 7, MEMBER: 8/8
-LOCAL_RANK: 7 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
-SLURM auto-requeueing enabled. Setting signal handlers.
-/hpc/mydata/leo.dupire/anaconda/23.1.0-3/x86_64/envs/scllm/lib/python3.9/site-packages/torch/utils/data/dataloader.py:558: UserWarning: This DataLoader will create 8 worker processes in total. Our suggested max number of worker in current system is 1, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.
-  warnings.warn(_create_warning_msg(

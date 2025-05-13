@@ -4,8 +4,8 @@
 ARACNE_OUTDIR_MD="" # Path to aracne_"$ARACNE_TOP_N_HVG"_outdir.csv
 GENE_TO_NODE_FILE="" # Path to cellxgene_gene2index.csv
 CACHE_DIR="" # Path to where the cache data should be stored
-# PERTURBED=false # Is this a perturbation dataset? Perturbation information will be stored in caching. Default: False
-# GENE_ID="null" # For perturbation ONLY: column in dataset.obs corresponding to the perturbed gene_id (ENSEMBL symbol notation)
+$PERTURBATION_VAR="null" # For perturbation ONLY: column in dataset.obs corresponding to the perturbed gene_id (ENSEMBL symbol notation)
+NUM_PROC="1"
 JOB_OUT_DIR="" # Where to store all log files from this parallelized caching process
 
 # Parse arguments
@@ -14,8 +14,8 @@ while [[ $# -gt 0 ]]; do
     --aracane-outdir-md) ARACNE_OUTDIR_MD="$2"; shift 2 ;;
     --gene-to-node-file) GENE_TO_NODE_FILE="$2"; shift 2 ;;
     --cache-dir) CACHE_DIR="$2"; shift 2 ;;
-    # --perturbed) PERTURBED=true; shift ;;
-    # --gene_id) GENE_ID="$2"; shift 2 ;;
+    --perturbation-var) PERTURBATION_VAR="$2"; shift 2 ;;
+    --num-proc) NUM_PROC="$2"; shift 2 ;;
     --job-out-dir) JOB_OUT_DIR="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
@@ -33,8 +33,8 @@ echo ""
 echo -e "aracane-outdir-md:\t $ARACNE_OUTDIR_MD"
 echo -e "gene-to-node-file:\t $GENE_TO_NODE_FILE"
 echo -e "cache-dir:\t\t $CACHE_DIR"
-# echo -e "perturbed:\t\t $PERTURBED"
-# echo -e "gene_id:\t\t $GENE_ID"
+echo -e "perturbation-var: \t $PERTURBATION_VAR"
+echo -e "num-proc: \t\t $NUM_PROC"
 echo -e "job-out-dir:\t\t $JOB_OUT_DIR"
 echo ""
 echo ""
@@ -47,8 +47,8 @@ sbatch --array=1-${FILE_COUNT} --output=${JOB_OUT_DIR}/cache_out/array_job_%A_%a
     --aracane-outdir-md $ARACNE_OUTDIR_MD \
     --gene-to-node-file $GENE_TO_NODE_FILE \
     --cache-dir $CACHE_DIR \
-    # --perturbed $PERTURBED \
-    # --gene_id $GENE_ID
+    --perturbation-var $PERTURBATION_VAR \
+    --num-proc $NUM_PROC 
 
 
 ##########################################################################################
@@ -87,11 +87,10 @@ python outdir_gen.py \
 
 # Replogle caching command
 source start_slurm_cache.sh \
-    --aracane-outdir-md "/hpc/projects/group.califano/GLM/data/single_cell/replogle_outdirs.csv" \
+    --aracane-outdir-md "/hpc/projects/group.califano/GLM/data/single_cell/replogle_full_outdirs.csv" \
     --gene-to-node-file "/hpc/projects/group.califano/GLM/data/cellxgene_gene2index.csv" \
-    --cache-dir "/hpc/projects/group.califano/GLM/data/single_cell/replogle_cache" \
-    --perturbed \
-    --gene_id "gene_id" \
+    --cache-dir "/hpc/projects/group.califano/GLM/data/single_cell/replogle_200k" \
+    --perturbation-var "gene_id" \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/200k"
 
 END_COMMENT

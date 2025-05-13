@@ -53,7 +53,6 @@ CELL_TYPE = "cell_type"
 TISSUE = "tissue"
 
 genes_names = pd.read_csv("/hpc/projects/group.califano/GLM/data/gene-name-map.csv", index_col=0)
-hugo_to_ensg = genes_names.set_index("hugo.values")["ensg.values"].to_dict()
 ENSG_PROTEIN_CODING = set(genes_names["ensg.values"])
 
 
@@ -278,7 +277,7 @@ def get_samples(adata, index_vars=None):
         adata.obs["sample_id"] = "0"
     else:
         index_vars = sorted(index_vars)
-        adata.obs["sample_id"] = pd.Categorical(adata.obs[index_vars].apply(lambda row: "_".join(row), axis=1))
+        adata.obs["sample_id"] = pd.Categorical(adata.obs[index_vars].apply(lambda row: "_".join(str(x) for x in row), axis=1))
         
     samples = adata.obs\
         .groupby("sample_id")\
@@ -312,7 +311,6 @@ def preprocess_data(
 
     # apply filters
     adata = adata[adata.obs["pct_counts_mt"] < mito_thres]
-    adata = adata[:,~adata.var["mt"]]
     sc.pp.filter_cells(adata, min_counts=umi_min)
     sc.pp.filter_cells(adata, max_counts=umi_max)
     
@@ -363,28 +361,20 @@ def make_aracne_counts(
     """Make counts ARACNe inference for each cluster
     """
     regulators = get_regulators(types=regulators)
-    if groupby_var is not None:
-        clusters = dict()
-        genes = set()
-        for key in adata.obs[groupby_var].unique():
-            cluster = adata[adata.obs[groupby_var] == key,:].copy()
-            cluster = aracne_preprocess(min_perc_nz, top_n_hvg, regulators, cluster)
-            if cluster.shape[0] > max_n_sample:
-                sc.pp.subsample(cluster, n_obs=max_n_sample)
-            elif cluster.shape[0] < min_n_sample:
-                logger.info(f"Cluster {key} has insufficient sample size of {cluster.shape[0]:,} for ARACNe inference")
-                continue
-            clusters[key] = cluster.shape
-            genes = genes.union(cluster.var_names.tolist())
-            logger.info(f"Cluster {key} has {cluster.shape[0]:,} cells and {cluster.shape[1]:,} genes for ARACNe inference")
+    clusters = dict()
+    genes = set()
+    for key in adata.obs["cluster"].unique():
+        cluster = adata[adata.obs["cluster"] == key,:].copy()
+        
+        # enforce top_n_hvg
+        if top_n_hvg is not None:
+            hvg = sc.pp.highly_variable_genes(cluster, flavor="seurat", n_top_genes=top_n_hvg, inplace=False, subset=True)
             
-            # save
-            write_adata_to_csv_buffered(
-                cluster, 
-                sep="\t", 
-                file=join(aracne_dir, f"counts_{key}.tsv"), 
-                buffer_size=int(min_n_sample/2))
-            del cluster
+            hvg_union_regs = hvg_union_regs = set(hvg.index.to_list()).union(set(regulators))
+            cluster = cluster[:, cluster.var_names.isin(hvg_union_regs)]
+        else:
+            perc_nz = cluster.X.sum(axis=0) / cluster.shape[1]
+            cluster = cluster[:, perc_nz > min_perc_nz]
 
         # write all
         aracne_adata = adata[adata.obs["cluster"].isin(clusters), adata.var_names.isin(genes)]
@@ -404,17 +394,6 @@ def make_aracne_counts(
         sep="\t", 
         file=join(aracne_dir, f"counts.tsv"), 
         buffer_size=1000)
-    
-    if groupby_var is not None:
-        return {
-            "count": len(clusters),
-            "size": clusters
-        }
-    else:
-        return {
-            "count": 1,
-            "size": aracne_adata.shape
-        }
 
 def aracne_preprocess(adata, min_perc_nz, top_n_hvg, regulators):
     """
@@ -564,13 +543,12 @@ def main(args):
     logger.info(json.dumps(args.__dict__, indent=4))
     info = {"config": args.__dict__}
 
-    # Load data
     adata = load_data(args.data_path, var_index_name=args.var_index_name)
     qc_initial = qc_metrics_dict(adata)
     info["initial"] = qc_initial
     logger.info(f"Loaded dataset: ({adata.shape[0]:,} cells, {adata.shape[1]:,} genes) with sparsity = {qc_initial['sparsity']:.2f}")
-    
-    # Dataset-specific processing
+
+    # CellXGene specific processing
     if args.dataset == "cell_x_gene":
         adata = adata[adata.obs["is_primary_data"],:]
         adata.obs.reset_index(inplace=True)
@@ -579,17 +557,13 @@ def main(args):
     elif args.dataset in {"mye", "pancreas"}:
         counts = sc.AnnData(X=adata.X, obs=adata.obs)
         counts.var_names = adata.var_names
-        counts.X = np.expm1(adata.X)
+        counts.X = np.expm1(adata.X).astype(int)
         adata = counts
         adata.var["ensembl_id"] = adata.var_names.map(hugo_to_ensg)
         adata = adata[:,~adata.var["ensembl_id"].isna()]
         adata.var.set_index("ensembl_id", inplace=True)
-    elif args.dataset == "adamson":
-        counts = sc.AnnData(X=adata.X, obs=adata.obs)
-        counts.var_names = adata.var_names
-        counts.X = np.expm1(adata.X)
-        adata = counts
 
+    #### Preprocessing ####
     if "preprocess" in args.steps:
         adata, qc_processed = preprocess_data(
             adata=adata, 
@@ -638,7 +612,7 @@ def main(args):
             n_cells_per_metacell=args.n_cells_per_metacell,
             size=args.metacells_size,
             target_sum=args.target_sum,
-            groupby_var=args.groupby_var,
+            groupby_var="sample_id" if args.aracne_by_sample else "cluster",
             save_path=(args.meta_path if args.save_metacells else None),
             random_state=args.random_state
         )
@@ -668,10 +642,11 @@ def main(args):
         info["bins"] = qc_bins
         print("Quantization completed!")
     else:
-        logger.info(f"'rank' not in steps, skipping ranking...")
+        logger.info(f"'quantize' not in steps, skipping quantization...")
 
     #### ARACNe ####
     if "aracne" in args.steps:
+        # aracne_cells = metacells if args.aracne_metacells else args.
         qc_aracne = make_aracne_counts(
             adata=(metacells if "metacells" in args.steps else adata),
             min_n_sample=args.aracne_min_n,
@@ -679,11 +654,10 @@ def main(args):
             min_perc_nz=args.aracne_min_perc_nz,
             top_n_hvg=args.aracne_top_n_hvg,
             regulators=args.aracne_regulators,
-            groupby_var=args.groupby_var,
             aracne_dir=args.aracne_dir
         )
         info["aracne"] = qc_aracne
-        logger.info(f"{qc_aracne['count']} cluster(s) have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
+        logger.info(f"{qc_aracne['count']} clusters have sufficient samples (> {args.aracne_min_n}) for ARACNe inference.")
     else:
         logger.info(f"'aracne' not in steps, skipping making counts for ARACNe...")
 
@@ -742,8 +716,11 @@ if __name__ == "__main__":
     parser.add_argument("--n_cores", type=int, default=os.cpu_count())
     args = parser.parse_args()
     
-    # Make sure perturbed argument is in correct form
-    args.perturbed = args.perturbed == "true"
+    if args.perturbed:
+        args.steps = ["preprocess", "samples", "clusters", "metacells", "aracne"]
+        
+    print("Perturbation Dataset?", args.perturbed)
+    print("Steps:", args.steps)
     
     # define paths 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
