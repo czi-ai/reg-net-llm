@@ -786,6 +786,7 @@ class FlashTransformerEncoderLayer(nn.Module):
             x = self.ln1(x)
             x = x + self.dropout_ff(self.ff(x))
             x = self.ln2(x)
+        
         return x
 
 class FlashTransformerDecoderLayer(nn.Module):

@@ -169,13 +169,15 @@ def main(args):
         trainer_conf['callbacks'] = callbacks
 
         ### set up logger 
-        wblg = WandbLogger(project = mconfig['wandb_project'],
-                    name = name,
-                    entity = mconfig['wandb_user'],
-                    version = version,
-                    id = version,
-                    config=mconfig,
-                    save_dir = str(outdir))     
+        wblg = WandbLogger(
+                project=mconfig['wandb_project'],
+                name=name,
+                entity=mconfig['wandb_user'],
+                version=version,
+                id=version,
+                config=mconfig,
+                save_dir=str(outdir)
+        )     
         trainer_conf['logger'] = wblg
     else:
         raise NotImplementedError(f"mode {mode} not implemented")
@@ -184,7 +186,7 @@ def main(args):
     if "checkpoint_config" in trainer_conf:
         del trainer_conf["checkpoint_config"]
     
-    wandb.init(project=mconfig['wandb_project'], name=name)
+    # wandb.init(project=mconfig['wandb_project'], name=name) # Remove this as it creates multiple entries on wandb for each parallel run
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         litmodel = model_fn(mconfig)
@@ -194,15 +196,14 @@ def main(args):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         ckpt = args.ckpt_file
         ckpt_file = f"{run_dir}/checkpoints/{ckpt}"
-        litmodel = model_fn.load_from_checkpoint(ckpt_file, config = mconfig)
-        ### ckpt_path is required to resume training 
-        trainer.fit(litmodel, train_dataloaders = train_transformer_dl,ckpt_path = ckpt_file)
+        litmodel = model_fn(mconfig)
+        trainer.fit(litmodel, train_dataloaders=train_transformer_dl, val_dataloaders = val_transformer_dl, ckpt_path=ckpt_file)
         
     elif mode == "validate":
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         ckpt = args.ckpt_file
         ckpt_file = f"{run_dir}/checkpoints/{ckpt}"
-        litmodel = model_fn.load_from_checkpoint(ckpt_file, config = mconfig)
+        litmodel = model_fn(mconfig)
         trainer.validate(model=litmodel, dataloaders=val_transformer_dl)
 
     else:

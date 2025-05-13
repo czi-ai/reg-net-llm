@@ -1,5 +1,6 @@
 *.pyc
 *.pyo
+*.egg-info
 .DS_Store
 .npy
  .condarc
@@ -10,7 +11,7 @@ __MACOSX/
 copy.sh
 data/
 out/
-wandb/
+wandb/*
 download_data_cancer.sh
 notebooks/preprocess_cancer_samples.ipynb
 **scratch.py
@@ -24,5 +25,7 @@ test/test_cache_rep
 embeddings/parallel_embeddings.sh
 embeddings/start_parallel_embeddings_cache.sh
 slurm_data_out/
+slurm_train_out/
+slurm_train_out/*
 *slurm*
 */lightning_logs/*

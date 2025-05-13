@@ -159,7 +159,8 @@ graph_kernel_attn_6L_3DIFF_config = Config({
     "batch_first": True,
     "use_pe": False,
     "use_attn_mask": True,
-    "use_flash_attn": [0, 1, 2],
+    "use_flash_attn": [0, 2, 4],
+    "use_residual_connections": True,
     "residual_query_ratio": 0.5,
     "fine_tuning": False
 })
@@ -581,12 +582,12 @@ graph_kernel_attn_6L_4096 = Config({
         "max_epochs" : 10,
         "accelerator" : "gpu",
         "max_time": "07:00:00:00",
-        "devices" : 2,
+        "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 50,
         "val_check_interval": 0.05,
-        "num_nodes":  1,
+        "num_nodes":  2,
         "strategy" :"ddp", # "ddp_find_unused_parameters_true",
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints
@@ -630,12 +631,12 @@ graph_kernel_attn_6L_3DIFF_4096 = Config({
         "max_epochs" : 10,
         "accelerator" : "gpu",
         "max_time": "07:00:00:00",
-        "devices" : 2,
+        "devices" : 8,
         "precision":"bf16",
         "num_sanity_val_steps" : 0,
         "log_every_n_steps" : 50,
         "val_check_interval": 0.05,
-        "num_nodes":  1,
+        "num_nodes":  2,
         "strategy" :"ddp", # "ddp_find_unused_parameters_true",
         "checkpoint_config": {
                                 "save_top_k": -1, # Save all checkpoints

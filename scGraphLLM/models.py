@@ -104,8 +104,8 @@ class GDTransformer(LitScGraphLLM):
                     use_attn_mask=self.tconfig.use_attn_mask,
                     use_PE=self.tconfig.use_pe,
                     use_flash_attn=self.tconfig.use_flash_attn,
-                    fine_tuning=self.tconfig.fine_tuning,
-                    residual_query_ratio=self.tconfig.residual_query_ratio
+                    residual_query_ratio=self.tconfig.residual_query_ratio,
+                    fine_tuning=self.tconfig.fine_tuning
                 )
         else:
             self.transformer_encoder = nn.ModuleList()
@@ -129,14 +129,14 @@ class GDTransformer(LitScGraphLLM):
                         use_attn_mask=self.tconfig.use_attn_mask,
                         use_PE=self.tconfig.use_pe,
                         use_flash_attn=self.tconfig.use_flash_attn,
-                        fine_tuning=self.tconfig.fine_tuning,
-                        residual_query_ratio=self.tconfig.residual_query_ratio
+                        residual_query_ratio=self.tconfig.residual_query_ratio,
+                        fine_tuning=self.tconfig.fine_tuning
                     )   
                 )
         
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 
-            embedding_dim=config.model_config.node_embedding_dim, 
+            embedding_dim=config.model_config.node_embedding_dim,
             padding_idx=PAD_GENE_IDX
         )
         
@@ -150,6 +150,7 @@ class GDTransformer(LitScGraphLLM):
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
         self.use_attn_mask = self.tconfig.use_attn_mask
+        self.use_residual_connections = self.tconfig.use_residual_connections
         self.use_PE = self.tconfig.use_pe
 
     def forward(self, batch):        
@@ -183,10 +184,13 @@ class GDTransformer(LitScGraphLLM):
                                                           num_nodes_list=num_nodes_list)
         else:
             for encoder_layer in self.transformer_encoder:
+                prev = combined_embedding
                 combined_embedding = encoder_layer(combined_embedding,
-                                                   p=pe, 
-                                                   edge_index_list=edge_index_list, 
+                                                   p=pe,
+                                                   edge_index_list=edge_index_list,
                                                    num_nodes_list=num_nodes_list)
+                if self.use_residual_connections:
+                    combined_embedding = combined_embedding + prev
         
         # We have the learned cell embedding, no more need for MASKED gene_ids & expression
         del gene_ids
