@@ -173,6 +173,12 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_pruned_50/cached_embeddings"
         for cell_type in CELL_TYPES
     ],
+
+    "mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
+
     # even newer scGLM model
     "mye_scglm_cls_3L_12000_steps_MLM_002_seq_len_2048_pruned_graph_50": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_002_seq_len_2048_graph_pruned_50/cached_embeddings"

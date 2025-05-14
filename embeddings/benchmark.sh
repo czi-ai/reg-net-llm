@@ -82,7 +82,7 @@ echo "Running Benchmark Script..."
 #=*= MGM using Frozen Embeddings  #=*#
 #====================================#
 
-# (This is only meaningful for scGLM)
+# # (This is only meaningful for scGLM)
 # python $benchmark_script \
 #   --dataset human_immune_scglm_cls_3L_12000_steps_MLM_001_edge_mask_0.15 \
 #   --split_config human_immune \
@@ -92,6 +92,17 @@ echo "Running Benchmark Script..."
 #   --lr 1e-3 \
 #   --num_epochs 200 \
 #   --patience 5
+
+# myeloid
+python $benchmark_script \
+  --dataset mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15 \
+  --split_config mye \
+  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
+  --suffix mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15 \
+  --task mgm \
+  --lr 1e-3 \
+  --num_epochs 200 \
+  --patience 5
 
 
 #=================================#
@@ -115,18 +126,19 @@ mask_ratio=0.15
 #   --patience 5
 
 # myeloid geneformer
-python $benchmark_script \
-  --dataset gf_seq_len_2048 \
-  --split_config mye \
-  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
-  --suffix mye_gf_seq_len_2048_mask_$mask_ratio \
-  --task mgm \
-  --mask_ratio $mask_ratio \
-  --use_gat \
-  --generate_edge_masks \
-  --lr 1e-3 \
-  --num_epochs 200 \
-  --patience 5
+# python $benchmark_script \
+#   --dataset gf_seq_len_2048 \
+#   --split_config mye \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
+#   --suffix mye_gf_seq_len_2048_mask_$mask_ratio \
+#   --task mgm \
+#   --mask_ratio $mask_ratio \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
+
 
 # python $benchmark_script \
 #   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
@@ -149,19 +161,19 @@ python $benchmark_script \
 #   --num_epochs 200 \
 #   --patience 5
 
-# myeloid
-python $benchmark_script \
-  --dataset scgpt_seq_len_2048 \
-  --split_config mye \
-  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
-  --suffix mye_scgpt_seq_len_2048_mask_$mask_ratio \
-  --task mgm \
-  --mask_ratio $mask_ratio \
-  --use_gat \
-  --generate_edge_masks \
-  --lr 1e-3 \
-  --num_epochs 200 \
-  --patience 5
+# # myeloid
+# python $benchmark_script \
+#   --dataset scgpt_seq_len_2048 \
+#   --split_config mye \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
+#   --suffix mye_scgpt_seq_len_2048_mask_$mask_ratio \
+#   --task mgm \
+#   --mask_ratio $mask_ratio \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
 
 # python $benchmark_script \
 #   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scfoundation \

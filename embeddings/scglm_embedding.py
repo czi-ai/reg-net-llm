@@ -216,17 +216,19 @@ def build_class_edge_matrix(class_networks, classes, default_alpha):
 
     # Initialize matrix with default alpha
     E = np.full((num_edges, num_classes), default_alpha, dtype=np.float32)
+    MI = np.full((num_edges, num_classes), np.nan, dtype=np.float32)
 
     for j, c in enumerate(classes):
         df = class_networks[c]
         for e in df.index:
             i = edge_to_idx[e]
             E[i, j] = np.exp(df.loc[e, LOGP_VALS])
+            MI[i, j] = df.loc[e, MI_VALS]
 
-    return E, all_edges
+    return E, MI, all_edges
 
 
-def infer_cell_edges_(probs, E, alpha=None):
+def infer_cell_edges_(probs, E, MI, alpha=None):
     """
     Fast inference using precomputed class-edge matrix.
 
@@ -240,32 +242,28 @@ def infer_cell_edges_(probs, E, alpha=None):
     - List of edge indices (integers into all_edges) passing the threshold
     """
     probs = np.asarray(probs)
-    # probs = probs[probs > 0]
-    if probs.sum() == 0:    
-        return np.array([]), np.array([])
+    if probs.sum() == 0:
+        return np.array([]), np.array([]), np.array([])
 
     expected_pvals = E @ probs
+    # if using default MI = 0
+    # expected_mis = MI @ probs
+    # if using defaul MI = np.nan
+    mask = ~np.isnan(MI)
+    weighted_mis = np.where(mask, MI * probs, 0)
+    weight_sums = mask @ probs
+    expected_mis = np.divide(weighted_mis.sum(axis=1), weight_sums, out=np.zeros_like(weight_sums), where=weight_sums != 0)
+
 
     if alpha is not None:
         edge_ids = np.where(expected_pvals <= alpha)[0]
         expected_pvals = expected_pvals[edge_ids]
+        expected_mis = expected_mis[edge_ids]
     else:
         edge_ids = np.arange(len(expected_pvals))
 
-    return edge_ids, expected_pvals
+    return edge_ids, expected_pvals, expected_mis
 
-
-
-def infer_cell_network_df(probs, E, all_edges, alpha=None):
-    edges_ids, pvals = infer_cell_edges_(probs, E, alpha)
-    edges = np.array(all_edges)[edges_ids]
-
-    regulators, targets = zip(*edges)
-    return pd.DataFrame({
-        REG_VALS: regulators,
-        TAR_VALS: targets,
-        LOGP_VALS: np.log(np.clip(pvals, 1e-300, 1.0))
-    })
     
 
 
@@ -296,11 +294,12 @@ def main(args):
         }
         probs = ranks.obsm["class_probs"]
         classes = ranks.uns["class_probs_names"]
-        E, all_edges = build_class_edge_matrix(class_networks, classes, default_alpha=(0.05 + 1)/2)
-        edge_ids_list = []
+        E, MI, all_edges = build_class_edge_matrix(class_networks, classes, default_alpha=(0.05 + 1)/2)
+        edge_ids_list, mis_list = [], []
         for probs_i in probs:
-            edge_ids, pvals = infer_cell_edges_(probs_i, E, alpha=args.infer_network_alpha)
+            edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, MI, alpha=args.infer_network_alpha)
             edge_ids_list.append(edge_ids)
+            mis_list.append(mis)
 
         run_inference_cache(
             network=None,
