@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=02:00:00
+#SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=a100:1
@@ -100,11 +100,26 @@ echo "Running Benchmark Script..."
 
 mask_ratio=0.15
 
+# # human immune geneformer
+# python $benchmark_script \
+#   --dataset human_immune_geneformer_seq_len_2048 \
+#   --split_config human_immune \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
+#   --suffix human_immune_geneformer_seq_len_2048_mask_$mask_ratio \
+#   --task mgm \
+#   --mask_ratio $mask_ratio \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
+
+# myeloid geneformer
 python $benchmark_script \
-  --dataset human_immune_geneformer_seq_len_2048 \
-  --split_config human_immune \
+  --dataset gf_seq_len_2048 \
+  --split_config mye \
   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/geneformer \
-  --suffix human_immune_geneformer_seq_len_2048_mask_0.15 \
+  --suffix mye_gf_seq_len_2048_mask_$mask_ratio \
   --task mgm \
   --mask_ratio $mask_ratio \
   --use_gat \
@@ -120,11 +135,26 @@ python $benchmark_script \
   # --task mgm \
   # --use_gat
 
+# # human immune
+# python $benchmark_script \
+#   --dataset human_immune_scgpt_seq_len_2048 \
+#   --split_config human_immune \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
+#   --suffix human_immune_scgpt_seq_len_2048_mask_0.15 \
+#   --task mgm \
+#   --mask_ratio $mask_ratio \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
+
+# myeloid
 python $benchmark_script \
-  --dataset human_immune_scgpt_seq_len_2048 \
-  --split_config human_immune \
+  --dataset scgpt_seq_len_2048 \
+  --split_config mye \
   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
-  --suffix human_immune_scgpt_seq_len_2048_mask_0.15 \
+  --suffix mye_scgpt_seq_len_2048_mask_$mask_ratio \
   --task mgm \
   --mask_ratio $mask_ratio \
   --use_gat \

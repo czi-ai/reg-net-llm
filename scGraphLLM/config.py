@@ -119,7 +119,8 @@ graph_kernel_attn_3L_config = Config({
     "use_attn_mask": True,
     "use_flash_attn": True,
     "residual_query_ratio": 0.5,
-    "fine_tuning": False
+    "fine_tuning": False,
+    "use_residual_connections": False
 })
 
 graph_kernel_attn_3L_1DIFF_config = Config({

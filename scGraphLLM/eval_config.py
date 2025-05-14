@@ -161,6 +161,11 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_graph_pruned_50/cached_embeddings"
         for cell_type in CELL_TYPES
     ],
+    # even newer scGLM model
+    "mye_scglm_cls_3L_12000_steps_MLM_002_seq_len_2048_pruned_graph_50": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_002_seq_len_2048_graph_pruned_50/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ],
 
     
     # PANCREAS
@@ -185,6 +190,10 @@ EMBEDDING_DATASETS = ({
     "adamson_scglm_cls_3L_12000_steps_MLM_001":[
         "/hpc/projects/group.califano/GLM/data/adamson/embeddings/scglm/scglm_cls_3L_12000_steps_MLM_001/cached_embeddings"
     ],
+    # Adamson
+    "adamson_scglm_cls_3L_12000_steps_MLM_001_pruned_graph_100":[
+        "/hpc/projects/group.califano/GLM/data/adamson/embeddings/scglm/scglm_cls_3L_12000_steps_MLM_001_pruned_graph_100/cached_embeddings"
+    ],
 
     # HUMAN IMMUNE
     # scGraphLLM
@@ -203,6 +212,11 @@ EMBEDDING_DATASETS = ({
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_infer_network": [
         "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_infer_network/cached_embeddings"
     ],
+    # latest model
+    "human_immune_scglm_cls_3L_12000_steps_MLM_002_infer_network": [
+        "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_002_infer_network/cached_embeddings"
+    ],
+
     "human_immune_scglm_cls_3L_12000_steps_MLM_001_infer_network_sample": [
         "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/embeddings/test_infer_network/cached_embeddings"
     ],
@@ -252,7 +266,33 @@ SPLIT_CONFIGS = {
     "adamson": Config({
         "metadata_config": None,
         "ratio_config": (0.7, 0.1, 0.2),
-        "filter_config": {"control": {"values": [0], "mode": "include"}}
+        "filter_config": {
+            "condition": {
+                "values": [
+                    'CREB1+ctrl',
+                    'ZNF326+ctrl',
+                    'BHLHE40+ctrl',
+                    'DDIT3+ctrl',
+                    'HARS+ctrl',
+                    'SLMO2+ctrl',
+                    'IARS2+ctrl',
+                    'QARS+ctrl',
+                    'NEDD8+ctrl',
+                    'HSPA9+ctrl',
+                    'SARS+ctrl',
+                    'HSPA5+ctrl',
+                    'PSMD4+ctrl',
+                    'EIF2S1+ctrl',
+                    'TIMM44+ctrl',
+                    'AARS+ctrl',
+                    'PPWD1+ctrl',
+                    'COPZ1+ctrl',
+                    'EIF2B3+ctrl',
+                    'CARS+ctrl'
+                ], 
+                "mode": "include"
+            }
+        }
     })
 }
 

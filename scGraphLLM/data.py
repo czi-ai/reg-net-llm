@@ -31,15 +31,13 @@ INCLUDED_ENSG = gene_to_node.index[2:]
 rng = default_rng(42)
 
 def scglm_collate_fn(batch, inference=False):
-    data = {
-        "orig_gene_id": [], 
-        "orig_rank_indices": [], 
-        "gene_mask": [], 
-        "rank_mask": [], 
-        "both_mask": [], 
+    data = { 
+        "orig_gene_id" : [], 
+        "orig_expression_id" : [], 
+        "expression_mask" : [], 
         "edge_index": [], 
         "num_nodes" :[], 
-        "dataset_name": []
+        "dataset_name" : []
     }
     if inference:
         data["obs_name"] = []
@@ -55,13 +53,44 @@ def scglm_collate_fn(batch, inference=False):
             continue
         elif key == "orig_gene_id":
             pad_value = PAD_GENE_IDX
-        elif key == "orig_rank_indices":
-            pad_value = PAD_RANK_IDX
-        elif (key == "gene_mask") or (key == "rank_mask") or (key == "both_mask"):
+        elif key == "orig_expression_id":
+            pad_value = PAD_EXPRESSION_IDX
+        elif key == "expression_mask":
             pad_value = False
         data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
 
     return data
+
+
+# def collate_fn(batch):
+#     data = { 
+#             "orig_gene_id" : [], 
+#             "orig_expression_id" : [], 
+#             "expression_mask" : [], 
+#             "edge_index": [], 
+#             "num_nodes" :[], 
+#             "dataset_name" : []
+#     }
+    
+#     # Make a dictionary of lists from the list of dictionaries
+#     for cell in batch:
+#         for key in data.keys():
+#             data[key].append(cell[key])
+
+#     # Pad these dictionaries of lists
+#     for key in data.keys():
+#         if (key == "dataset_name") or (key == "edge_index") or (key == "num_nodes"):
+#             continue
+#         elif key == "orig_gene_id":
+#             pad_value = PAD_GENE_IDX
+#         elif key == "orig_expression_id":
+#             pad_value = PAD_EXPRESSION_IDX
+#         elif key == "expression_mask":
+#             pad_value = False
+#         data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
+
+#     return data
+
 
 def save(obj, file):
     # The above code is using the `pickle` module in Python to serialize the object `obj` and write it

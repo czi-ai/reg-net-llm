@@ -1086,7 +1086,7 @@ def main(args):
             num_classes=dataset.num_classes,
             class_weights=dataset.class_weights if args.use_weighted_ce else None,
             use_gat=args.use_gat,
-            num_layers=1,
+            num_layers=args.cls_layers,
             pooling="mean"
         )
     elif args.task == "expr":
@@ -1262,6 +1262,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm", "cls"])
+    parser.add_argument("--cls_layers", type=int, default=1)
     parser.add_argument("--use_weighted_ce", action="store_true")
     parser.add_argument("--target", type=str, default=None)
     parser.add_argument("--generate_edge_masks", action="store_true")
@@ -1275,6 +1276,7 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--val_check_interval", type=float, default=1.0)
     parser.add_argument("--random_seed", default=0)
+    
     # effectively, early stopping will kick in if the model has not improved after
     # seeing (batch_size * val_check_interval * patience) cells
     # e.g, trainer will stop if validation score hasn't improved after
