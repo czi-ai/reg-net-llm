@@ -26,34 +26,6 @@ def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
-def collate_fn(batch):
-    data = { 
-            "orig_gene_id" : [], 
-            "orig_expression_id" : [], 
-            "expression_mask" : [], 
-            "edge_index": [], 
-            "num_nodes" :[], 
-            "dataset_name" : []
-    }
-    
-    # Make a dictionary of lists from the list of dictionaries
-    for cell in batch:
-        for key in data.keys():
-            data[key].append(cell[key])
-
-    # Pad these dictionaries of lists
-    for key in data.keys():
-        if (key == "dataset_name") or (key == "edge_index") or (key == "num_nodes"):
-            continue
-        elif key == "orig_gene_id":
-            pad_value = PAD_GENE_IDX
-        elif key == "orig_expression_id":
-            pad_value = PAD_EXPRESSION_IDX
-        elif key == "expression_mask":
-            pad_value = False
-        data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
-
-    return data
 
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
 # filesystem = os.environ["WHEREAMI"]
@@ -70,9 +42,9 @@ parser.add_argument('--config', type=str, help='path to model config file',requi
 parser.add_argument('--version', type=str, help='run version', default=None)
 parser.add_argument('--name', type=str, help='run name', default=None)
 parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, debug, predict, validate]', default=None, required=True)
-parser.add_argument('--devices', type=int, help='number of GPUs', default=None)
 parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only, no paths', default=None)
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
+
 args = parser.parse_args()
 
 def main(args):
@@ -104,10 +76,6 @@ def main(args):
         if args.version is None or args.ckpt_file is None:
             raise ValueError("Must specify version and ckpt file for resume, predict, or validate mode")
         
-    devices = args.devices # This is an optional argument if you want to overwrite the number of devices specified in config.py
-    if devices != None: # Override the number of devices/GPUs
-            mconfig['trainer_config']['devices']=devices
-    
     version = args.version
     if version is None:
         ## this does not break for ddp processes 
@@ -170,15 +138,13 @@ def main(args):
         trainer_conf['callbacks'] = callbacks
 
         ### set up logger 
-        wblg = WandbLogger(
-                project=mconfig['wandb_project'],
-                name=name,
-                entity=mconfig['wandb_user'],
-                version=version,
-                id=version,
-                config=mconfig,
-                save_dir=str(outdir)
-        )     
+        wblg = WandbLogger(project = mconfig['wandb_project'],
+                    name = name,
+                    entity = mconfig['wandb_user'],
+                    version = version,
+                    id = version,
+                    config=mconfig,
+                    save_dir = str(outdir))     
         trainer_conf['logger'] = wblg
     else:
         raise NotImplementedError(f"mode {mode} not implemented")
@@ -187,7 +153,7 @@ def main(args):
     if "checkpoint_config" in trainer_conf:
         del trainer_conf["checkpoint_config"]
     
-    # wandb.init(project=mconfig['wandb_project'], name=name) # Remove this as it creates multiple entries on wandb for each parallel run
+    wandb.init(project=mconfig['wandb_project'], name=name)
     if (mode == "train") or (mode == "debug"):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         litmodel = model_fn(mconfig)
@@ -197,20 +163,22 @@ def main(args):
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         ckpt = args.ckpt_file
         ckpt_file = f"{run_dir}/checkpoints/{ckpt}"
-        litmodel = model_fn(mconfig)
-        trainer.fit(litmodel, train_dataloaders=train_transformer_dl, val_dataloaders = val_transformer_dl, ckpt_path=ckpt_file)
+        litmodel = model_fn.load_from_checkpoint(ckpt_file, config = mconfig)
+        ### ckpt_path is required to resume training 
+        trainer.fit(litmodel, train_dataloaders = train_transformer_dl,ckpt_path = ckpt_file)
         
     elif mode == "validate":
         trainer = pl.Trainer(**trainer_conf, default_root_dir=str(outdir))
         ckpt = args.ckpt_file
         ckpt_file = f"{run_dir}/checkpoints/{ckpt}"
-        litmodel = model_fn(mconfig)
+        litmodel = model_fn.load_from_checkpoint(ckpt_file, config = mconfig)
         trainer.validate(model=litmodel, dataloaders=val_transformer_dl)
 
     else:
         raise NotImplementedError(f"mode {mode} not implemented")
 
     ##  copy checkpoints to shared dir and clean up only on 1 gpu 
+
     if ((mconfig['trainer_config']['devices'] == 1) or (torch.distributed.get_rank() == 0)) and (mode != "debug") :
         if copy_checkpoints:
             time.sleep(30) ## potentially wait for other processes to finish writing to disk

@@ -21,8 +21,8 @@ class WeightedAverageConv(MessagePassing):
 # Custom collecter
 def collate_all(data_list):
     batch = Batch.from_data_list([Data(x=data.x, edge_index=data.edge_index, edge_attr=data.edge_weight) for data in data_list])
-    expression_embedding = torch.cat([data.expression_embedding for data in data_list], dim=0)
-    return batch, expression_embedding
+    rank_embedding = torch.cat([data.rank_embedding for data in data_list], dim=0)
+    return batch, rank_embedding
 # Some functions for simulating data for GNN testing
 def simulate_data(num_classes=2, graphs_per_class=5, num_nodes_per_graph=10, 
                  num_edges_per_graph=5, node_embedding_dim=5):
