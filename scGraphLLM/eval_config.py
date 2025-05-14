@@ -99,6 +99,14 @@ NETWORK_SETS = {
         'Erythrocytes':    "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
         'Monocyte-derived dendritic cells': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
         'CD16+ Monocytes': "/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/cd4_t_cells/aracne_4096/consolidated-net_defaultid.tsv",
+    },
+    "mye_prune_networks":{
+        'Macro_C1QC': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_C1QC/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
+        'Mono_CD16': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Mono_CD16/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
+        'Mono_CD14': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Mono_CD14/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
+        'cDC2_CD1C': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/cDC2_CD1C/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
+        'Macro_LYVE1': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_LYVE1/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
+        'Macro_NLRP3': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_NLRP3/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv'
     }
 
 }
@@ -147,6 +155,10 @@ EMBEDDING_DATASETS = ({
     "scgpt_seq_len_512":[
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scgpt/seq_len_512/cached_embeddings"
         for cell_type in CELL_TYPES
+    ],
+
+    "mye_scglm_cls_3L_12000_steps_MLM_001_infer_network_pruned": [
+        "/hpc/mydata/rowan.cassius/data/scGPT/mye/embeddings/scglm/aracne__cls_3L_12000_steps_MLM_001_infer_network_pruned/cached_embeddings"
     ],
     # new scGLM model
     "mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048": [
