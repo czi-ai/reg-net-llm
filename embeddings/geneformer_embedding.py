@@ -144,7 +144,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--data_dir", type=str, default=None)
+    parser.add_argument("--cells_path", type=str, default=None)
     parser.add_argument("--out_dir", type=str, required=True)
     parser.add_argument("--aracne_dir", type=str, required=True)
     parser.add_argument("--max_seq_length", type=int, default=2048)
@@ -156,7 +157,7 @@ if __name__ == "__main__":
     parser.add_argument("--cache", action="store_true")
     args = parser.parse_args()
 
-    args.cells_path = join(args.data_dir, "cells.h5ad")
+    args.cells_path = join(args.data_dir, "cells.h5ad") if args.cells_path is None else args.cells_path
     args.gf_out_dir = join(args.out_dir, "geneformer")
     args.counts_dir = join(args.data_dir, "counts")
     args.counts_path = join(args.counts_dir, "counts.h5ad")

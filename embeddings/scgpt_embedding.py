@@ -37,7 +37,8 @@ TAR_VALS = "target.values"
 
 # Parsing arguments outside main clause in order to import scgpt code
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", type=str, required=True)
+parser.add_argument("--data_dir", type=str, default=None)
+parser.add_argument("--cells_path", type=str, default=None)
 parser.add_argument("--model_dir", type=str, required=True)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
@@ -437,8 +438,7 @@ def main(args):
     )
 
 if __name__ == "__main__":
-
-    args.cells_path = join(args.data_dir, "cells.h5ad")
+    args.cells_path = join(args.data_dir, "cells.h5ad") if args.cells_path is None else args.cells_path
     args.emb_path = join(args.out_dir, "embedding.npz")
     args.emb_cache = join(args.out_dir, "cached_embeddings")
     os.makedirs(args.out_dir, exist_ok=True)
