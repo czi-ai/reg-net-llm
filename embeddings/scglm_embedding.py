@@ -52,6 +52,8 @@ hugo2ensg_vectorized = np.vectorize(hugo2ensg.get)
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
 MI_VALS = "mi.values"
+LOGP_VALS = "log.p.values"
+SCC_VALS = "scc.values"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str, default=None)
@@ -61,6 +63,7 @@ parser.add_argument("--model_path", type=str, required=True)
 # parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--network_path", type=str)
 parser.add_argument("--infer_network", action="store_true")
+parser.add_argument("--infer_network_alpha", type=float, default=0.25)
 parser.add_argument("--networks", type=str, default=None)
 parser.add_argument("--max_seq_length", type=int, default=2048)
 parser.add_argument("--use_masked_edges", action="store_true")
@@ -102,6 +105,8 @@ def run_inference_cache(
         cell_type,
         networks: dict = None,
         classes: list = None,
+        all_edges = None,
+        edge_ids_list = None,
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
@@ -119,23 +124,24 @@ def run_inference_cache(
 
     assert (network is None) != (networks is None), "Either network or networks must be provided, not both"
     infer_networks = networks is not None
-
+    expression_genes = set(expression.columns)
     if not infer_networks:
         network = network[
             network[REG_VALS].isin(global_gene_to_node) & 
             network[TAR_VALS].isin(global_gene_to_node)
         ]
         network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
-        common_genes = sorted(list(network_genes.intersection(set(expression.columns))))
+        common_genes = sorted(list(network_genes.intersection(expression_genes)))
     else:
         class_networks = {}
         for name, network in networks.items():
+            network = network.reset_index()
             network = network[
                 network[REG_VALS].isin(global_gene_to_node) & 
                 network[TAR_VALS].isin(global_gene_to_node)
             ]
             network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
-            common_genes = sorted(list(network_genes.intersection(set(expression.columns))))
+            common_genes = sorted(list(network_genes.intersection(expression_genes)))
             class_networks[name] = network, common_genes
 
     for i in range(expression.shape[0]):
@@ -160,8 +166,14 @@ def run_inference_cache(
             continue
         
         if infer_networks:
-            cell_network, common_genes = class_networks[classes[i]]
-        else:
+            # cell_network, common_genes = class_networks[classes[i]]
+            edge_ids_i = edge_ids_list[i]
+            edges = np.array(all_edges)[edge_ids_i]
+            regulators, targets = zip(*edges)
+            cell_network = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets})
+            network_genes = set(regulators + targets)
+            common_genes = sorted(list(network_genes.intersection(expression_genes)))
+        else:   
             cell_network = network
 
         cell: pd.Series = expression.iloc[i, :][common_genes]
@@ -187,6 +199,77 @@ def run_inference_cache(
     return (skipped, ncells)
 
 
+def build_class_edge_matrix(class_networks, classes, default_alpha):
+    """
+    Build edge × class matrix of p-values. Missing edges use default_alpha.
+    """
+    
+    # Identify global set of edges
+    all_edges = set()
+    for class_df in class_networks.values():
+        all_edges.update(class_df.index)
+    all_edges = sorted(list(all_edges))
+    
+    edge_to_idx = {e: i for i, e in enumerate(all_edges)}
+    num_edges = len(all_edges)
+    num_classes = len(classes)
+
+    # Initialize matrix with default alpha
+    E = np.full((num_edges, num_classes), default_alpha, dtype=np.float32)
+
+    for j, c in enumerate(classes):
+        df = class_networks[c]
+        for e in df.index:
+            i = edge_to_idx[e]
+            E[i, j] = np.exp(df.loc[e, LOGP_VALS])
+
+    return E, all_edges
+
+
+def infer_cell_edges_(probs, E, alpha=None):
+    """
+    Fast inference using precomputed class-edge matrix.
+
+    Parameters:
+    - probs: array of class probabilities
+    - E: [num_edges x num_classes] matrix of per-class p-values
+    - all_edges: list of edge tuples (same order as rows in E)
+    - alpha: optional p-value threshold
+
+    Returns:
+    - List of edge indices (integers into all_edges) passing the threshold
+    """
+    probs = np.asarray(probs)
+    # probs = probs[probs > 0]
+    if probs.sum() == 0:    
+        return np.array([]), np.array([])
+
+    expected_pvals = E @ probs
+
+    if alpha is not None:
+        edge_ids = np.where(expected_pvals <= alpha)[0]
+        expected_pvals = expected_pvals[edge_ids]
+    else:
+        edge_ids = np.arange(len(expected_pvals))
+
+    return edge_ids, expected_pvals
+
+
+
+def infer_cell_network_df(probs, E, all_edges, alpha=None):
+    edges_ids, pvals = infer_cell_edges_(probs, E, alpha)
+    edges = np.array(all_edges)[edges_ids]
+
+    regulators, targets = zip(*edges)
+    return pd.DataFrame({
+        REG_VALS: regulators,
+        TAR_VALS: targets,
+        LOGP_VALS: np.log(np.clip(pvals, 1e-300, 1.0))
+    })
+    
+
+
+
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
@@ -206,12 +289,25 @@ def main(args):
     ranks = quantize_cells(adata.to_df(), n_bins=NUM_BINS, method="quantile")
     ranks = sc.AnnData(X=ranks.values, obs=adata.obs, var=adata.var, uns=adata.uns, obsm=adata.obsm)
     if args.infer_network:
-        class_networks = {name: pd.read_csv(path, sep="\t") for name, path in args.networks.items()}
-        classes_hat = ranks.uns["class_probs_names"][ranks.obsm["class_probs"].argmax(axis=1)]
+        print("Inferring cell networks...")
+        class_networks = {
+            name: pd.read_csv(path, sep="\t").set_index([REG_VALS, TAR_VALS]) 
+            for name, path in args.networks.items()
+        }
+        probs = ranks.obsm["class_probs"]
+        classes = ranks.uns["class_probs_names"]
+        E, all_edges = build_class_edge_matrix(class_networks, classes, default_alpha=(0.05 + 1)/2)
+        edge_ids_list = []
+        for probs_i in probs:
+            edge_ids, pvals = infer_cell_edges_(probs_i, E, alpha=args.infer_network_alpha)
+            edge_ids_list.append(edge_ids)
+
         run_inference_cache(
             network=None,
             networks=class_networks,
-            classes=classes_hat, 
+            classes=None,
+            edge_ids_list=edge_ids_list,
+            all_edges=all_edges,
             expression=ranks.to_df(),
             global_gene_to_node=global_gene_to_node, 
             cache_dir=args.cache_dir,
