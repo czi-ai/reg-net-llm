@@ -1,6 +1,7 @@
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 import torch
 import os
 
@@ -20,6 +21,11 @@ def mask_values(sparse_mat, mask_prob=0.15, mask_value=0, seed=12345):
     Returns:
         scipy.sparse.spmatrix: Masked sparse matrix with the same format.
     """
+    if isinstance(sparse_mat, np.ndarray):
+        sparse_mat = sp.coo_matrix(sparse_mat)
+    elif not sp.issparse(sparse_mat):
+        raise TypeError("Input must be a numpy array or a scipy sparse matrix")
+
     sparse_mat = sparse_mat.tocoo()
     mask = np.random.default_rng(seed).random(len(sparse_mat.data)) < mask_prob
     masked_indices = (sparse_mat.row[mask], sparse_mat.col[mask])

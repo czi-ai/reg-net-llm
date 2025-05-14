@@ -79,19 +79,19 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --num_epochs 200 \
 #     --patience 5
 
-# # Myeloid Dataset
-# python $benchmark_script \
-#     --dataset mye_scglm_cls_3L_12000_steps_MLM_002_seq_len_2048_pruned_graph_50 \
-#     --split_config mye \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix mye_scglm_cls_3L_12000_steps_MLM_002_seq_len_2048_pruned_graph_50 \
-#     --use_weighted_ce \
-#     --task cls \
-#     --target cell_type \
-#     --lr 1e-2 \
-#     --batch_size 256 \
-#     --num_epochs 200 \
-#     --patience 5
+# Myeloid Dataset
+python $benchmark_script \
+    --dataset mye_scglm_cls_3L_12000_steps_MLM_001_infer_network_pruned \
+    --split_config mye \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+    --suffix mye_scglm_cls_3L_12000_steps_MLM_001_infer_network_pruned \
+    --use_weighted_ce \
+    --task cls \
+    --target cell_type \
+    --lr 1e-2 \
+    --batch_size 256 \
+    --num_epochs 200 \
+    --patience 5
 
 
 # python $benchmark_script \
@@ -171,17 +171,17 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --patience 5
 
 
-# Pancreas Dataset
-python $benchmark_script \
-    --dataset pancreas_scgpt_seq_len_2048 \
-    --split_config random \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
-    --suffix pancreas_scgpt_seq_len_2048_linear \
-    --use_weighted_ce \
-    --task cls \
-    --cls_layers 1 \
-    --target cell_type \
-    --lr 1e-2 \
-    --batch_size 256 \
-    --num_epochs 200 \
-    --patience 5
+# # Pancreas Dataset
+# python $benchmark_script \
+#     --dataset pancreas_scgpt_seq_len_2048 \
+#     --split_config random \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
+#     --suffix pancreas_scgpt_seq_len_2048_linear \
+#     --use_weighted_ce \
+#     --task cls \
+#     --cls_layers 1 \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
