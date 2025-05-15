@@ -396,6 +396,7 @@ class GraphTransformerDataset(torchDataset):
 
     def __getitem__(self, idx):
         data = torch.load(self.cached_files[idx], weights_only=False)
+        print(self.cached_files[idx])
         node_indices = data.x
         # For each mask type, create boolean mask of the same shape as node_indices
         if self.mask_fraction == 0:
@@ -426,6 +427,7 @@ class GraphTransformerDataset(torchDataset):
             #"spectral_pe": spectral_pe,
             "dataset_name" : self.dataset_name
         }
+
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
