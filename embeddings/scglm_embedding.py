@@ -63,6 +63,7 @@ parser.add_argument("--model_path", type=str, required=True)
 # parser.add_argument("--aracne_dir", type=str, required=True)
 parser.add_argument("--network_path", type=str)
 parser.add_argument("--infer_network", action="store_true")
+parser.add_argument("--hard_assignment", action="store_true")
 parser.add_argument("--infer_network_alpha", type=float, default=0.25)
 parser.add_argument("--networks", type=str, default=None)
 parser.add_argument("--max_seq_length", type=int, default=2048)
@@ -298,11 +299,25 @@ def main(args):
         probs = ranks.obsm["class_probs"]
         classes = ranks.uns["class_probs_names"]
         E, MI, all_edges = build_class_edge_matrix(class_networks, classes, default_alpha=(0.05 + 1)/2)
+        all_edges_to_idx = {edge: idx for idx, edge in enumerate(all_edges)}
         edge_ids_list, mis_list = [], []
-        for probs_i in probs:
-            edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, MI, alpha=args.infer_network_alpha)
-            edge_ids_list.append(edge_ids)
-            mis_list.append(mis)
+
+        for i, probs_i in enumerate(probs):
+            if i % 100 == 0:
+                print(f"Inferred {i:,} cell networks...")
+            
+            if args.hard_assignment:
+                class_hat = classes[probs_i.argmax()]
+                network = class_networks[class_hat]
+                mis = network[MI_VALS].to_numpy()
+                edges = network.index.tolist()
+                edge_ids = [all_edges_to_idx[edge] for edge in edges]
+                edge_ids_list.append(edge_ids)
+                mis_list.append(mis)
+            else:
+                edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, MI, alpha=args.infer_network_alpha)
+                edge_ids_list.append(edge_ids)
+                mis_list.append(mis)
 
         run_inference_cache(
             network=None,
