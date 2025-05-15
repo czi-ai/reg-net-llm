@@ -15,6 +15,9 @@ def _cosine_kernel(x):
 
 def _rescaled_L(edge_index, num_nodes, edge_weight=None):
     edge_index, edge_weight = remove_self_loops(edge_index, edge_weight) 
+    #if edge_index.shape[-1] == 0:
+        #idx = torch.arange(num_nodes, device=edge_index.device)
+        #edge_index = idx.unsqueeze(0).repeat(2, 1)
     if edge_weight is None:
         edge_weight = torch.ones(edge_index.size(1), dtype=torch.float32, device=edge_index.device)
     row, col = edge_index[0], edge_index[1]
@@ -94,6 +97,7 @@ def _chebyshev_diffusion(edge_index_list, num_nodes_list, E, k=64, beta=0.5):
     for i in range(B):
         E_i = E[i, :num_nodes_list[i], ...]
         edge_index = edge_index_list[i]
+        num_nodes = num_nodes_list[i]
         sample_emb = _chebyshev_diffusion_per_sample(edge_index, num_nodes_list[i], E_i, k=k, beta=beta)
         
         # pad zero at the right end
