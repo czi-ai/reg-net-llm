@@ -107,7 +107,16 @@ NETWORK_SETS = {
         'cDC2_CD1C': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/cDC2_CD1C/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
         'Macro_LYVE1': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_LYVE1/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv',
         'Macro_NLRP3': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_NLRP3/aracne_metacells_pruned/consolidated-pruned-no-elim-net_defaultid.tsv'
+    },
+    "mye_networks": {
+        'Macro_C1QC': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_C1QC/aracne_metacells/consolidated-net_defaultid.tsv',
+        'Mono_CD16': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Mono_CD16/aracne_metacells/consolidated-net_defaultid.tsv',
+        'Mono_CD14': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Mono_CD14/aracne_metacells/consolidated-net_defaultid.tsv',
+        'cDC2_CD1C': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/cDC2_CD1C/aracne_metacells/consolidated-net_defaultid.tsv',
+        'Macro_LYVE1': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_LYVE1/aracne_metacells/consolidated-net_defaultid.tsv',
+        'Macro_NLRP3': '/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/Macro_NLRP3/aracne_metacells/consolidated-net_defaultid.tsv'
     }
+
 
 }
 

@@ -107,6 +107,7 @@ def run_inference_cache(
         classes: list = None,
         all_edges = None,
         edge_ids_list = None,
+        mis_list = None,
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
@@ -169,8 +170,11 @@ def run_inference_cache(
             # cell_network, common_genes = class_networks[classes[i]]
             edge_ids_i = edge_ids_list[i]
             edges = np.array(all_edges)[edge_ids_i]
+            mis = mis_list[i]
+            assert len(edges) == len(mis), "edges and mi's must be the same length"
             regulators, targets = zip(*edges)
-            cell_network = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets})
+            cell_network = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets, MI_VALS: mis})
+            cell_network = cell_network.nlargest(100, MI_VALS)
             network_genes = set(regulators + targets)
             common_genes = sorted(list(network_genes.intersection(expression_genes)))
         else:   
@@ -254,7 +258,6 @@ def infer_cell_edges_(probs, E, MI, alpha=None):
     weight_sums = mask @ probs
     expected_mis = np.divide(weighted_mis.sum(axis=1), weight_sums, out=np.zeros_like(weight_sums), where=weight_sums != 0)
 
-
     if alpha is not None:
         edge_ids = np.where(expected_pvals <= alpha)[0]
         expected_pvals = expected_pvals[edge_ids]
@@ -306,6 +309,7 @@ def main(args):
             networks=class_networks,
             classes=None,
             edge_ids_list=edge_ids_list,
+            mis_list=mis_list,
             all_edges=all_edges,
             expression=ranks.to_df(),
             global_gene_to_node=global_gene_to_node, 
