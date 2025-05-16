@@ -542,7 +542,7 @@ def gene_expression_pred_loss(
     ):
     device = node_embedding.device
     mask = torch.arange(node_embedding.shape[1], device=device).unsqueeze(0) < seq_lengths.unsqueeze(1)
-    pred = predictor(node_embedding).squeeze() # B, L
+    pred = predictor(node_embedding).squeeze(-1) # From [B, L, 1] → [B, L]
     yhat = pred[mask]
     y = expression[mask]
     loss = nn.MSELoss()(yhat, y)
@@ -1016,12 +1016,16 @@ def main(args):
 
     print("Loading Data...")
     if args.task == "link":
-        dataset = EmbeddingDataset(args.data_paths)
+        dataset = EmbeddingDataset(
+            path=args.data_paths,
+            with_metadata=True
+        )
         collate_fn = embedding_collate_fn
     elif args.task == "expr":
         dataset = EmbeddingDataset(
             paths=args.data_paths,
-            with_expression=True
+            with_expression=True,
+            with_metadata=True
         )
         collate_fn = partial(embedding_collate_fn, expression=True)
     elif args.task == "cls":

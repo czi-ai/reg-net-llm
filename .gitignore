@@ -9,7 +9,6 @@ ARACNe3.zip
 ARACNe3/
 __MACOSX/
 copy.sh
-data/
 out/
 wandb/*
 download_data_cancer.sh

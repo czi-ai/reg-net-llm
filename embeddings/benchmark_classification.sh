@@ -79,19 +79,21 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --num_epochs 200 \
 #     --patience 5
 
-# Myeloid Dataset
-python $benchmark_script \
-    --dataset mye_scglm_cls_3L_12000_steps_MLM_001_infer_network_pruned \
-    --split_config mye \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-    --suffix mye_scglm_cls_3L_12000_steps_MLM_001_infer_network_pruned \
-    --use_weighted_ce \
-    --task cls \
-    --target cell_type \
-    --lr 1e-2 \
-    --batch_size 256 \
-    --num_epochs 200 \
-    --patience 5
+# # Myeloid Dataset
+# python $benchmark_script \
+#     --dataset mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned \
+#     --split_config mye \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+
 
 
 # python $benchmark_script \
@@ -156,6 +158,22 @@ python $benchmark_script \
 #     --patience 5
 
 
+# # human immune scf
+# python $benchmark_script \
+#     --dataset scf_human_immune \
+#     --split_config random \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scfoundation \
+#     --suffix scf_human_immune_linear \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target final_annotation \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 100 \
+#     --patience 5
+
+
+
 # # Myeloid Dataset
 # python $benchmark_script \
 #     --dataset scgpt_seq_len_2048 \
@@ -185,3 +203,97 @@ python $benchmark_script \
 #     --batch_size 256 \
 #     --num_epochs 200 \
 #     --patience 5
+
+
+
+
+######## BRAIN ############
+
+# Brain Dataset
+# python $benchmark_script \
+#     --dataset scglm_brain \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix scglm_brain \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+# python $benchmark_script \
+#     --dataset scgpt_brain \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
+#     --suffix scgpt_brain \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+# python $benchmark_script \
+#     --dataset gf_brain \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
+#     --suffix gf_brain \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+
+
+
+
+####### HOG ########
+
+# python $benchmark_script \
+#     --dataset gf_hog \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/geneformer \
+#     --suffix gf_hog \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+
+# python $benchmark_script \
+#     --dataset scglm_hog \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix scglm_hog \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+
+
+python $benchmark_script \
+    --dataset scgpt_hog \
+    --split_config train_test_set \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
+    --suffix scgpt_hog \
+    --use_weighted_ce \
+    --task cls \
+    --target cell_type \
+    --lr 1e-2 \
+    --batch_size 256 \
+    --num_epochs 200 \
+    --patience 5
+

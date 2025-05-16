@@ -187,7 +187,12 @@ EMBEDDING_DATASETS = ({
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15/cached_embeddings"
         for cell_type in CELL_TYPES
     ],
-
+    "mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft": [
+        "/hpc/mydata/rowan.cassius/data/scGPT/mye/embeddings/scglm/aracne__cls_3L_12000_steps_MLM_001_infer_networks_soft/cached_embeddings"
+    ],
+    "mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned": [
+        "/hpc/mydata/rowan.cassius/data/scGPT/mye/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned/cached_embeddings"
+    ],
     # even newer scGLM model
     "mye_scglm_cls_3L_12000_steps_MLM_002_seq_len_2048_pruned_graph_50": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_002_seq_len_2048_graph_pruned_50/cached_embeddings"
@@ -224,6 +229,10 @@ EMBEDDING_DATASETS = ({
 
     # HUMAN IMMUNE
     # scGraphLLM
+    "human_immune_scglm_cls_3L_12000_steps_MLM_001_correct_expression": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_correct_expression/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
     "human_immune_scglm_cls_3L_12000_steps_MLM_001": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001/cached_embeddings"
         for cell_type in IMMUNE_CELL_TYPES
@@ -263,12 +272,51 @@ EMBEDDING_DATASETS = ({
         for cell_type in IMMUNE_CELL_TYPES
     ],
     # scFoundation
+
+
+
+
+    #### BRAIN #####
+
+    "scglm_brain": [
+        "/hpc/mydata/mingxuan.zhang/data/brain/embeddings/GREmLN/aracne__inferred_network_not_pruned/cached_embeddings"
+    ],
+    "scgpt_brain": [
+        "/hpc/mydata/mingxuan.zhang/data/brain/embeddings/scgpt/seq_len_2048/cached_embeddings"
+    ],
+    "gf_brain": [
+        "/hpc/mydata/mingxuan.zhang/data/brain/embeddings/gfm/seq_len_2048/cached_embeddings"
+    ],
+
+
+    # Held out graph
+    "gf_hog": [
+        "/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/geneformer/seq_len_2048/cached_embeddings"
+    ],
+    "scgpt_hog":[
+        "/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/scgpt/seq_len_2048/cached_embeddings"
+    ],
+    "scglm_hog":[
+        f"/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/scglm_PARALLEL_{i}/aracne__cls_3L_12000_steps_MLM_001_infer_network_pruned/cached_embeddings"
+        for i in range(10)
+    ],
+
+    # scf late to the party
+    "scf_human_immune": [
+        f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scfoundation/aracne_4096_seq_len_2048/cached_embeddings"
+        for cell_type in IMMUNE_CELL_TYPES
+    ],
+    "scf_mye":[
+        f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scfoundation/seq_len_2048/cached_embeddings"
+        for cell_type in CELL_TYPES
+    ]
+
 })
 
 SPLIT_CONFIGS = {
     "train_test_set": Config({
         "metadata_config": ("set", (None, None, ["test"])),
-        "ratio_config": (0.9, 0.10, None)
+        "ratio_config": (0.9, 0.1, None)
     }),
     "random": Config({
         "metadata_config": None,

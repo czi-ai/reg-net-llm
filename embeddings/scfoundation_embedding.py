@@ -320,8 +320,10 @@ def main(args):
         sc.pp.subsample(data, n_obs=args.sample_n_cells, random_state=12345, copy=False)
     
     data_original = data.copy()
+    ensg2hugo_map = data_original.var_names.to_series().apply(ensg2hugo.get)
+    hugo2ensg_map = {v: k for k, v in ensg2hugo_map.items() if pd.notna(v)}
+
     if args.mask_fraction is not None:
-        data_original = data.copy()
         X_masked, masked_indices = mask_values(data.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
         data.X = X_masked
 
@@ -332,8 +334,9 @@ def main(args):
     #     var=pd.DataFrame(index=adata.var.index).assign(**{"ensembl_id": lambda df: df.index.to_series()}),
     # )
 
-    data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
-    data = data[:, ~data.var["symbol_id"].isna()]
+    # data.var["symbol_id"] = data.var_names.to_series().apply(ensg2hugo.get)
+    data.var["symbol_id"] = ensg2hugo_map
+    # data = data[:, ~data.var["symbol_id"].isna()]
     data.var.set_index("symbol_id")
     data.var_names = data.var["symbol_id"]
 
@@ -387,19 +390,36 @@ def main(args):
         for g in genes_list
     ], axis=0)
     # genes_ensg = [hugo2ensg_vectorized(genes) for genes in genes_list]
-    genes_ensg = hugo2ensg_vectorized(genes_symbol)
+    # genes_ensg = hugo2ensg_vectorized(genes_symbol)
+    genes_ensg = np.array([
+        [hugo2ensg_map.get(gene, None) for gene in row]
+        for row in genes_symbol
+    ])
+
+    original_genes = set(data_original.var_names)
+    backward_genes = set(list(genes_ensg.flatten()))
+    # Compute intersection and union
+    intersection = original_genes & backward_genes
+    union = original_genes | backward_genes
+    print(f"Jaccard: {len(intersection) / len(union)}")
+    print(f"Original Only: {len(original_genes - backward_genes)}")
+    print(f"Backward Only: {len(backward_genes - original_genes)}")
+    print(f"Intersection: {len(intersection)}")
+
 
     # load aracne network
     network = pd.read_csv(join(args.aracne_dir, "consolidated-net_defaultid.tsv"), sep="\t")
     edges = get_locally_indexed_edges(genes_ensg, src_nodes=network[REG_VALS], dst_nodes=network[TAR_VALS])
-
+    
+    # gene name map is not bijective between ENSG and HUGO, and some genes are getting
+    # incorrectly backward translated
     # get original expression
-    expression = np.concatenate([
-        np.pad(data_original[i, genes[:seq_lengths[i]]].X.toarray(), 
-               pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
-               mode="constant", constant_values=0)
-        for i, genes in enumerate(genes_ensg)
-    ], axis=0)
+    # expression = np.concatenate([
+    #     np.pad(data_original[i, genes[:seq_lengths[i]]].X.toarray(), 
+    #            pad_width=((0,0), (0, max_seq_length - seq_lengths[i])), 
+    #            mode="constant", constant_values=0)
+    #     for i, genes in enumerate(genes_ensg)
+    # ], axis=0)
 
     # get metadata
     metadata = collect_metadata(data, args.retain_obs_vars)
@@ -411,7 +431,7 @@ def main(args):
             cache_dir=args.emb_cache,
             x=embeddings,
             seq_lengths=seq_lengths,
-            expression=expression,
+            # expression=expression,
             edges=edges,
             metadata=metadata
         )
@@ -424,7 +444,7 @@ def main(args):
         cache_dir=args.emb_cache,
         x=embeddings,
         seq_lengths=seq_lengths,
-        expression=expression,
+        # expression=expression,
         edges=edges,
         metadata=metadata,
         masks=masks,

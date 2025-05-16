@@ -93,16 +93,16 @@ echo "Running Benchmark Script..."
 #   --num_epochs 200 \
 #   --patience 5
 
-# myeloid
-python $benchmark_script \
-  --dataset mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15 \
-  --split_config mye \
-  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
-  --suffix mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15 \
-  --task mgm \
-  --lr 1e-3 \
-  --num_epochs 200 \
-  --patience 5
+# # myeloid
+# python $benchmark_script \
+#   --dataset mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15 \
+#   --split_config mye \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scglm \
+#   --suffix mye_scglm_cls_3L_12000_steps_MLM_001_seq_len_2048_mask_0.15 \
+#   --task mgm \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
 
 
 #=================================#
@@ -175,6 +175,51 @@ mask_ratio=0.15
 #   --num_epochs 200 \
 #   --patience 5
 
+
+# human immune scf
+# python $benchmark_script \
+#   --dataset scf_human_immune \
+#   --split_config human_immune \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scfoundation \
+#   --suffix scf_human_immune_mask_0.15 \
+#   --task mgm \
+#   --mask_ratio $mask_ratio \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
+
+
+python $benchmark_script \
+  --dataset scf_mye \
+  --split_config mye \
+  --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scfoundation \
+  --suffix scf_mye_mask_$mask_ratio \
+  --task mgm \
+  --mask_ratio $mask_ratio \
+  --use_gat \
+  --generate_edge_masks \
+  --lr 1e-3 \
+  --num_epochs 200 \
+  --patience 5 
+
+
+# python $benchmark_script \
+#   --dataset scgpt_seq_len_2048 \
+#   --split_config mye \
+#   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scgpt \
+#   --suffix mye_scgpt_seq_len_2048_mask_$mask_ratio \
+#   --task mgm \
+#   --mask_ratio $mask_ratio \
+#   --use_gat \
+#   --generate_edge_masks \
+#   --lr 1e-3 \
+#   --num_epochs 200 \
+#   --patience 5
+
+
+# human immmune
 # python $benchmark_script \
 #   --out_dir /hpc/mydata/rowan.cassius/tasks/mgm/scfoundation \
 #   --model scf \

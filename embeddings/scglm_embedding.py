@@ -306,18 +306,20 @@ def main(args):
             if i % 100 == 0:
                 print(f"Inferred {i:,} cell networks...")
             
-            if args.hard_assignment:
+            zero_soft_edges = False
+            if not args.hard_assignment:
+                edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, MI, alpha=args.infer_network_alpha)
+                zero_soft_edges = len(edge_ids) == 0
+
+            if args.hard_assignment or zero_soft_edges:
                 class_hat = classes[probs_i.argmax()]
                 network = class_networks[class_hat]
                 mis = network[MI_VALS].to_numpy()
                 edges = network.index.tolist()
                 edge_ids = [all_edges_to_idx[edge] for edge in edges]
-                edge_ids_list.append(edge_ids)
-                mis_list.append(mis)
-            else:
-                edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, MI, alpha=args.infer_network_alpha)
-                edge_ids_list.append(edge_ids)
-                mis_list.append(mis)
+            
+            edge_ids_list.append(edge_ids)
+            mis_list.append(mis)
 
         run_inference_cache(
             network=None,
