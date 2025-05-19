@@ -3,41 +3,8 @@ import numpy as np
 import unittest
 
 from scGraphLLM.inference import *
-from pyviper import Interactome
-
-REG_VALS = "regulator.values"
-TAR_VALS = "target.values"
-MI_VALS = "mi.values"
-LOGP_VALS = "log.p.values"
-SCC_VALS = "scc.values"
 
 
-def make_undirected(df, reg_col=REG_VALS, tar_col=TAR_VALS, mi_col=MI_VALS, logp_col=LOGP_VALS):
-    """
-    Takes a directed graph dataframe and returns an undirected version,
-    where for every (A, B), the reverse (B, A) is added if missing.
-    """
-    reversed_edges = []
-
-    # Track existing edges as a set of (reg, tar) tuples
-    existing_edges = set(zip(df[reg_col], df[tar_col]))
-
-    for idx, row in df.iterrows():
-        src, tgt = row[reg_col], row[tar_col]
-        if (tgt, src) not in existing_edges:
-            reversed_edges.append({
-                reg_col: tgt,
-                tar_col: src,
-                mi_col: row[mi_col],
-                logp_col: row[logp_col]
-            })
-
-    # Create a DataFrame of the reversed edges
-    if reversed_edges:
-        reversed_df = pd.DataFrame(reversed_edges)
-        df = pd.concat([df, reversed_df], ignore_index=True)
-
-    return df
 
 def formulate_network(data, columns=[REG_VALS, TAR_VALS, MI_VALS, LOGP_VALS]):
     return pd.DataFrame(data=data, columns=columns)\
@@ -149,8 +116,12 @@ class TestGraphIntegration(unittest.TestCase):
         E, MI, all_edges = build_class_edge_matrix(self.class_networks, self.classes, default_alpha=(0.05 + 1.)/2)
         probs = [0.07, 0.0, 0.9, 0.03]
         edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.2)
-        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2).set_index([REG_VALS, TAR_VALS])
-        self.assertEqual(7, len(cell_network))
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2)
+        # C's regulon is originally 3, so one of its targets (C, A) should be pruned
+        self.assertEqual(6, len(cell_network))
+        self.assertFalse(("C", "A") in cell_network.index.tolist())
+        self.assertFalse(("A", "C") in cell_network.index.tolist())
+
         
 
 if __name__ == "__main__":

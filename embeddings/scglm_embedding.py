@@ -29,7 +29,7 @@ warnings.filterwarnings("ignore")
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
 from scGraphLLM.preprocess import quantize_cells
-from scGraphLLM.inference import infer_cell_edges_, build_class_edge_matrix
+from scGraphLLM.inference import infer_cell_edges_, build_class_edge_matrix, get_cell_network_df
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
@@ -135,17 +135,6 @@ def run_inference_cache(
         ]
         network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
         common_genes = sorted(list(network_genes.intersection(expression_genes)))
-    else:
-        class_networks = {}
-        for name, network in networks.items():
-            network = network.reset_index()
-            network = network[
-                network[REG_VALS].isin(global_gene_to_node) & 
-                network[TAR_VALS].isin(global_gene_to_node)
-            ]
-            network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
-            common_genes = sorted(list(network_genes.intersection(expression_genes)))
-            class_networks[name] = network, common_genes
 
     for i in range(expression.shape[0]):
         if ncells % 10 == 0:
@@ -169,16 +158,8 @@ def run_inference_cache(
             continue
         
         if infer_networks:
-            # cell_network, common_genes = class_networks[classes[i]]
-            edge_ids_i = edge_ids_list[i]
-            edges = np.array(all_edges)[edge_ids_i]
-            mis = mis_list[i]
-            assert len(edges) == len(mis), "edges and mi's must be the same length"
-            regulators, targets = zip(*edges)
-            cell_network = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets, MI_VALS: mis})
-            cell_network = cell_network.nlargest(100, MI_VALS)
-
-            network_genes = set(regulators + targets)
+            cell_network = get_cell_network_df(edge_ids=edge_ids_list[i], pvals=None, mis=mis_list[i], all_edges=all_edges, limit_regulon=100, drop_unpaired=True)
+            network_genes = set(cell_network[REG_VALS].tolist() +  cell_network[TAR_VALS].tolist())
             common_genes = sorted(list(network_genes.intersection(expression_genes)))
         else:   
             cell_network = network

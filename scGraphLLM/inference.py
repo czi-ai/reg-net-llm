@@ -75,17 +75,78 @@ def infer_cell_edges_(probs, E, MI, alpha=None):
     return edge_ids, expected_pvals, expected_mis
 
 
-def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None):
+def make_undirected(
+    df,
+    reg_col=REG_VALS,
+    tar_col=TAR_VALS,
+    mi_col=MI_VALS,
+    logp_col=LOGP_VALS,
+    drop_unpaired=False
+):
+    """
+    Makes a graph dataframe undirected by either:
+    - Adding reverse edges if missing (default), or
+    - Dropping edges without a reverse (if drop_unpaired=True)
+
+    Parameters:
+    - df: DataFrame with directed edges
+    - drop_unpaired: If True, only keep edges that have reverse counterparts
+
+    Returns:
+    - DataFrame with undirected edges (by addition or filtering)
+    """
+    edge_set = set(zip(df[reg_col], df[tar_col]))
+    reverse_set = set((t, r) for r, t in edge_set)
+
+    if drop_unpaired:
+        # Keep only edges that have a reverse
+        bidirectional_edges = edge_set & reverse_set
+        mask = [(r, t) in bidirectional_edges for r, t in zip(df[reg_col], df[tar_col])]
+        return df[mask].reset_index(drop=True)
+    
+    # Add reverse edges if missing
+    existing_edges = set(zip(df[reg_col], df[tar_col]))
+    reversed_edges = []
+
+    for idx, row in df.iterrows():
+        src, tgt = row[reg_col], row[tar_col]
+        if (tgt, src) not in existing_edges:
+            reversed_edges.append({
+                reg_col: tgt,
+                tar_col: src,
+                mi_col: row[mi_col],
+                logp_col: row[logp_col]
+            })
+
+    if reversed_edges:
+        reversed_df = pd.DataFrame(reversed_edges)
+        df = pd.concat([df, reversed_df], ignore_index=True)
+
+    return df
+
+def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, drop_unpaired=True):
     if len(edge_ids) == 0:
         return pd.DataFrame({REG_VALS: [], TAR_VALS: [], MI_VALS: [], LOGP_VALS: []})
-
+    
     edges = np.array(all_edges)[edge_ids]
     regulators, targets = zip(*edges)
-    df = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets, MI_VALS: mis, LOGP_VALS: np.log(pvals)})
+    df = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets})
+    
+    if mis is not None:
+        df[MI_VALS] = mis
+
+    if pvals is not None:
+        df[LOGP_VALS] = np.log(pvals)
+    
     if limit_regulon is not None:
-        df = df.sort_values(by=[REG_VALS, MI_VALS], ascending=[True, False])
-        df = df.groupby(REG_VALS, group_keys=False).apply(lambda x: x.iloc[:limit_regulon])
-        
+        df = df.groupby(REG_VALS, group_keys=False)\
+            .apply(lambda x: x.sort_values(MI_VALS, ascending=False).iloc[:limit_regulon])\
+            .reset_index(drop=True)\
+            .pipe(make_undirected, drop_unpaired=drop_unpaired)        
+
     return df
+
+
+
     
     
