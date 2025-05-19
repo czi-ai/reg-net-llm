@@ -1103,21 +1103,25 @@ def main(args):
             embed_dim=dataset.embedding_dim,
             output_dim=1
         )
-        
-    print(f"Fine tuning link predictor...\n {predictor}")
-    best_model: FineTuneModule = fine_tune_pl(
-        ft_model=predictor,
-        task=args.task,
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        max_num_batches=args.max_num_batches,
-        val_check_interval=args.val_check_interval,
-        num_epochs=args.num_epochs,
-        patience=args.patience,
-        save_dir=args.model_save_dir
-    )
+
+    if args.prediction:
+        print(f"Loading the following model for prediction... {args.model_path}")
+        best_model = FineTuneModule.load_from_checkpoint(args.model_path, model=predictor, lr=args.lr, task=args.task)    
+    else:   
+        print(f"Fine tuning link predictor...\n {predictor}")
+        best_model: FineTuneModule = fine_tune_pl(
+            ft_model=predictor,
+            task=args.task,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            max_num_batches=args.max_num_batches,
+            val_check_interval=args.val_check_interval,
+            num_epochs=args.num_epochs,
+            patience=args.patience,
+            save_dir=args.model_save_dir
+        )
 
     print("Making Inference with predictor for train set...")
     result_train = predict(
@@ -1264,6 +1268,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--split_config", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--model_path", type=str, default=None)
+    parser.add_argument("--prediction", action="store_true")
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm", "cls"])
     parser.add_argument("--cls_layers", type=int, default=1)

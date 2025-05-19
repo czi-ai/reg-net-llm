@@ -284,11 +284,27 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 
 
 
+# python $benchmark_script \
+#     --dataset scgpt_hog \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
+#     --suffix scgpt_hog \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
+
+
 python $benchmark_script \
-    --dataset scgpt_hog \
+    --dataset scf_hog \
     --split_config train_test_set \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scgpt \
-    --suffix scgpt_hog \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scfoundation \
+    --model_path /hpc/mydata/rowan.cassius/tasks/cls/scfoundation/scf_hog_2025-05-15_18-09/model/epoch=8-step=234-val_loss=0.2959.ckpt \
+    --prediction \
+    --suffix scf_hog \
     --use_weighted_ce \
     --task cls \
     --target cell_type \
@@ -296,4 +312,7 @@ python $benchmark_script \
     --batch_size 256 \
     --num_epochs 200 \
     --patience 5
+
+
+
 

@@ -301,6 +301,11 @@ EMBEDDING_DATASETS = ({
         for i in range(10)
     ],
 
+    "scf_hog": [
+        f"/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/scfoundation_PARALLEL_{i}/seq_len_2048/cached_embeddings"
+        for i in range(9)
+    ],
+
     # scf late to the party
     "scf_human_immune": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/human_immune/cell_type/{cell_type}/embeddings/scfoundation/aracne_4096_seq_len_2048/cached_embeddings"
