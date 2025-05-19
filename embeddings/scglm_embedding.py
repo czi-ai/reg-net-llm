@@ -29,6 +29,7 @@ warnings.filterwarnings("ignore")
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
 from scGraphLLM.preprocess import quantize_cells
+from scGraphLLM.inference import infer_cell_edges_, build_class_edge_matrix
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
@@ -176,6 +177,7 @@ def run_inference_cache(
             regulators, targets = zip(*edges)
             cell_network = pd.DataFrame({REG_VALS: regulators, TAR_VALS: targets, MI_VALS: mis})
             cell_network = cell_network.nlargest(100, MI_VALS)
+
             network_genes = set(regulators + targets)
             common_genes = sorted(list(network_genes.intersection(expression_genes)))
         else:   
@@ -202,74 +204,6 @@ def run_inference_cache(
                 print(outfile, "-------- Failed")
         
     return (skipped, ncells)
-
-
-def build_class_edge_matrix(class_networks, classes, default_alpha):
-    """
-    Build edge × class matrix of p-values. Missing edges use default_alpha.
-    """
-    
-    # Identify global set of edges
-    all_edges = set()
-    for class_df in class_networks.values():
-        all_edges.update(class_df.index)
-    all_edges = sorted(list(all_edges))
-    
-    edge_to_idx = {e: i for i, e in enumerate(all_edges)}
-    num_edges = len(all_edges)
-    num_classes = len(classes)
-
-    # Initialize matrix with default alpha
-    E = np.full((num_edges, num_classes), default_alpha, dtype=np.float32)
-    MI = np.full((num_edges, num_classes), np.nan, dtype=np.float32)
-
-    for j, c in enumerate(classes):
-        df = class_networks[c]
-        for e in df.index:
-            i = edge_to_idx[e]
-            E[i, j] = np.exp(df.loc[e, LOGP_VALS])
-            MI[i, j] = df.loc[e, MI_VALS]
-
-    return E, MI, all_edges
-
-
-def infer_cell_edges_(probs, E, MI, alpha=None):
-    """
-    Fast inference using precomputed class-edge matrix.
-
-    Parameters:
-    - probs: array of class probabilities
-    - E: [num_edges x num_classes] matrix of per-class p-values
-    - all_edges: list of edge tuples (same order as rows in E)
-    - alpha: optional p-value threshold
-
-    Returns:
-    - List of edge indices (integers into all_edges) passing the threshold
-    """
-    probs = np.asarray(probs)
-    if probs.sum() == 0:
-        return np.array([]), np.array([]), np.array([])
-
-    expected_pvals = E @ probs
-    # if using default MI = 0
-    # expected_mis = MI @ probs
-    # if using defaul MI = np.nan
-    mask = ~np.isnan(MI)
-    weighted_mis = np.where(mask, MI * probs, 0)
-    weight_sums = mask @ probs
-    expected_mis = np.divide(weighted_mis.sum(axis=1), weight_sums, out=np.zeros_like(weight_sums), where=weight_sums != 0)
-
-    if alpha is not None:
-        edge_ids = np.where(expected_pvals <= alpha)[0]
-        expected_pvals = expected_pvals[edge_ids]
-        expected_mis = expected_mis[edge_ids]
-    else:
-        edge_ids = np.arange(len(expected_pvals))
-
-    return edge_ids, expected_pvals, expected_mis
-
-    
-
 
 
 def main(args):
