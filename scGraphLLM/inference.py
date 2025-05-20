@@ -124,7 +124,7 @@ def make_undirected(
 
     return df
 
-def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, drop_unpaired=True):
+def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, drop_unpaired=True, require_undirected=True):
     if len(edge_ids) == 0:
         return pd.DataFrame({REG_VALS: [], TAR_VALS: [], MI_VALS: [], LOGP_VALS: []})
     
@@ -141,7 +141,9 @@ def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, dro
     if limit_regulon is not None:
         df = df.groupby(REG_VALS, group_keys=False)\
             .apply(lambda regulon: regulon.nlargest(limit_regulon, MI_VALS))\
-            .reset_index(drop=True)\
-            .pipe(make_undirected, drop_unpaired=drop_unpaired)        
+            .reset_index(drop=True)
+        
+        if require_undirected:
+            df = df.pipe(make_undirected, drop_unpaired=drop_unpaired)     
 
     return df

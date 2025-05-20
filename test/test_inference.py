@@ -135,19 +135,26 @@ class TestGraphIntegration(unittest.TestCase):
         self.assertFalse(("C", "A") in cell_network.index.tolist())
         self.assertFalse(("A", "C") in cell_network.index.tolist())
 
-        # likely class 5, agressive pruning
+        # likely class 5, aggressive pruning with symmetry
         probs = [0.0, 0.05, 0.0, 0.30, 0.65]
         edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
         cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2, drop_unpaired=True)\
             .sort_values([REG_VALS, MI_VALS], ascending=[True, False])\
             .set_index([REG_VALS, TAR_VALS])
-        expected_edges = [("A", "H"), ("C", "H"), ("C", "D"), ("D", "C"), ("H", "C"), ("H", "A")]
+        expected_edges = [
+            ("A", "H"), 
+            ("C", "H"), ("C", "D"), 
+            ("D", "C"), 
+            ("H", "C"), ("H", "A")
+        ]
         expected_edges = set(expected_edges + [(t, r) for r, t in expected_edges])
         self.assertEqual(expected_edges, set(cell_network.index))
         
         # likely class 5, pruning with reinstallation of edges for symmetry
         edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
-        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2, drop_unpaired=False).set_index([REG_VALS, TAR_VALS]).sort_index()
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2, drop_unpaired=False)\
+            .sort_values([REG_VALS, MI_VALS], ascending=[True, False])\
+            .set_index([REG_VALS, TAR_VALS])
         expected_edges = [
             ("A", "H"), ("A", "C"), 
             ("B", "H"), 
@@ -155,9 +162,28 @@ class TestGraphIntegration(unittest.TestCase):
             ("D", "C"), ("D", "H"), 
             ("H", "C"), ("H", "A"), ("H", "B"), ("H", "D"), ("H", "I"), ("H", "L"), 
             ("I", "H"), 
-            ("L", "H")]
+            ("L", "H")
+        ]
         expected_edges = expected_edges + [(t, r) for r, t in expected_edges]
         self.assertEqual(set(expected_edges), set(cell_network.index))
+
+        # likely class 5, pruning without required symmetry
+        edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2, require_undirected=False)\
+            .sort_values([REG_VALS, MI_VALS], ascending=[True, False])\
+            .set_index([REG_VALS, TAR_VALS])
+        expected_edges = [
+            ("A", "H"), ("A", "C"), 
+            ("B", "H"), 
+            ("C", "H"), ("C", "D"), 
+            ("D", "C"), ("D", "H"), 
+            ("H", "C"), ("H", "A"),
+            ("I", "H"), 
+            ("L", "H")
+        ]
+        self.assertEqual(set(expected_edges), set(cell_network.index))
+
+
         
 
 if __name__ == "__main__":

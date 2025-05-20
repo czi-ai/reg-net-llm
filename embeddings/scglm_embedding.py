@@ -160,7 +160,7 @@ def run_inference_cache(
             continue
         
         if infer_networks:
-            cell_network = get_cell_network_df(edge_ids=edge_ids_list[i], pvals=None, mis=mis_list[i], all_edges=all_edges, limit_regulon=100, drop_unpaired=True)
+            cell_network = get_cell_network_df(edge_ids=edge_ids_list[i], pvals=None, mis=mis_list[i], all_edges=all_edges, limit_regulon=100, require_undirected=False)
             network_genes = set(cell_network[REG_VALS].tolist() +  cell_network[TAR_VALS].tolist())
             common_genes = sorted(list(network_genes.intersection(expression_genes)))
         else:   
