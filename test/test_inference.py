@@ -5,7 +5,6 @@ import unittest
 from scGraphLLM.inference import *
 
 
-
 def formulate_network(data, columns=[REG_VALS, TAR_VALS, MI_VALS, LOGP_VALS]):
     return pd.DataFrame(data=data, columns=columns)\
         .pipe(make_undirected)\

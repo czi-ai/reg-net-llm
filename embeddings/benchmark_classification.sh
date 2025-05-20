@@ -79,21 +79,19 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --num_epochs 200 \
 #     --patience 5
 
-# # Myeloid Dataset
-# python $benchmark_script \
-#     --dataset mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned \
-#     --split_config mye \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned \
-#     --use_weighted_ce \
-#     --task cls \
-#     --target cell_type \
-#     --lr 1e-2 \
-#     --batch_size 256 \
-#     --num_epochs 200 \
-#     --patience 5
-
-
+# Myeloid Dataset
+python $benchmark_script \
+    --dataset mye_scglm_MLM_001_regulon_pruned \
+    --split_config mye \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+    --suffix mye_scglm_MLM_001_regulon_pruned \
+    --use_weighted_ce \
+    --task cls \
+    --target cell_type \
+    --lr 1e-2 \
+    --batch_size 256 \
+    --num_epochs 200 \
+    --patience 5
 
 
 # python $benchmark_script \
@@ -298,20 +296,20 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --patience 5
 
 
-python $benchmark_script \
-    --dataset scf_hog \
-    --split_config train_test_set \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scfoundation \
-    --model_path /hpc/mydata/rowan.cassius/tasks/cls/scfoundation/scf_hog_2025-05-15_18-09/model/epoch=8-step=234-val_loss=0.2959.ckpt \
-    --prediction \
-    --suffix scf_hog \
-    --use_weighted_ce \
-    --task cls \
-    --target cell_type \
-    --lr 1e-2 \
-    --batch_size 256 \
-    --num_epochs 200 \
-    --patience 5
+# python $benchmark_script \
+#     --dataset scf_hog \
+#     --split_config train_test_set \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scfoundation \
+#     --model_path /hpc/mydata/rowan.cassius/tasks/cls/scfoundation/scf_hog_2025-05-15_18-09/model/epoch=8-step=234-val_loss=0.2959.ckpt \
+#     --prediction \
+#     --suffix scf_hog \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
 
 
 

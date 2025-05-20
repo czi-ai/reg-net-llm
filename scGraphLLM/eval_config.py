@@ -193,6 +193,9 @@ EMBEDDING_DATASETS = ({
     "mye_scglm_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned": [
         "/hpc/mydata/rowan.cassius/data/scGPT/mye/embeddings/scglm/aracne_4096_cls_3L_12000_steps_MLM_001_infer_networks_soft_unpruned/cached_embeddings"
     ],
+    "mye_scglm_MLM_001_regulon_pruned":[
+        "/hpc/mydata/rowan.cassius/data/scGPT/mye/embeddings/scglm/aracne__cls_3L_12000_steps_MLM_001_infer_networks_regulon_pruned/cached_embeddings"
+    ],
     # even newer scGLM model
     "mye_scglm_cls_3L_12000_steps_MLM_002_seq_len_2048_pruned_graph_50": [
         f"/hpc/mydata/rowan.cassius/data/scGPT/mye/all/cell_type/{cell_type}/embeddings/scglm/cls_3L_12000_steps_MLM_002_seq_len_2048_graph_pruned_50/cached_embeddings"

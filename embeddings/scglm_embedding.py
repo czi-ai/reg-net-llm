@@ -65,6 +65,7 @@ parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--network_path", type=str)
 parser.add_argument("--infer_network", action="store_true")
 parser.add_argument("--hard_assignment", action="store_true")
+parser.add_argument("--limit_regulon", type=int, default=100)
 parser.add_argument("--infer_network_alpha", type=float, default=0.25)
 parser.add_argument("--networks", type=str, default=None)
 parser.add_argument("--max_seq_length", type=int, default=2048)
@@ -110,6 +111,7 @@ def run_inference_cache(
         all_edges = None,
         edge_ids_list = None,
         mis_list = None,
+        limit_regulon = None,
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
@@ -243,6 +245,7 @@ def main(args):
             edge_ids_list=edge_ids_list,
             mis_list=mis_list,
             all_edges=all_edges,
+            limit_regulon=args.limit_regulon,
             expression=ranks.to_df(),
             global_gene_to_node=global_gene_to_node, 
             cache_dir=args.cache_dir,
