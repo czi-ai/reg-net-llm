@@ -41,15 +41,26 @@ class TestGraphIntegration(unittest.TestCase):
             ["F", "A", 1.1, np.log(0.01)],
             ["H", "B", 0.5, np.log(0.02)]
         ])
-        self.classes = ["class1", "class2", "class3", "class4"]
+
+        self.network5 = formulate_network([
+            ["H", "L", 0.5, np.log(0.03)],
+            ["H", "A", 2.8, np.log(0.02)],
+            ["H", "B", 1.9, np.log(0.04)],
+            ["H", "I", 0.5, np.log(0.02)],
+            ["H", "C", 5.0, np.log(0.03)],
+            ["H", "D", 0.1, np.log(0.01)],
+            ["C", "A", 1.7, np.log(0.01)],
+            ["C", "D", 1.7, np.log(0.01)]
+        ])
+        self.classes = ["class1", "class2", "class3", "class4", "class5"]
         self.class_networks = {
             self.classes[0]: self.network1,
             self.classes[1]: self.network2, 
             self.classes[2]: self.network3,
-            self.classes[3]: self.network4
+            self.classes[3]: self.network4,
+            self.classes[4]: self.network5
         }
         self.all_edges = np.unique(np.concatenate([network.index for _, network in self.class_networks.items()]))
-        
 
     def test_edge_matrix(self):
         E, MI, _ = build_class_edge_matrix(self.class_networks, self.classes, default_alpha=(0.05 + 1)/2)     
@@ -101,7 +112,8 @@ class TestGraphIntegration(unittest.TestCase):
             self.classes[0]: self.network2,
             self.classes[1]: self.network2, 
             self.classes[2]: self.network2,
-            self.classes[3]: self.network2
+            self.classes[3]: self.network2,
+            self.classes[4]: self.network2
         }
         E, MI, all_edges = build_class_edge_matrix(class_networks, self.classes, default_alpha=(0.05 + 1.)/2)
         for _ in range(100):
@@ -113,7 +125,9 @@ class TestGraphIntegration(unittest.TestCase):
     
     def test_limit_regulon(self):
         E, MI, all_edges = build_class_edge_matrix(self.class_networks, self.classes, default_alpha=(0.05 + 1.)/2)
-        probs = [0.07, 0.0, 0.9, 0.03]
+        
+        # likely class 3
+        probs = [0.07, 0.0, 0.9, 0.03, 0.0]
         edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.2)
         cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2)
         # C's regulon is originally 3, so one of its targets (C, A) should be pruned
@@ -121,6 +135,29 @@ class TestGraphIntegration(unittest.TestCase):
         self.assertFalse(("C", "A") in cell_network.index.tolist())
         self.assertFalse(("A", "C") in cell_network.index.tolist())
 
+        # likely class 5, agressive pruning
+        probs = [0.0, 0.05, 0.0, 0.30, 0.65]
+        edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2, drop_unpaired=True)\
+            .sort_values([REG_VALS, MI_VALS], ascending=[True, False])\
+            .set_index([REG_VALS, TAR_VALS])
+        expected_edges = [("A", "H"), ("C", "H"), ("C", "D"), ("D", "C"), ("H", "C"), ("H", "A")]
+        expected_edges = set(expected_edges + [(t, r) for r, t in expected_edges])
+        self.assertEqual(expected_edges, set(cell_network.index))
+        
+        # likely class 5, pruning with reinstallation of edges for symmetry
+        edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=2, drop_unpaired=False).set_index([REG_VALS, TAR_VALS]).sort_index()
+        expected_edges = [
+            ("A", "H"), ("A", "C"), 
+            ("B", "H"), 
+            ("C", "H"), ("C", "D"), 
+            ("D", "C"), ("D", "H"), 
+            ("H", "C"), ("H", "A"), ("H", "B"), ("H", "D"), ("H", "I"), ("H", "L"), 
+            ("I", "H"), 
+            ("L", "H")]
+        expected_edges = expected_edges + [(t, r) for r, t in expected_edges]
+        self.assertEqual(set(expected_edges), set(cell_network.index))
         
 
 if __name__ == "__main__":

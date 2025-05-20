@@ -140,13 +140,8 @@ def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, dro
     
     if limit_regulon is not None:
         df = df.groupby(REG_VALS, group_keys=False)\
-            .apply(lambda x: x.sort_values(MI_VALS, ascending=False).iloc[:limit_regulon])\
+            .apply(lambda regulon: regulon.nlargest(limit_regulon, MI_VALS))\
             .reset_index(drop=True)\
             .pipe(make_undirected, drop_unpaired=drop_unpaired)        
 
     return df
-
-
-
-    
-    
