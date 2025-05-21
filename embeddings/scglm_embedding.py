@@ -29,7 +29,7 @@ warnings.filterwarnings("ignore")
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
 from scGraphLLM.preprocess import quantize_cells
-from scGraphLLM.inference import infer_cell_edges_, build_class_edge_matrix, get_cell_network_df
+from scGraphLLM.inference import infer_cell_edges_, build_class_edge_matrix, get_cell_network_df, prune_graph
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
@@ -65,7 +65,8 @@ parser.add_argument("--model_path", type=str, required=True)
 parser.add_argument("--network_path", type=str)
 parser.add_argument("--infer_network", action="store_true")
 parser.add_argument("--hard_assignment", action="store_true")
-parser.add_argument("--limit_regulon", type=int, default=100)
+parser.add_argument("--limit_regulon", type=int, default=None)
+parser.add_argument("--limit_graph", type=int, default=100)
 parser.add_argument("--infer_network_alpha", type=float, default=0.25)
 parser.add_argument("--networks", type=str, default=None)
 parser.add_argument("--max_seq_length", type=int, default=2048)
@@ -112,6 +113,7 @@ def run_inference_cache(
         edge_ids_list = None,
         mis_list = None,
         limit_regulon = None,
+        limit_graph = None,
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
@@ -131,10 +133,7 @@ def run_inference_cache(
     infer_networks = networks is not None
     expression_genes = set(expression.columns)
     if not infer_networks:
-        network = network[
-            network[REG_VALS].isin(global_gene_to_node) & 
-            network[TAR_VALS].isin(global_gene_to_node)
-        ]
+        network = prune_graph(df=network, limit_regulon=limit_regulon, limit_graph=limit_graph, drop_unpaired=False)
         network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
         common_genes = sorted(list(network_genes.intersection(expression_genes)))
 
@@ -160,7 +159,10 @@ def run_inference_cache(
             continue
         
         if infer_networks:
-            cell_network = get_cell_network_df(edge_ids=edge_ids_list[i], pvals=None, mis=mis_list[i], all_edges=all_edges, limit_regulon=100, require_undirected=False)
+            cell_network = get_cell_network_df(
+                edge_ids=edge_ids_list[i], pvals=None, mis=mis_list[i], all_edges=all_edges, 
+                limit_regulon=limit_regulon, limit_graph=limit_graph, require_undirected=False
+            )
             network_genes = set(cell_network[REG_VALS].tolist() +  cell_network[TAR_VALS].tolist())
             common_genes = sorted(list(network_genes.intersection(expression_genes)))
         else:   
@@ -246,6 +248,7 @@ def main(args):
             mis_list=mis_list,
             all_edges=all_edges,
             limit_regulon=args.limit_regulon,
+            limit_graph=args.limit_graph,
             expression=ranks.to_df(),
             global_gene_to_node=global_gene_to_node, 
             cache_dir=args.cache_dir,
@@ -265,7 +268,9 @@ def main(args):
         run_inference_cache(
             network=network, 
             expression=ranks.to_df(), 
-            global_gene_to_node=global_gene_to_node, 
+            global_gene_to_node=global_gene_to_node,
+            limit_regulon=args.limit_regulon,
+            limit_graph=args.limit_graph,
             cache_dir=args.cache_dir,
             overwrite=True, 
             msplit="all", 

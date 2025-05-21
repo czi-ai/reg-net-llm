@@ -79,19 +79,19 @@ benchmark_script="/hpc/mydata/rowan.cassius/scGraphLLM/scGraphLLM/benchmark.py"
 #     --num_epochs 200 \
 #     --patience 5
 
-# Myeloid Dataset
-python $benchmark_script \
-    --dataset mye_scglm_MLM_001_regulon_pruned \
-    --split_config mye \
-    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-    --suffix mye_scglm_MLM_001_regulon_pruned \
-    --use_weighted_ce \
-    --task cls \
-    --target cell_type \
-    --lr 1e-2 \
-    --batch_size 256 \
-    --num_epochs 200 \
-    --patience 5
+# # Myeloid Dataset
+# python $benchmark_script \
+#     --dataset mye_scglm_MLM_001_regulon_pruned \
+#     --split_config mye \
+#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+#     --suffix mye_scglm_MLM_001_regulon_pruned \
+#     --use_weighted_ce \
+#     --task cls \
+#     --target cell_type \
+#     --lr 1e-2 \
+#     --batch_size 256 \
+#     --num_epochs 200 \
+#     --patience 5
 
 
 # python $benchmark_script \
@@ -267,18 +267,18 @@ python $benchmark_script \
 #     --patience 5
 
 
-# python $benchmark_script \
-#     --dataset scglm_hog \
-#     --split_config train_test_set \
-#     --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
-#     --suffix scglm_hog \
-#     --use_weighted_ce \
-#     --task cls \
-#     --target cell_type \
-#     --lr 1e-2 \
-#     --batch_size 256 \
-#     --num_epochs 200 \
-#     --patience 5
+python $benchmark_script \
+    --dataset scglm_hog_regulon_pruned \
+    --split_config train_test_set \
+    --out_dir /hpc/mydata/rowan.cassius/tasks/cls/scglm \
+    --suffix scglm_hog_regulon_pruned \
+    --use_weighted_ce \
+    --task cls \
+    --target cell_type \
+    --lr 1e-2 \
+    --batch_size 256 \
+    --num_epochs 200 \
+    --patience 5
 
 
 

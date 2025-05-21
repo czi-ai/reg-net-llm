@@ -124,7 +124,35 @@ def make_undirected(
 
     return df
 
-def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, drop_unpaired=True, require_undirected=True):
+def get_cell_network_df(
+        edge_ids, 
+        pvals, 
+        mis, 
+        all_edges, 
+        limit_regulon=None, 
+        limit_graph=None, 
+        drop_unpaired=True, 
+        require_undirected=True
+    ):
+    """
+    Construct a DataFrame representing a gene regulatory network for a single cell.
+
+    Parameters:
+        edge_ids (list or array-like): Indices of selected edges in `all_edges` to include in the network.
+        pvals (array-like or None): P-values associated with the selected edges. Used to compute log-p-values.
+        mis (array-like or None): Mutual information values corresponding to the selected edges.
+        all_edges (list of tuples): Full list of all possible (regulator, target) edge tuples.
+        limit_regulon (int, optional): Maximum number of targets to retain per regulator, based on MI. If None, no limit.
+        limit_graph (int, optional): Maximum number of edges to retain globally, based on MI. If None, no limit.
+        drop_unpaired (bool): If True, remove edges that do not have a matching reverse edge when making the graph undirected.
+        require_undirected (bool): If True, convert the graph to an undirected form using `make_undirected`.
+
+    Returns:
+        pd.DataFrame: A DataFrame with columns for regulator, target, mutual information, and log-p-value.
+                      Columns are named using constants: REG_VALS, TAR_VALS, MI_VALS, and LOGP_VALS.
+                      If no edges are selected, returns an empty DataFrame with these columns.
+    """
+
     if len(edge_ids) == 0:
         return pd.DataFrame({REG_VALS: [], TAR_VALS: [], MI_VALS: [], LOGP_VALS: []})
     
@@ -138,12 +166,21 @@ def get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=None, dro
     if pvals is not None:
         df[LOGP_VALS] = np.log(pvals)
     
+    df = prune_graph(df, limit_regulon, limit_graph, drop_unpaired, require_undirected)
+
+    return df
+
+
+def prune_graph(df, limit_regulon, limit_graph, drop_unpaired, require_undirected):
     if limit_regulon is not None:
         df = df.groupby(REG_VALS, group_keys=False)\
             .apply(lambda regulon: regulon.nlargest(limit_regulon, MI_VALS))\
             .reset_index(drop=True)
-        
-        if require_undirected:
-            df = df.pipe(make_undirected, drop_unpaired=drop_unpaired)     
 
+    if limit_graph is not None:
+        df = df.nlargest(limit_graph, MI_VALS)
+
+    if require_undirected:
+        df = df.pipe(make_undirected, drop_unpaired=drop_unpaired)
+        
     return df

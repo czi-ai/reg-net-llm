@@ -183,6 +183,35 @@ class TestGraphIntegration(unittest.TestCase):
         ]
         self.assertEqual(set(expected_edges), set(cell_network.index))
 
+        # likely class 5, graph-based pruning instead of regulon-based pruning
+        edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_graph=6, require_undirected=False)\
+            .sort_values([REG_VALS, MI_VALS], ascending=[True, False])\
+            .set_index([REG_VALS, TAR_VALS])
+        expected_edges = [
+            ("A", "H"),
+            ("C", "H"),
+            ("C", "D"),
+            ("D", "C"),
+            ("H", "C"),
+            ("H", "A"),
+        ]
+        self.assertEqual(set(expected_edges), set(cell_network.index))
+
+        # likely class 5, regulon-based pruning followed by graph-based pruning
+        edge_ids, pvals, mis = infer_cell_edges_(probs, E, MI, alpha=0.25)
+        cell_network = get_cell_network_df(edge_ids, pvals, mis, all_edges, limit_regulon=1, limit_graph=5, require_undirected=False)\
+            .sort_values([REG_VALS, MI_VALS], ascending=[True, False])\
+            .set_index([REG_VALS, TAR_VALS])
+        expected_edges = [
+            ("A", "H"),
+            ("B", "H"), 
+            ("C", "H"),
+            ("D", "C"),
+            ("H", "C"),
+        ]
+        self.assertEqual(set(expected_edges), set(cell_network.index))
+
 
         
 

@@ -303,7 +303,10 @@ EMBEDDING_DATASETS = ({
         f"/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/scglm_PARALLEL_{i}/aracne__cls_3L_12000_steps_MLM_001_infer_network_pruned/cached_embeddings"
         for i in range(10)
     ],
-
+    "scglm_hog_regulon_pruned": [
+        f"/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/scglm_PARALLEL_{i}/aracne__cls_3L_12000_steps_MLM_001_infer_network_pruned/cached_embeddings"
+        for i in range(10)
+    ],
     "scf_hog": [
         f"/hpc/projects/group.califano/GLM/data/HOG_benchmarking/embeddings/scfoundation_PARALLEL_{i}/seq_len_2048/cached_embeddings"
         for i in range(9)
