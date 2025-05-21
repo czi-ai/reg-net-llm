@@ -1,7 +1,6 @@
 #!/bin/bash
-#SBATCH --partition=preempted
-#SBATCH --requeue
-#SBATCH --time=12:00:00
+#SBATCH --partition=cpu
+#SBATCH --time=2-00:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=512G
 

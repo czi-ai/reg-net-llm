@@ -52,6 +52,13 @@ import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
+# colors
+NEUTRAL = (.1, .1, .1)
+BLUE = (.0, .4, .8)
+RED = (.8, 0, .1)
+PURPLE = (.3, .3, 0.5)
+GREEN = (.2, .5, 0.3)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def send_to_gpu(data):
@@ -99,7 +106,9 @@ class EmbeddingDataset(Dataset):
                     self.metadata[key].append(value)
                 if data["seq_lengths"] > self.max_seq_length:
                     self.max_seq_length = data["seq_lengths"]
+                self.metadata["seq_lengths"].append(data["seq_lengths"])
 
+            print(f"Loaded metadata with keys: {self.metadata.keys()}")
             if self.target_metadata_key is not None:
                 self.encode_labels()
             
@@ -533,7 +542,7 @@ def gene_expression_pred_loss(
     ):
     device = node_embedding.device
     mask = torch.arange(node_embedding.shape[1], device=device).unsqueeze(0) < seq_lengths.unsqueeze(1)
-    pred = predictor(node_embedding).squeeze() # B, L
+    pred = predictor(node_embedding).squeeze(-1) # From [B, L, 1] → [B, L]
     yhat = pred[mask]
     y = expression[mask]
     loss = nn.MSELoss()(yhat, y)
@@ -800,11 +809,6 @@ def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, reca
                     fpr_test, tpr_test, auc_score_test, precision_test, recall_test, apr_test, 
                     save_path=None):
 
-    NEUTRAL = (.1, .1, .1)
-    BLUE = (.0, .4, .8)
-    RED = (.8, 0, .1)
-    PURPLE = (.3, .3, 0.5)
-    GREEN = (.2, .5, 0.3)
     plt.style.use("ggplot")
     fig, ax = plt.subplots(1, 2, figsize=(18, 8))
 
@@ -857,15 +861,21 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
     return fig, ax
 
 
-def plot_confusion_matrix(y, yhat, save_path=None):
-
-    GREEN = (0.2, 0.5, 0.3)
-    LIGHT_GREEN = tuple(0.5 * g + 0.5 for g in GREEN)
-    custom_cmap = LinearSegmentedColormap.from_list("white_to_lightgreen", [(1, 1, 1), LIGHT_GREEN])
+def plot_confusion_matrix(y, yhat, normalize=True, title="Confusion Matrix", base_color=GREEN, save_path=None):
+    
+    light_color = tuple(0.5 * g + 0.5 for g in base_color)
+    custom_cmap = LinearSegmentedColormap.from_list(name="light_color", colors=[(1, 1, 1), light_color])
 
     # Compute confusion matrix
-    labels = sorted(np.unique(np.concatenate([y, yhat])))  # or custom list
+    labels = sorted(np.unique(np.concatenate([y, yhat])))
     cm = confusion_matrix(y, yhat, labels=labels)
+    
+    if normalize:
+        row_sums = cm.sum(axis=1, keepdims=True)
+        cm = np.divide(cm, row_sums, where=row_sums != 0)  # avoid division by zero
+
+    # Calculate metrics
+    accuracy = accuracy_score(y, yhat)
 
     # Plot using matplotlib
     fig, ax = plt.subplots(figsize=(16, 14))
@@ -874,7 +884,9 @@ def plot_confusion_matrix(y, yhat, save_path=None):
     # Add text annotations
     for i in range(len(cm)):
         for j in range(len(cm)):
-            ax.text(j, i, f"{cm[i, j]:,}", ha='center', va='center', color='black', fontsize=15)
+            value = cm[i, j]
+            display_val = f"{value:.2f}" if normalize else f"{int(value):,}"
+            ax.text(j, i, display_val, ha='center', va='center', color='black', fontsize=15)
 
     # Set labels
     ax.set_xticks(np.arange(len(labels)))
@@ -884,24 +896,55 @@ def plot_confusion_matrix(y, yhat, save_path=None):
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
     ax.set_xlabel('Predicted label', fontsize=20)
     ax.set_ylabel('True label', fontsize=20)
-    ax.set_title('Confusion Matrix', fontsize=20)
+    ax.set_title(f"{title} (Accuracy = {accuracy:.3f})", fontsize=25)
 
     if save_path is not None:
         fig.savefig(save_path)
-        
-    return fig, ax
 
+    return fig, ax
 
 
 def print_dataset_info(name, dataset):
     print(f"{name} Dataset: Number of cells: {len(dataset):,}, Max sequence length: {dataset.max_seq_length:,}, Embedding size: {dataset.embedding_dim:,}")
 
 
-def split_dataset(dataset, ratio_config=(None, None, None), metadata_config=None,  seed=42):
+import pandas as pd
+import torch
+from torch.utils.data import Subset, random_split
+
+def split_dataset(
+        dataset, 
+        ratio_config=(None, None, None), 
+        metadata_config=None,
+        filter_config=None,
+        seed=42):
     """
     Function for splitting a dataset into train, validation and test subsets 
-    according to metadata values and/or randomly.
+    according to metadata values and/or randomly. Additionally
     """
+    # get metadata as dataframe
+    if (metadata_config is not None) or (filter_config is not None):
+        metadata = pd.DataFrame(dataset.metadata)
+
+    # Filtering
+    if filter_config:
+        mask = pd.Series(True, index=metadata.index)
+        for key, config in filter_config.items():
+            values = config["values"]
+            mode = config.get("mode", "include")
+            if mode == "include":
+                mask &= metadata[key].isin(values)
+            elif mode == "exclude":
+                mask &= ~metadata[key].isin(values)
+            else:
+                raise ValueError(f"Unknown mode '{mode}' for filter_config[{key}]. Use 'include' or 'exclude'.")
+
+        filtered_indices = metadata[mask].index.tolist()
+        dataset = Subset(dataset, filtered_indices)
+
+        metadata = metadata.loc[filtered_indices].reset_index(drop=True)
+
+    # Splitting
     if ratio_config != (None, None, None):
         specified_ratios = [r for r in ratio_config if r is not None]
         if specified_ratios and not abs(sum(specified_ratios) - 1.0) < 1e-6:
@@ -928,8 +971,7 @@ def split_dataset(dataset, ratio_config=(None, None, None), metadata_config=None
     
     meta_split_datasets = [None, None, None]
     if metadata_config:
-        key, split_values = metadata_config    
-        metadata = pd.DataFrame(dataset.metadata)
+        key, split_values = metadata_config 
         meta_split_datasets = [
             Subset(dataset, indices=metadata[metadata[key].isin(values)].index.tolist()) 
                 if values is not None else None
@@ -974,12 +1016,16 @@ def main(args):
 
     print("Loading Data...")
     if args.task == "link":
-        dataset = EmbeddingDataset(args.data_paths)
+        dataset = EmbeddingDataset(
+            path=args.data_paths,
+            with_metadata=True
+        )
         collate_fn = embedding_collate_fn
     elif args.task == "expr":
         dataset = EmbeddingDataset(
             paths=args.data_paths,
-            with_expression=True
+            with_expression=True,
+            with_metadata=True
         )
         collate_fn = partial(embedding_collate_fn, expression=True)
     elif args.task == "cls":
@@ -992,7 +1038,8 @@ def main(args):
         dataset = EmbeddingDatasetWithEdgeMasks(
             paths=args.data_paths,
             generate_edge_masks=args.generate_edge_masks,
-            mask_ratio=args.mask_ratio
+            mask_ratio=args.mask_ratio,
+            with_metadata=True
         )
         collate_fn = partial(embedding_collate_fn, masked_edges=True)
     elif args.task == "mlm":
@@ -1003,7 +1050,8 @@ def main(args):
     train_dataset, val_dataset, test_dataset = split_dataset(
         dataset=dataset,
         metadata_config=args.split_config.metadata_config,
-        ratio_config=args.split_config.ratio_config
+        ratio_config=args.split_config.ratio_config,
+        filter_config=getattr(args.split_config, "filter_config", None)
     )
     
     print(f"Training set size: {len(train_dataset)}")
@@ -1042,7 +1090,7 @@ def main(args):
             num_classes=dataset.num_classes,
             class_weights=dataset.class_weights if args.use_weighted_ce else None,
             use_gat=args.use_gat,
-            num_layers=2,
+            num_layers=args.cls_layers,
             pooling="mean"
         )
     elif args.task == "expr":
@@ -1055,21 +1103,25 @@ def main(args):
             embed_dim=dataset.embedding_dim,
             output_dim=1
         )
-        
-    print(f"Fine tuning link predictor...\n {predictor}")
-    best_model: FineTuneModule = fine_tune_pl(
-        ft_model=predictor,
-        task=args.task,
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        max_num_batches=args.max_num_batches,
-        val_check_interval=args.val_check_interval,
-        num_epochs=args.num_epochs,
-        patience=args.patience,
-        save_dir=args.model_save_dir
-    )
+
+    if args.prediction:
+        print(f"Loading the following model for prediction... {args.model_path}")
+        best_model = FineTuneModule.load_from_checkpoint(args.model_path, model=predictor, lr=args.lr, task=args.task)    
+    else:   
+        print(f"Fine tuning link predictor...\n {predictor}")
+        best_model: FineTuneModule = fine_tune_pl(
+            ft_model=predictor,
+            task=args.task,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            max_num_batches=args.max_num_batches,
+            val_check_interval=args.val_check_interval,
+            num_epochs=args.num_epochs,
+            patience=args.patience,
+            save_dir=args.model_save_dir
+        )
 
     print("Making Inference with predictor for train set...")
     result_train = predict(
@@ -1171,15 +1223,15 @@ def main(args):
 
         save_path_test = join(args.res_dir, "cm_test.png")
         print(f"Saving test confusion matrix to: {save_path_test}")
-        plot_confusion_matrix(y_test, yhat_test, save_path_test)
+        plot_confusion_matrix(y_test, yhat_test, normalize=True, save_path=save_path_test)
 
         save_path_train = join(args.res_dir, "cm_train.png")
         print(f"Saving train confusion matrix to: {save_path_train}")
-        plot_confusion_matrix(y_train, yhat_train, save_path_train)
+        plot_confusion_matrix(y_train, yhat_train, normalize=True, save_path=save_path_train)
 
         save_path_val = join(args.res_dir, "cm_val.png")
         print(f"Saving val confusion matrix to: {save_path_val}")
-        plot_confusion_matrix(y_val, yhat_val, save_path_val)
+        plot_confusion_matrix(y_val, yhat_val, normalize=True, save_path=save_path_val)
         
         save_data_path = join(args.res_dir, "cls_data.npz")
         print(f"Saving classification performance data to: {save_data_path}")
@@ -1216,8 +1268,11 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--split_config", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--model_path", type=str, default=None)
+    parser.add_argument("--prediction", action="store_true")
     parser.add_argument("--suffix", type=str, required=True)
     parser.add_argument("--task", type=str, required=True, choices=["link", "mgm", "expr", "mlm", "cls"])
+    parser.add_argument("--cls_layers", type=int, default=1)
     parser.add_argument("--use_weighted_ce", action="store_true")
     parser.add_argument("--target", type=str, default=None)
     parser.add_argument("--generate_edge_masks", action="store_true")
@@ -1229,8 +1284,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_num_batches", type=int, default=None)
     parser.add_argument("--num_epochs", type=int, default=500)
     parser.add_argument("--patience", type=int, default=5)
-    parser.add_argument("--val_check_interval", type=Union[int, float], default=1.0)
+    parser.add_argument("--val_check_interval", type=float, default=1.0)
     parser.add_argument("--random_seed", default=0)
+    
     # effectively, early stopping will kick in if the model has not improved after
     # seeing (batch_size * val_check_interval * patience) cells
     # e.g, trainer will stop if validation score hasn't improved after

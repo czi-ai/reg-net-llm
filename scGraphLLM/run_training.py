@@ -1,12 +1,9 @@
-from models import LitScGraphLLM
-from data import *
 from pathlib import Path
 import json 
 import os
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from torch.nn.utils.rnn import pad_sequence
 from utils import update_mconfig_from_dict
 import argparse
 import random
@@ -16,31 +13,19 @@ import time
 import pickle 
 import wandb
 import glob 
-from config import *
 from torch_geometric.loader import DataLoader
 from wandb_checkpoint import SaveModelEveryNSteps
 # import torchsummary
+
+from scGraphLLM.models import LitScGraphLLM
+from scGraphLLM.data import *
+from scGraphLLM._globals import *
+from scGraphLLM.config import *
 
 def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
-def collate_fn(batch):
-    data = { "orig_gene_id" : [], "orig_rank_indices" : [], "gene_mask" : [], 
-            "rank_mask" : [], "both_mask" : [], "edge_index": [], "num_nodes" :[], 
-             "dataset_name" : []}
-    
-    # Make a dictionary of lists from the list of dictionaries
-    for b in batch:
-        for key in data.keys():
-            data[key].append(b[key])
-
-    # Pad these dictionaries of lists
-    for key in data.keys():
-        if (key != "dataset_name") & (key != "edge_index") & (key != "num_nodes"):
-            data[key] = pad_sequence(data[key], batch_first=True)
-
-    return data
 
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
 # filesystem = os.environ["WHEREAMI"]
@@ -118,7 +103,7 @@ def main(args):
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
 
-    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=collate_fn)
+    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=scglm_collate_fn)
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
     
@@ -143,7 +128,7 @@ def main(args):
         if "checkpoint_config" in trainer_conf:
             check_point_conf = trainer_conf['checkpoint_config']
             check_point_conf["dirpath"] = f"{run_dir}/checkpoints/"
-            check_point_conf["filename"] = f"{{epoch}}-{{step}}.ckpt"
+            check_point_conf["filename"] = f"{{epoch}}-{{step}}"
             callbacks.append(ModelCheckpoint(**check_point_conf)) # Locally save checkpoint
             
 

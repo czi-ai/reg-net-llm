@@ -4,7 +4,7 @@
 DATASET="" # Dataset name - cellxgene will be treated differently to other datasets
 PERTURBED="false" # Is this a perturbation dataset? In this case the expression binning will not take place as normalized raw expression data is what is desired for our purposes
 QUANTIZE_METACELLS="false" # If we want to quantize metacells instead of single cells
-ARACNE_TOP_N_HVG="false" # Take the top n most highly variable genes (HVGs) for preprocessing: 1024, 2048, 4096, etc
+ARACNE_TOP_N_HVG="null" # Take the top n most highly variable genes (HVGs) for preprocessing: 1024, 2048, 4096, etc
 GROUP_BY="false" # Set of adata.obs columns to consider in grouping steps: "null" for CellxGene, "gene gene_id transcript" for Replogle
 RAW_DATA_DIR="" # Directory in which raw data to be preprocessed is stored. Data is expected to have <RAW_DATA_DIR>/<all cell-type direcotries>/partitions (example path: /hpc/projects/group.califano/GLM/data/cellxgene/data/replogle_raw)
 OUT_DIR="" # Where to store the preprocessed data
@@ -134,17 +134,18 @@ source start_slurm_preprocess.sh \
     --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/4096"
 
 
-# Replogle preprocessing command (in 10x200k cells partitions)
+# Replogle Reduced 4k Genes
 source start_slurm_preprocess.sh \
-    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_raw_partitioned" \
-    --out-dir "/hpc/projects/group.califano/GLM/data/_cellxgene/data/replogle_clean_partitioned" \
+    --raw-data-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_reduced_raw" \
+    --out-dir "/hpc/projects/group.califano/GLM/data/_replogle/data/replogle_reduced_clean" \
     --aracne-top-n-hvg "null" \
     --aracne-path "/hpc/projects/group.califano/GLM/ARACNe3/build/src/app/ARACNe3_app_release" \
     --regulators-path "/hpc/projects/group.califano/GLM/data/regulators.txt" \
-    --group-by "gene_id" \
+    --group-by "gem_group" \
     --dataset "replogle" \
     --perturbed \
-    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/partitioned"
+    --job-out-dir "/hpc/projects/group.califano/GLM/scGraphLLM/scripts/slurm_out/replogle/reduced"
+
 
 # Replogle 400k single partition subset
 source start_slurm_preprocess.sh \

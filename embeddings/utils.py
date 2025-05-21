@@ -1,6 +1,7 @@
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 import torch
 import os
 
@@ -20,6 +21,11 @@ def mask_values(sparse_mat, mask_prob=0.15, mask_value=0, seed=12345):
     Returns:
         scipy.sparse.spmatrix: Masked sparse matrix with the same format.
     """
+    if isinstance(sparse_mat, np.ndarray):
+        sparse_mat = sp.coo_matrix(sparse_mat)
+    elif not sp.issparse(sparse_mat):
+        raise TypeError("Input must be a numpy array or a scipy sparse matrix")
+
     sparse_mat = sparse_mat.tocoo()
     mask = np.random.default_rng(seed).random(len(sparse_mat.data)) < mask_prob
     masked_indices = (sparse_mat.row[mask], sparse_mat.col[mask])
@@ -59,8 +65,10 @@ def get_locally_indexed_masks_expressions(adata, masked_indices, input_genes):
     return masks,masked_expressions
 
 
+def save_embedding(file, x, cache=False, cache_dir=None, base_index=0, **features):
+    # remove Nones
+    features = {key: val for key, val in features.items() if val is not None}
 
-def save_embedding(file, x, cache=False, cache_dir=None, **features):
     if not cache:
         np.savez(file=file, allow_pickle=True, x=x, **features)
         return
@@ -89,4 +97,17 @@ def save_embedding(file, x, cache=False, cache_dir=None, **features):
             else:
                 data[k] = v[i]
 
-        torch.save(data, os.path.join(cache_dir, f"emb_{i:06d}.pt"))
+        index = i + base_index
+        torch.save(data, os.path.join(cache_dir, f"emb_{index:06d}.pt"))
+
+
+def collect_metadata(adata, retain_obs_vars):
+    metadata = {}
+    for var in retain_obs_vars:
+        if var == "obs_id":
+            adata.obs["obs_id"] = adata.obs.index
+        try:
+            metadata[var] = adata.obs[var]
+        except KeyError:
+            print(f"Key {var} not in observational metadata...")
+    return metadata

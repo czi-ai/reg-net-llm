@@ -13,6 +13,7 @@ from pathlib import Path
 from multiprocessing import Pool
 import argparse
 import lightning.pytorch as pl
+from torch.nn.utils.rnn import pad_sequence
 from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
@@ -20,12 +21,47 @@ import pickle
 REG_VALS = "regulator.values"
 TAR_VALS = "target.values"
 MI_VALS = "mi.values"
+SCC_VALS = "scc.values"
 
 # from scGraphLLM.graph_op import spectral_PE
 from scGraphLLM._globals import * ## imported global variables are all caps 
 
 
 rng = default_rng(42)
+
+def scglm_collate_fn(batch, inference=False):
+    data = {
+        "orig_gene_id": [], 
+        "orig_rank_indices": [], 
+        "gene_mask": [], 
+        "rank_mask": [], 
+        "both_mask": [], 
+        "edge_index": [], 
+        "num_nodes" :[], 
+        "dataset_name": []
+    }
+    if inference:
+        data["obs_name"] = []
+    
+    # Make a dictionary of lists from the list of dictionaries
+    for b in batch:
+        for key in data.keys():
+            data[key].append(b[key])
+
+    # Pad these dictionaries of lists
+    for key in data.keys():
+        if key in {"dataset_name", "edge_index", "num_nodes", "obs_name"}:
+            continue
+        elif key == "orig_gene_id":
+            pad_value = PAD_GENE_IDX
+        elif key == "orig_rank_indices":
+            pad_value = PAD_RANK_IDX
+        elif (key == "gene_mask") or (key == "rank_mask") or (key == "both_mask"):
+            pad_value = False
+        data[key] = pad_sequence(data[key], batch_first=True, padding_value=pad_value)
+
+    return data
+
 def save(obj, file):
     # The above code is using the `pickle` module in Python to serialize the object `obj` and write it
     # to a file specified by the variable `file` in binary mode. This allows the object to be saved to
@@ -39,8 +75,8 @@ def load(file):
         return pickle.load(ifl)
 
 def run_cache(
-        network, 
-        expression, 
+        network: pd.DataFrame, 
+        expression: pd.DataFrame, 
         global_gene_to_node, 
         cache_dir, 
         overwrite, 
@@ -50,6 +86,7 @@ def run_cache(
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
         max_seq_length=None, 
         only_expressed_genes=True,
+        with_edge_weights=True,
         skipped=0, 
         ncells=0, 
         verbose=False
@@ -90,41 +127,14 @@ def run_cache(
             continue
         
         cell: pd.Series = expression.iloc[i, :]
-        # filter out genes with 0 expression
-        if only_expressed_genes:
-            cell = cell[cell != ZERO_IDX]
 
         if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
             skipped += 1
             ncells+=1
             continue
 
-        # enforce max sequence length
-        if max_seq_length is not None and cell.shape[0] > max_seq_length:
-            cell = cell.nlargest(n=max_seq_length)
-
-        # Subset network to only include genes in the cell
-        network_cell = network[
-            network[REG_VALS].isin(cell.index) & 
-            network[TAR_VALS].isin(cell.index)
-        ]
-
-        local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-
-        with warnings.catch_warnings(): # Suppress annoying pandas warnings
-            warnings.simplefilter("ignore") 
-            edges = network_cell[[REG_VALS, TAR_VALS, MI_VALS]]
-            edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
-            edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
-
-        edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
-        edge_weights = torch.tensor(np.array(edges[MI_VALS]))
-        node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
-        data = Data(
-            x=node_expression, 
-            edge_index=edge_list, 
-            edge_weight=edge_weights
-        )
+        # filter out genes with 0 expression
+        data = get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
         
         torch.save(data, outfile)
         ncells += 1
@@ -137,6 +147,46 @@ def run_cache(
                 print(outfile, "-------- Failed")
         
     return (skipped, ncells)
+
+def get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell):
+    if only_expressed_genes:
+        cell = cell[cell != ZERO_IDX]
+
+    # enforce max sequence length
+    if max_seq_length is not None and cell.shape[0] > max_seq_length:
+        cell = cell.nlargest(n=max_seq_length)
+
+    # Subset network to only include genes in the cell
+    network_cell = network[
+        network[REG_VALS].isin(cell.index) & 
+        network[TAR_VALS].isin(cell.index)
+    ]
+
+    local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
+
+    with warnings.catch_warnings(): # Suppress annoying pandas warnings
+        warnings.simplefilter("ignore")
+        edges = network_cell[[REG_VALS, TAR_VALS]]
+        edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
+        edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
+
+    edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
+    node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
+        
+    if with_edge_weights:
+        edge_weights = torch.tensor(np.array(network_cell[MI_VALS]))
+        data = Data(
+            x=node_expression, 
+            edge_index=edge_list, 
+            edge_weight=edge_weights
+        )
+    else:
+        data = Data(
+            x=node_expression, 
+            edge_index=edge_list
+        )
+        
+    return data
 
 
 def cache_aracane_and_bins(
@@ -199,9 +249,10 @@ def cache_aracane_and_bins(
 
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction = 0.3, debug:bool=False, ):
+    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction=0.15, debug:bool=False, inference=False):
         self.debug = debug
-        self.cached_files = [cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")]
+        self.inference = inference
+        self.cached_files = sorted([cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")])
         self.dataset_name = dataset_name
         self.mask_fraction = mask_fraction
         print(f"Cache Directory: {cache_dir}")
@@ -226,28 +277,42 @@ class GraphTransformerDataset(torchDataset):
         
         # mask the tensors
         # node_indices[gene_mask, 0] = MASK_GENE_IDX
-        node_indices[rank_mask, 1] = MASK_RANK_IDX
+        # node_indices[rank_mask, 1] = MASK_RANK_IDX
         # node_indices[both_mask, :] = torch.tensor([MASK_GENE_IDX, MASK_RANK_IDX], dtype=node_indices.dtype)
         
+        # add CLS
+        cls = torch.tensor([[CLS_GENE_IDX, CLS_TOKEN]], dtype=node_indices.dtype)
+        node_indices = torch.cat([cls, node_indices], dim=0) # CLS can never be masked
+
+        # add False to masks
+        gene_mask = torch.cat([torch.tensor([False]), gene_mask])
+        rank_mask = torch.cat([torch.tensor([False]), rank_mask])
+        both_mask = torch.cat([torch.tensor([False]), both_mask])
+
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
-        
-        num_nodes = node_indices.shape[0]
-        
+        num_nodes = node_indices.shape[0] - 1 # discount the cls node
+        edge_index = data.edge_index # edges index assumes the first gene token's index is 0
+
         # graph positional encoding
         #spectral_pe = spectral_PE(edge_index=data.edge_index, num_nodes=node_indices.shape[0], k=64)
         
-        return {
+        item = {
             "orig_gene_id" : orig_gene_indices, 
             "orig_rank_indices" : orig_rank_indices, 
             "gene_mask" : gene_mask, 
             "rank_mask" : rank_mask, 
             "both_mask" : both_mask,
-            "edge_index": data.edge_index,
+            "edge_index": edge_index, # edges index 
             "num_nodes": num_nodes,
             #"spectral_pe": spectral_pe,
             "dataset_name" : self.dataset_name
         }
+        
+        if self.inference:
+            item["obs_name"] = getattr(data, "obs_name", None)
+
+        return item
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):

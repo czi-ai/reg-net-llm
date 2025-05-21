@@ -21,7 +21,8 @@ from utils import (
     mask_values, 
     get_locally_indexed_edges, 
     get_locally_indexed_masks_expressions, 
-    save_embedding
+    save_embedding,
+    collect_metadata
 )
 
 scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
@@ -36,7 +37,8 @@ TAR_VALS = "target.values"
 
 # Parsing arguments outside main clause in order to import scgpt code
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", type=str, required=True)
+parser.add_argument("--data_dir", type=str, default=None)
+parser.add_argument("--cells_path", type=str, default=None)
 parser.add_argument("--model_dir", type=str, required=True)
 parser.add_argument("--out_dir", type=str, required=True)
 parser.add_argument("--aracne_dir", type=str, required=True)
@@ -378,8 +380,8 @@ def main(args):
         return_new_adata=True,
     ) # cells x max_seq_length x embedding_dim
 
-    # remove <CLS> token and associated embeddings
-    embeddings = embeddings[:,1:,:] #.astype(np.float16)
+    # split embedding into cls and gene embeddings
+    x_cls, x = embeddings[:,[0],:], embeddings[:,1:,:]
     symbol_ids = symbol_ids[:,1:]
 
     # translate gene_ids
@@ -388,7 +390,7 @@ def main(args):
     genes_ensg = hugo2ensg_vectorized(genes_symbol)
 
     assert np.sum(genes_symbol == "cls") == 0
-    max_seq_length = embeddings.shape[1]
+    max_seq_length = x.shape[1]
     seq_lengths = [np.where(seq == '<pad>')[0][0] if np.any(seq == '<pad>') else max_seq_length for seq in genes_symbol]
 
     # load aracne network
@@ -404,19 +406,15 @@ def main(args):
     ], axis=0)
 
     # retain requested metadata
-    metadata = {}
-    for var in args.retain_obs_vars:
-        try:
-            metadata[var] = data.obs[var]
-        except KeyError:
-            print(f"Key {var} not in observational metadata...")
+    metadata = collect_metadata(data, args.retain_obs_vars)
 
     if args.mask_fraction is None:
         save_embedding(
             file=args.emb_path,
             cache=args.cache,
             cache_dir=args.emb_cache,
-            x=embeddings,
+            x=x,
+            x_cls=x_cls,
             seq_lengths=seq_lengths,
             expression=expression,
             edges=edges,
@@ -429,7 +427,8 @@ def main(args):
         file=args.emb_path,
         cache=args.cache,
         cache_dir=args.emb_cache,
-        x=embeddings,
+        x=x,
+        x_cls=x_cls,
         seq_lengths=seq_lengths,
         expression=expression,
         edges=edges,
@@ -439,8 +438,7 @@ def main(args):
     )
 
 if __name__ == "__main__":
-
-    args.cells_path = join(args.data_dir, "cells.h5ad")
+    args.cells_path = join(args.data_dir, "cells.h5ad") if args.cells_path is None else args.cells_path
     args.emb_path = join(args.out_dir, "embedding.npz")
     args.emb_cache = join(args.out_dir, "cached_embeddings")
     os.makedirs(args.out_dir, exist_ok=True)
