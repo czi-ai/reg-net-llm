@@ -264,6 +264,7 @@ class GraphTransformerDataset(torchDataset):
     def __getitem__(self, idx):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
+        print(self.cached_files[idx])
         node_indices = data.x
         ## for each mask type, create boolean mask of the same shape as node_indices
         if self.mask_fraction == 0:
@@ -313,6 +314,7 @@ class GraphTransformerDataset(torchDataset):
             item["obs_name"] = getattr(data, "obs_name", None)
 
         return item
+
 
 class GraphTransformerDataModule(pl.LightningDataModule):
     def __init__(self, data_config, collate_fn=None):
