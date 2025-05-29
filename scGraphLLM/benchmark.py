@@ -71,11 +71,36 @@ def send_to_gpu(data):
     else:
         return data  # If not a tensor or list/dict, leave unchanged
 
+
 class EmbeddingDataset(Dataset):
-    def __init__(self, paths, with_expression=False, with_metadata=False, target_metadata_key=None, label_encoder=None):
+    def __init__(
+            self, 
+            paths, 
+            with_expression=False, 
+            with_metadata=False, 
+            target_metadata_key=None, 
+            pooling=None,
+            label_encoder=None,
+        ):
+        """
+        Initialize an EmbeddingDataset.
+
+        This dataset can load from `.npz` files or directories containing cached `.pt` files. 
+        It optionally includes gene expression data, metadata, and supervised labels.
+
+        Args:
+            paths (List[str]): Paths to `.npz` files or directories with cached `.pt` files.
+            with_expression (bool, optional): If True, includes gene expression data. Defaults to False.
+            with_metadata (bool, optional): If True, loads and includes metadata. Defaults to False.
+            target_metadata_key (str, optional): Metadata key to use as target labels (e.g., 'cell_type').
+            pooling (str, optional): If None, do not perform pooling; pooling options include "mean", "max" and "both"
+            label_encoder (LabelEncoder, optional): Optional pre-initialized encoder. If None, a new one
+                is created if `target_metadata_key` is set.
+        """
         self.with_expression = with_expression
         self.target_metadata_key = target_metadata_key
-        self.with_metadata = True if self.target_metadata_key is not None else with_metadata
+        self.with_metadata = with_metadata or (self.target_metadata_key is not None) 
+        self.pooling = pooling
         self.label_encoder = label_encoder
         self.cache_mode = False
         self.samples = []
@@ -196,9 +221,22 @@ class EmbeddingDataset(Dataset):
     def __getitem__(self, idx):
         if self.cache_mode:
             item, data = self._get_cached_item(idx)
-            return item
         else:
-            return self._get_item(idx)
+            item = self._get_item(idx)
+
+        if self.pooling is None:
+            return item
+
+        x = item["x"][:item["seq_lengths"]]
+        if self.pooling == "mean":
+            x_pooled = x.mean(dim=0)
+        elif self.pooling == "max":
+            x_pooled, _ = x.max(dim=0)
+        
+        item["x"] = x_pooled
+
+        return item
+        
 
     def _get_item(self, idx):
         item = {
@@ -1155,14 +1193,6 @@ def main(args):
         fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train, n_pos_train, n_neg_train = result_train
         fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test, n_pos_test, n_neg_test = result_test
 
-        save_path = join(args.res_dir, "roc_prc.png")
-        print(f"Saving plot to: {save_path}")
-        plot_auc_roc_pr(
-            fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train,
-            fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test,
-            save_path=save_path
-        )
-
         save_data_path = join(args.res_dir, "roc_prc_data.npz")
         print(f"Saving roc prc data to: {save_data_path}")
         np.savez(save_data_path,
@@ -1186,14 +1216,18 @@ def main(args):
             n_neg_train=n_neg_train
         )
 
+        save_path = join(args.res_dir, "roc_prc.png")
+        print(f"Saving plot to: {save_path}")
+        plot_auc_roc_pr(
+            fpr_train, tpr_train, auc_score_train, p_train, r_train, apr_train,
+            fpr_test, tpr_test, auc_score_test, p_test, r_test, apr_test,
+            save_path=save_path
+        )   
+
     elif args.task in {"mlm", "expr"}:
         y_train, yhat_train, mae_train, mse_train, mape_train, r2_train, pear_train, spear_train = result_train
         y_test, yhat_test, mae_test, mse_test, mape_test, r2_test, pear_test, spear_test = result_test
         
-        save_path = join(args.res_dir, "scatter_test_pred.png")
-        print(f"Saving plot to: {save_path}")
-        plot_expression_prediction(y_test, yhat_test, r2=r2_test, save_path=save_path)
-
         save_data_path = join(args.res_dir, "mlm_data.npz")
         print(f"Saving performance data to: {save_data_path}")
         np.savez(save_data_path,
@@ -1216,23 +1250,16 @@ def main(args):
             pear_train=pear_train,
             spear_train=spear_train
         )
+
+        save_path = join(args.res_dir, "scatter_test_pred.png")
+        print(f"Saving plot to: {save_path}")
+        plot_expression_prediction(y_test, yhat_test, r2=r2_test, save_path=save_path)
+
     elif args.task == "cls":
         y_train, yhat_train, acc_train, pre_train, rec_train, f1_train = result_train
         y_test, yhat_test, acc_test, pre_test, rec_test, f1_test = result_test
         y_val, yhat_val, acc_val, pre_val, rec_val, f1_val = result_val
 
-        save_path_test = join(args.res_dir, "cm_test.png")
-        print(f"Saving test confusion matrix to: {save_path_test}")
-        plot_confusion_matrix(y_test, yhat_test, normalize=True, save_path=save_path_test)
-
-        save_path_train = join(args.res_dir, "cm_train.png")
-        print(f"Saving train confusion matrix to: {save_path_train}")
-        plot_confusion_matrix(y_train, yhat_train, normalize=True, save_path=save_path_train)
-
-        save_path_val = join(args.res_dir, "cm_val.png")
-        print(f"Saving val confusion matrix to: {save_path_val}")
-        plot_confusion_matrix(y_val, yhat_val, normalize=True, save_path=save_path_val)
-        
         save_data_path = join(args.res_dir, "cls_data.npz")
         print(f"Saving classification performance data to: {save_data_path}")
         np.savez(save_data_path,
@@ -1258,6 +1285,19 @@ def main(args):
             rec_val=rec_val,
             f1_val=f1_val
         )
+        
+        save_path_test = join(args.res_dir, "cm_test.png")
+        print(f"Saving test confusion matrix to: {save_path_test}")
+        plot_confusion_matrix(y_test, yhat_test, normalize=True, save_path=save_path_test)
+
+        save_path_train = join(args.res_dir, "cm_train.png")
+        print(f"Saving train confusion matrix to: {save_path_train}")
+        plot_confusion_matrix(y_train, yhat_train, normalize=True, save_path=save_path_train)
+
+        save_path_val = join(args.res_dir, "cm_val.png")
+        print(f"Saving val confusion matrix to: {save_path_val}")
+        plot_confusion_matrix(y_val, yhat_val, normalize=True, save_path=save_path_val)
+        
 
     with open(args.info_path, "w") as file:
         json.dump(info, file, indent=4)
