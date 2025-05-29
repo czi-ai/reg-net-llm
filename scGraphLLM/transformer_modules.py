@@ -36,92 +36,6 @@ from scGraphLLM.graph_op import _chebyshev_diffusion
 from scGraphLLM.MLP_modules import PerturbEmbedding
 from scGraphLLM._globals import *
 
-
-def rotate_half(x):
-    "from https://github.com/facebookresearch/esm"
-    x1, x2 = x.chunk(2, dim=-1)
-    return torch.cat((-x2, x1), dim=-1)
-
-
-#@torch.jit.script   # would require setting shape to static (or finite number of shapes)
-def apply_rotary_pos_emb(x, cos, sin, seq_dimension: int = -2):
-    "from https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/rotary.py"
-    # NOTE: This could probably be moved to Triton
-
-    # Handle a possible sequence length mismatch in between q and k
-    cos = cos[:x.shape[seq_dimension], :]
-    sin = sin[:x.shape[seq_dimension], :]
-    if seq_dimension == -3:
-        cos = cos[:, None, :]
-        sin = sin[:, None, :]
-    return (x * cos) + (rotate_half(x) * sin)
-
-
-class RotaryEmbeddingESM(torch.nn.Module):
-    """
-    The rotary position embeddings from RoFormer_ (Su et. al).
-    A crucial insight from the method is that the query and keys are
-    transformed by rotation matrices which depend on the relative positions.
-    Other implementations are available in the Rotary Transformer repo_ and in
-    GPT-NeoX_, GPT-NeoX was an inspiration
-    .. _RoFormer: https://arxiv.org/abs/2104.09864
-    .. _repo: https://github.com/ZhuiyiTechnology/roformer
-    .. _GPT-NeoX: https://github.com/EleutherAI/gpt-neox
-    .. warning: Please note that this embedding is not registered on purpose, as it is transformative
-        (it does not create the embedding dimension) and will likely be picked up (imported) on a ad-hoc basis
-    """
-
-    def __init__(self, dim: int, *_, **__):
-        super().__init__()
-        # Generate and save the inverse frequency buffer (non trainable)
-        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
-
-        self._seq_len_cached = None
-        self._cos_cached = None
-        self._sin_cached = None
-
-    def _update_cos_sin_tables(self, x, seq_dimension=1):
-        seq_len = x.shape[seq_dimension]
-
-        # Reset the tables if the sequence length has changed,
-        # or if we're on a new device (possibly due to tracing for instance)
-        if (seq_len != self._seq_len_cached or self._cos_cached.device != x.device
-            or self._cos_cached.dtype != x.dtype
-        ):
-            self._seq_len_cached = seq_len
-            t = torch.arange(x.shape[seq_dimension], device=x.device, dtype=self.inv_freq.dtype)
-            # Don't do einsum, it converts fp32 to fp16
-            # freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-            freqs = torch.outer(t, self.inv_freq)
-            # FlashAttention repeat (d 2) is upscaling, (2 d) is repeating channel
-            # self._cos_cached = repeat(torch.cos(freqs).to(x.dtype), '... d -> ... (d 2)')
-            # self._sin_cached = repeat(torch.sin(freqs).to(x.dtype), '... d -> ... (d 2)')
-            
-            self._cos_cached = repeat(torch.cos(freqs).to(x.dtype), '... d -> ... (2 d)')
-            self._sin_cached = repeat(torch.sin(freqs).to(x.dtype), '... d -> ... (2 d)')
-            # possibly another way:
-            # self._cos_cached = torch.cos(freqs).to(x.dtype).view(freqs.shape[0],1,freqs.shape[1]).expand(-1, 2, -1).contiguous().view(freqs.shape[0], -1)
-            # self._sin_cached = torch.sin(freqs).to(x.dtype).view(freqs.shape[0],1,freqs.shape[1]).expand(-1, 2, -1).contiguous().view(freqs.shape[0], -1)
-
-        return self._cos_cached, self._sin_cached
-
-    def forward(self, q: torch.Tensor, k: torch.Tensor,
-                seq_dimension=-2) -> Tuple[torch.Tensor, torch.Tensor]:
-        assert seq_dimension in [-2, -3]  # Either (bs, h, s, d) or (bs, s, h, d)
-        self._cos_cached, self._sin_cached = self._update_cos_sin_tables(
-            k, seq_dimension=seq_dimension
-        )
-
-        return (
-            apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached, seq_dimension),
-            apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached, seq_dimension),
-        )
-
-
-
-#@torch.jit.script  # would require setting shape to static (or finite number of shapes)
-
 ## Keeping these just in case
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -131,24 +45,6 @@ def gelu(x):
     """
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))    
 
-
-class SwiGLUB(nn.Module):
-    """SwisGLU activation with trainable per-channel beta, combine with fc1
-    Replaces the first linear layer of FFN.
-    Beta allows swish function to interpolate between linear(0) and relu(inf)
-    SWISH: A SELF-GATED ACTIVATION FUNCTION arXiv:1710.05941
-    GLU Variants Improve Transformer  arXiv:2002.05202v1
-    """
-    def __init__(self, dim_in, dim_out, bias=True):
-        super().__init__()
-        self.dim_out = dim_out
-        self.beta = nn.Parameter(torch.ones(dim_in))
-        self.linear = nn.Linear(dim_in, dim_out*2, bias=bias)
-    
-    def forward(self, x):
-        x[..., :self.dim_out] *= self.beta  # gate
-        x = self.linear(x)
-        return F.silu(x[..., :self.dim_out]) * x[..., self.dim_out:]
 
 
 class SwiGLU(nn.Module):
@@ -293,19 +189,19 @@ class FlashMHASelfMaskKV(nn.Module):
             mode="self", 
             bias=True, 
             causal=False, 
-            kernel_attn=False, 
+            diffusion_kernel_attn=False, 
             fine_tuning=False,
             use_rotary_emb=None, 
             device = None, 
             dtype = None
         ) -> None:
-        
+        #TODO: rename forward inputs for diffusion 
         super(FlashMHASelfMaskKV, self).__init__()
         assert batch_first
         factory_kwargs = {'device': device, 'dtype': dtype}
         self.d_model = d_model
         self.causal = causal
-        self.kernel_attn = kernel_attn
+        self.diffusion_kernel_attn= diffusion_kernel_attn
         self.dropout_p = attention_dropout
         self.mode = mode 
         self.num_heads = num_heads
@@ -316,8 +212,7 @@ class FlashMHASelfMaskKV(nn.Module):
         self.scaling = self.head_dim ** -0.5
         self.fine_tuning = fine_tuning
         self.use_rotary_emb = use_rotary_emb
-        if use_rotary_emb:
-            self.rot_emb = RotaryEmbeddingESM(self.head_dim)
+
         self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
         if fine_tuning:
             self.perturb_emb = PerturbEmbedding(max_hop=4, embed_dim=self.d_model, 
@@ -343,7 +238,7 @@ class FlashMHASelfMaskKV(nn.Module):
         if self.use_rotary_emb:
             q, k = self.rot_emb(q, k, seq_dimension=-3)
             
-        if self.kernel_attn:
+        if self.diffusion_kernel_attn:
             q_genes = q[:, 1:, :, :]
             q_cls = q[:, 0, :, :]
             q_genes_diffused = _chebyshev_diffusion(edge_index_list, num_nodes_list, q_genes, k=64, beta=BETA)
@@ -408,251 +303,6 @@ class FlashMHASelfMaskKV(nn.Module):
         return self.out_proj(context)
 
 
-class CustomTorchMHASelf(nn.Module):
-
-    def __init__(self, d_model, num_heads, bias=True, batch_first=True, attention_dropout=0.0,
-                 causal=False, use_rotary_emb=None,device=None, dtype=None) -> None:
-        assert batch_first
-        factory_kwargs = {'device': device, 'dtype': dtype}
-        super(CustomTorchMHASelf, self).__init__()
-        self.d_model = d_model
-        self.causal = causal
-        self.dropout_p = attention_dropout
-
-        self.num_heads = num_heads
-        assert self.d_model % num_heads == 0, "self.kdim must be divisible by num_heads"
-        self.head_dim = self.d_model // num_heads
-        # assert self.head_dim in [16, 32, 64, 128], "Only support head_dim == 16, 32, 64, or 128"
-        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
-        self.scaling = self.head_dim ** -0.5
-
-        self.use_rotary_emb = use_rotary_emb
-        if use_rotary_emb:
-            self.rot_emb = RotaryEmbeddingESM(self.head_dim)
-
-        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
-
-    def forward(self, q,k,v, key_padding_mask=None):
-        """x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
-        key_padding_mask: bool tensor of shape (batch, seqlen)
-        Credit: some elements adopted from OpenFold:
-        https://github.com/aqlaboratory/openfold/blob/feed4ae22edf899b37bee49293fff902bdd64e2d/openfold/model/primitives.py#L660
-        """
-        ## input is b h s d
-        b_size, _, s_size, _ = q.shape
-
-        if self.use_rotary_emb:
-            q, k = self.rot_emb(q, k, seq_dimension=-2)
-        # scaling happens in scaled_dot_product_attention
-        # q = q * self.scaling
-
-        if key_padding_mask is not None:
-            key_padding_mask = rearrange(~key_padding_mask, 'b s -> b 1 1 s')
-
-        
-        context = F.scaled_dot_product_attention(q, k, v, attn_mask=key_padding_mask, dropout_p=self.dropout_p, is_causal=self.causal)
-
-        context = rearrange(context, 'b h s d -> b s (h d)',
-                            b=b_size, h=self.num_heads)
-        return self.out_proj(context)
-
-# Torch version of the above
-class TorchMHAMasking(nn.Module):
-
-    def __init__(self, d_model, num_heads, bias=True, batch_first=True, attention_dropout=0.0,
-                 causal=False, use_rotary_emb=None, mask_mode=None, mask_weight=1.0, device=None, dtype=None) -> None:
-        assert batch_first
-        factory_kwargs = {'device': device, 'dtype': dtype}
-        super(CustomTorchMHASelf, self).__init__()
-        self.d_model = d_model
-        self.causal = causal
-        self.dropout_p = attention_dropout
-
-        self.num_heads = num_heads
-        assert self.d_model % num_heads == 0, "self.kdim must be divisible by num_heads"
-        self.head_dim = self.d_model // num_heads
-        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
-        self.scaling = self.head_dim ** -0.5
-
-        self.use_rotary_emb = use_rotary_emb
-        if use_rotary_emb:
-            self.rot_emb = RotaryEmbeddingESM(self.head_dim)
-
-        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
-        self.mask_mode = mask_mode
-        self.mask_weight = mask_weight
-
-    def forward(self, q, k, v, key_padding_mask=None, attention_mask=None):
-        """
-        x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
-        key_padding_mask: bool tensor of shape (batch, seqlen)
-        attention_mask: tensor of shape (1, num_heads, seqlen, seqlen)
-        """
-        b_size, _, s_size, _ = q.shape
-
-        if self.use_rotary_emb:
-            q, k = self.rot_emb(q, k, seq_dimension=-2)
-
-        if key_padding_mask is not None:
-            key_padding_mask = rearrange(~key_padding_mask, 'b s -> b 1 1 s')
-
-        attn_output_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
-        if attention_mask is not None:
-            attention_mask = torch.broadcast_to(attention_mask, (b_size, self.num_heads, s_size, s_size))
-            if self.mask_mode == 'mask':
-                attn_output_weights = attn_output_weights * attention_mask
-            elif self.mask_mode == 'bias':
-                attn_output_weights = attn_output_weights + self.mask_weight * attention_mask
-        attn_output_weights = F.softmax(attn_output_weights, dim=-1)
-        if self.dropout_p > 0.0:
-            attn_output_weights = F.dropout(attn_output_weights, p=self.dropout_p, training=self.training)
-        context = torch.matmul(attn_output_weights, v)
-        context = rearrange(context, 'b h s d -> b s (h d)', b=b_size, h=self.num_heads)
-        return self.out_proj(context)
-
-def _transform_embedding_chunks(E, W, chunk_size, alpha_w):
-    """
-    Transform embedding with a square matrix W.
-    E shape: (batch, heads, seq_len, d_model)
-    W shape: (batch, heads, seq_len, seq_len)
-    """
-    W *= alpha_w # controls strength of transformation
-    b, h, s, d = E.shape
-    k = s // chunk_size # number of equal-sized chunks
-    last_chunk_size = s % chunk_size # size of last chunk
-    K = k + 1 if last_chunk_size > 0 else k # total number of chunks
-    WE_chunks = []
-    
-    for i in range(K):
-        chunk_len_row = chunk_size if i < k else last_chunk_size
-        WE_chunk = torch.zeros((b, h, chunk_len_row, d), device=E.device, dtype=E.dtype)
-        
-        for j in range(K):
-            chunk_len_col = chunk_size if j < k else last_chunk_size
-            row_ind = slice(i * chunk_size, i  * chunk_size + chunk_len_row) # sliced row index
-            col_ind = slice(j * chunk_size, j * chunk_size + chunk_len_col) # sliced column index
-            
-            # build a chunk of W as square matrix with shape (b, h, chunk_size, chunk_size)
-            W_ij = W[..., row_ind, col_ind]
-            
-            # build a chunk of E as matrix with shape (b, h, chunk_size, d_model)
-            E_j = E[..., col_ind, :] 
-            
-            # Compute linear transformation
-            WE_chunk += torch.matmul(W_ij, E_j)
-        
-        # collect all chunks
-        WE_chunks.append(WE_chunk)
-        
-    return WE_chunks
-
-
-# Modified from: https://github.com/aqlaboratory/openfold/blob/6f63267114435f94ac0604b6d89e82ef45d94484/openfold/model/primitives.py#L705
-def _attn_chunked(
-    q: torch.Tensor, 
-    k: torch.Tensor, 
-    v: torch.Tensor, 
-    w: torch.Tensor,
-    alpha_w: float, 
-    q_chunk_size: int, 
-    kv_chunk_size: int,
-):  
-    """
-    Compute attention with memory-efficient chunking.
-    q, k, v: (batch, heads, seq_len, d_model)
-    w: (batch, heads, seq_len, seq_len)
-    """
-    no_kv = k.shape[-2]
-    o = []
-    
-    # get a list of q chunks that are transformed by w
-    q_chunks = _transform_embedding_chunks(q, w, q_chunk_size, alpha_w)
-    for q_chunk in q_chunks:
-        maxes = []
-        weights = []
-        values = []
-        
-        # for each key-value pair, chunk k and v and compute lazy softmax with LogSumExp trick on each chunk
-        for kv_s in range(0, no_kv, kv_chunk_size):
-            k_chunk = k[..., kv_s: kv_s + kv_chunk_size, :]
-            v_chunk = v[..., kv_s: kv_s + kv_chunk_size, :]
-            a = torch.einsum(
-                "...hqd,...hkd->...hqk", q_chunk, k_chunk,
-            ) 
-            max_a = torch.max(a, dim=-1, keepdim=True)[0]
-            exp_a = torch.exp(a - max_a)
-            exp_v = torch.einsum("...hvf,...hqv->...hqf", v_chunk, exp_a)
- 
-            maxes.append(max_a.detach().squeeze(-1))
-            weights.append(torch.sum(exp_a, dim=-1))
-            values.append(exp_v)
-
-        chunk_max = torch.stack(maxes, dim=-3)
-        chunk_weights = torch.stack(weights, dim=-3)
-        chunk_values = torch.stack(values, dim=-4)
-
-        global_max = torch.max(chunk_max, dim=-3, keepdim=True)[0]
-        max_diffs = torch.exp(chunk_max - global_max)
-        chunk_values = chunk_values * max_diffs.unsqueeze(-1)
-        chunk_weights = chunk_weights * max_diffs
-
-        all_values = torch.sum(chunk_values, dim=-4)
-        all_weights = torch.sum(chunk_weights.unsqueeze(-1), dim=-4)
-        q_chunk_out = all_values / all_weights
-        o.append(q_chunk_out)
-
-    return torch.cat(o, dim=2)
-
-# low memory attention with query embedding diffused by graph kernel
-class TorchMHADiffusionLM(nn.Module):
-
-    def __init__(self, d_model, num_heads, bias=True, batch_first=True, attention_dropout=0.0,
-                 use_rotary_emb=False, mask_weight=1.0, device=None, dtype=None) -> None:
-        assert batch_first
-        factory_kwargs = {'device': device, 'dtype': dtype}
-        super(CustomTorchMHASelf, self).__init__()
-        self.d_model = d_model
-        self.dropout_p = attention_dropout
-
-        self.num_heads = num_heads
-        assert self.d_model % num_heads == 0, "self.kdim must be divisible by num_heads"
-        self.head_dim = self.d_model // num_heads
-        assert (self.head_dim % 8 == 0) & (self.head_dim <= 128), 'heads divisible by 8'
-        self.scaling = self.head_dim ** -0.5
-
-        self.use_rotary_emb = use_rotary_emb
-        if use_rotary_emb:
-            self.rot_emb = RotaryEmbeddingESM(self.head_dim)
-
-        self.out_proj = nn.Linear(d_model, d_model, bias=bias, **factory_kwargs)
-        self.mask_weight = mask_weight
-
-    def forward(self, q, k, v, key_padding_mask=None, attention_mask=None):
-        """
-        x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
-        key_padding_mask: bool tensor of shape (batch, seqlen)
-        attention_mask: tensor of shape (1, num_heads, seqlen, seqlen)
-        """
-        b_size, _, s_size, _ = q.shape
-
-        if self.use_rotary_emb:
-            q, k = self.rot_emb(q, k, seq_dimension=-2)
-
-        if key_padding_mask is not None:
-            key_padding_mask = rearrange(~key_padding_mask, 'b s -> b 1 1 s')
-
-        # here attention mask is the graph kernel
-        if attention_mask is not None:
-            attention_mask = torch.broadcast_to(attention_mask, (b_size, self.num_heads, s_size, s_size))
-            attn_output_weights = _attn_chunked(q, k, v, attention_mask, alpha_w=self.mask_weight) * self.scaling
-        attn_output_weights = F.softmax(attn_output_weights, dim=-1)
-        if self.dropout_p > 0.0:
-            attn_output_weights = F.dropout(attn_output_weights, p=self.dropout_p, training=self.training)
-        context = torch.matmul(attn_output_weights, v)
-        context = rearrange(context, 'b h s d -> b s (h d)', b=b_size, h=self.num_heads)
-        return self.out_proj(context)
-
-
 class FlashTransformerEncoderLayer(nn.Module):
     """ 
     We assume transformer encoder layer is for the same sequence
@@ -667,7 +317,7 @@ class FlashTransformerEncoderLayer(nn.Module):
             activation, 
             batch_first, 
             use_flash_attn=True, 
-            use_attn_mask=False, 
+            diffusion_kernel_attn=False, 
             use_PE=False,
             fine_tuning=False, 
             layer_norm_eps=1e-5, 
@@ -689,24 +339,14 @@ class FlashTransformerEncoderLayer(nn.Module):
         else:
             raise ValueError(f'TransformerLayer {activation} not implemented')
         ## MHA
-        self.use_attn_mask = use_attn_mask
+        self.diffusion_kernel_attn = diffusion_kernel_attn
         self.fine_tuning = fine_tuning
-        if use_flash_attn:
-            self.self_attention = FlashMHASelfMaskKV(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                attention_dropout=dropout, use_rotary_emb=use_rotary_emb, 
-                kernel_attn=use_attn_mask, fine_tuning=self.fine_tuning
-            )
-        else:
-            self.self_attention = CustomTorchMHASelf(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                attention_dropout=dropout, use_rotary_emb=use_rotary_emb
-            )
-            if use_attn_mask:
-                self.self_attention = TorchMHADiffusionLM(
-                    d_model=d_model, num_heads = nhead, batch_first = batch_first, 
-                    attention_dropout=dropout, mask_weight=1e-2, use_rotary_emb=use_rotary_emb
-                )
+        
+        self.self_attention = FlashMHASelfMaskKV(
+            d_model=d_model, num_heads = nhead, batch_first = batch_first, 
+            attention_dropout=dropout, use_rotary_emb=use_rotary_emb, 
+            diffusion_kernel_attn=diffusion_kernel_attn, fine_tuning=self.fine_tuning
+        )
     
         ## Wqkv:
         self.use_PE = use_PE
@@ -736,7 +376,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         if self.use_PE:
             assert p is not None, "Positional encoding tensor must be provided when use_PE is True."
         
-        if self.use_attn_mask:
+        if self.diffusion_kernel_attn:
             assert edge_index_list is not None, "Graph must be provided if using kernelized attention"
             assert num_nodes_list is not None, "Number of nodes must be provided if using kernelized attention"
             
@@ -749,7 +389,7 @@ class FlashTransformerEncoderLayer(nn.Module):
                 q, k, v = self.wqkv(x)
             
             # mask attention weights or not
-            if self.use_attn_mask:
+            if self.diffusion_kernel_attn:
                 x = x + self.self_attention(q, k, v, 
                                             edge_index_list=edge_index_list, 
                                             num_nodes_list=num_nodes_list,
@@ -775,140 +415,6 @@ class FlashTransformerEncoderLayer(nn.Module):
                 x = x + self.self_attention(q, k, v, key_padding_mask=key_padding_mask)
 
             # linear network -> layer norm
-            x = self.ln1(x)
-            x = x + self.dropout_ff(self.ff(x))
-            x = self.ln2(x)
-        return x
-
-class FlashTransformerDecoderLayer(nn.Module):
-    """ 
-    We assume transformer encoder layer is for the same sequence
-    so use the FusedWqkv 
-    """
-    def __init__(self, d_model, nhead, dim_feedforward, dropout ,activation,batch_first,use_flash_attn = True, layer_norm_eps = 1e-5, norm_first = False, use_rotary_emb = False,lora_qv_rank = None, init_scheme = "kaiming_uniform"
-                 ):
-        super(FlashTransformerEncoderLayer, self).__init__()
-        if activation == 'esm-gelu':
-            self.activation = gelu
-        elif activation == 'gelu':
-            self.activation = nn.GELU()
-        elif activation == 'relu':
-            self.activation = nn.ReLU()
-        elif activation.startswith('SwiGLU'):  # combined with fc1
-            self.activation = None
-        else:
-            raise ValueError(f'TransformerLayer {activation} not implemented')
-        ## MHA
-        if use_flash_attn:
-            self.self_attention = FlashMHASelfMaskKV(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
-            )
-
-            self.cross_attention = FlashMHASelfMaskKV(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb,mode = "cross"
-            )
-        else:
-            self.self_attention = CustomTorchMHASelf(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
-            )
-
-            self.cross_attention = CustomTorchMHASelf(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=use_rotary_emb
-            )
-
-        ## Wqkv:
-        self.wqkv = WQKV(d_model,nhead, use_flash_attn= use_flash_attn, lora_qv_rank = lora_qv_rank,init_scheme = init_scheme, bias=True)
-        ## feedforward projection
-        if activation.startswith('SwiGLU'):
-            self.ff = eval(activation)(d_model, dim_feedforward)
-        else:
-            self.ff = nn.Sequential(
-                nn.Linear(d_model, dim_feedforward), 
-                self.activation,
-                nn.Linear(dim_feedforward, d_model) )
-        
-        self.dropout_ff = nn.Dropout(dropout)
-        self.norm_first = norm_first
-        self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-        self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-        self.ln3 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-    def forward(self, q,kv, key_padding_mask=None):
-        
-
-        if self.norm_first:
-            q = self.ln1(q)
-            x,k,v = self.wqkv(q, kv, kv)
-            x = x + self.self_attention(q,k,v,key_padding_mask)
-            x = self.ln2(x)
-            x = x + self.cross_attention(x,kv,kv,key_padding_mask)
-            x = self.ln3(x)
-            x = x + self.dropout_ff(self.ff(x))
-        else:
-            x,k,v = self.wqkv(q, kv, kv)
-            x = x + self.self_attention(q,k,v,key_padding_mask)
-            x = self.ln1(x)
-            x = x + self.cross_attention(x,kv,kv,key_padding_mask)
-            x = self.ln2(x)
-            x = x + self.dropout_ff(self.ff(x))
-            x = self.ln3(x)
-        return x     
-
-class FlashTransformerCrossAttnLayer(nn.Module):
-    """ 
-    We assume transformer encoder layer is for the same sequence
-    so use the FusedWqkv 
-    """
-    def __init__(self, d_model, nhead, dim_feedforward, dropout , activation,batch_first,use_flash_attn = True,layer_norm_eps = 1e-5, norm_first = False, use_rotary_emb = False, lora_qv_rank = None, init_scheme = "kaiming_uniform"):
-        super(FlashTransformerCrossAttnLayer, self).__init__()
-        if activation == 'esm-gelu':
-            self.activation = gelu
-        elif activation == 'gelu':
-            self.activation = nn.GELU()
-        elif activation == 'relu':
-            self.activation = nn.ReLU()
-        elif activation.startswith('SwiGLU'):  # combined with fc1
-            self.activation = None
-        else:
-            raise ValueError(f'TransformerLayer {activation} not implemented')
-        ## MHA
-        ##NOTE: rotary not set up for cross attn, always set to false
-        ## arg is just included for compatibility with other classes
-        if use_flash_attn:
-            self.cross_attention = FlashMHASelfMaskKV(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=False, mode  =  "cross"
-            )
-        else:
-            self.cross_attention = CustomTorchMHASelf(
-                d_model=d_model, num_heads = nhead, batch_first = batch_first, attention_dropout=dropout, use_rotary_emb=False
-            )
-
-        ## Wqkv:
-        self.wqkv = WQKV(d_model,nhead, use_flash_attn = use_flash_attn, bias=True, lora_qv_rank = lora_qv_rank, init_scheme = init_scheme)
-        ## feedforward projection
-        if activation.startswith('SwiGLU'):
-            self.ff = eval(activation)(d_model, dim_feedforward)
-        else:
-            self.ff = nn.Sequential(
-                nn.Linear(d_model, dim_feedforward), 
-                self.activation,
-                nn.Linear(dim_feedforward, d_model) )
-        
-        self.dropout_ff = nn.Dropout(dropout)
-        self.norm_first = norm_first
-        self.ln1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-        self.ln2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
-
-    def forward(self, x,kv, key_padding_mask = None):
-        
-        if self.norm_first:
-            x = self.ln1(x)
-            q,k,v = self.wqkv(x, kv, kv)
-            x = x + self.cross_attention(q,k,v,key_padding_mask)
-            x = self.ln2(x)
-            x = x + self.dropout_ff(self.ff(x))
-        else:
-            q,k,v = self.wqkv(x, kv, kv)
-            x = x + self.cross_attention(q,k,v,key_padding_mask)
             x = self.ln1(x)
             x = x + self.dropout_ff(self.ff(x))
             x = self.ln2(x)

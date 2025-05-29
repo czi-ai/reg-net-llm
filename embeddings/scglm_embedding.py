@@ -29,7 +29,7 @@ warnings.filterwarnings("ignore")
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
 from scGraphLLM.preprocess import quantize_cells
-from scGraphLLM.inference import infer_cell_edges_, build_class_edge_matrix, get_cell_network_df, prune_graph
+from scGraphLLM.infer_graph import infer_cell_edges_, build_class_edge_matrix, get_cell_network_df, prune_graph
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *

@@ -4,7 +4,7 @@ import os
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from utils import update_mconfig_from_dict
+
 import argparse
 import random
 import string
@@ -14,7 +14,7 @@ import pickle
 import wandb
 import glob 
 from torch_geometric.loader import DataLoader
-from wandb_checkpoint import SaveModelEveryNSteps
+
 # import torchsummary
 
 from scGraphLLM.models import LitScGraphLLM
@@ -26,13 +26,21 @@ def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
     return ''.join(random.choice(alphanumeric) for i in range(length))
 
+def update_mconfig_from_dict(mconfig, sweep_dict, ignore_keys={}):
+    sweep_keys = [k for k in sweep_dict.keys() if k not in ignore_keys ]
+    for skey in sweep_keys:
+        key_path = skey.split("-")
+        c_dict = mconfig
+        for _key in key_path[:-1]:
+            c_dict = c_dict[_key]
+        ## preserve original datatype of parameter
+        orig_dtype = type(c_dict[key_path[-1]])
+        c_dict[key_path[-1]]=orig_dtype(sweep_dict[skey])
+    return mconfig
 
 torch.set_float32_matmul_precision('medium') ## this sets the gpu precision for 32 bit ops, lower means less precision but faster 
-# filesystem = os.environ["WHEREAMI"]
+
 user = os.environ["USER"]
-filesystem = f"/hpc/mydata/{user}/GLM/"
-## ^This makes it easier to switch between different machines;  WHEREAMI is set in the .bashrc file and is the location of where we store repos; 
-## on manitou its /manitou/pmg/users/vss2134, exxmini its /data/vss2134, aws its /data and so on 
 
 parser = argparse.ArgumentParser(
                     prog='Lighting+W&B model training' ,
@@ -41,14 +49,15 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--config', type=str, help='path to model config file',required=True)
 parser.add_argument('--version', type=str, help='run version', default=None)
 parser.add_argument('--name', type=str, help='run name', default=None)
-parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, debug, predict, validate]', default=None, required=True)
+parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, predict, validate]', default=None, required=True)
 parser.add_argument('--ckpt-file', type=str, help='name of checkpoint file only, no paths', default=None)
 parser.add_argument('--override-config', type=str, help='wandb sweep style cl args that will be parsed and will update config accordingly', default=None)
+parser.add_argument("--output-dir", type=str, help="output directory for model checkpoints and logs", default=None)
 
 args = parser.parse_args()
 
 def main(args):
-    ## config is now a dict
+    
     mconfig = args.config
     mode = args.mode
     name = args.name
@@ -57,19 +66,6 @@ def main(args):
     elif mode == "predict":
         name = "predict"
         
-    if mode == "debug":
-        ### run a minimal debug run to make sure everything is working
-        print("***debug***")
-        mconfig.trainer_config.max_epochs=1
-        mconfig.data_config.train["debug"] = True
-        for i in range(len(mconfig.data_config.val)):
-            mconfig.data_config.val[i]["debug"] = True
-        mconfig.data_config.num_workers=1
-        mconfig['wandb_project']='debug'
-        name = "debug"
-        mconfig['trainer_config']['devices']=1
-        if "strategy" in mconfig.trainer_config:
-            del mconfig['trainer_config']['strategy']
     ## some lite error handling
     if mode in {"resume", "validate"}:
         ## error so we dont accidentally overwrite a run
@@ -79,7 +75,6 @@ def main(args):
     version = args.version
     if version is None:
         ## this does not break for ddp processes 
-        # version = generate_random_string(8)
         timestamp = time.time()
         current_time_UTC = time.strftime("%Y-%m-%d@%H:%M:%S", time.gmtime(timestamp))
         version = f"{name}:{current_time_UTC}"
@@ -87,7 +82,7 @@ def main(args):
     ## setup output directory
     project = mconfig['wandb_project']
     repo_name = mconfig['repo_name']
-    root_dir = f"{filesystem}/model_out"
+    root_dir = f"{args.output_dir}/model_out"
     run_dir = Path(f"{root_dir}/{version}")
     ## don't overwrite existing runs
     # if run_dir.exists() and (mode not in {"resume", "validate"}):
