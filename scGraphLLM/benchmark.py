@@ -391,26 +391,19 @@ class CellClassifier(nn.Module):
             input_dim, 
             num_classes, 
             class_weights=None, 
-            num_layers=1, 
-            use_gat=False, 
+            num_layers=1,
             lr=1e-3, 
-            hidden_dim=None, 
-            pooling="mean"
+            hidden_dim=None
         ):
         super().__init__()
         self.lr = lr
-        self.hidden_dim = hidden_dim or input_dim
-        self.use_gat = use_gat
-        self.pooling = pooling.lower()
-        self.encoder = GATEncoder(input_dim, self.hidden_dim, self.hidden_dim) if self.use_gat else None
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim or self.input_dim
         self.class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device) if class_weights is not None else None
 
         layers = []
-        in_dim = self.encoder.out_channels if self.use_gat else input_dim
+        in_dim = self.input_dim
         hidden_dim = self.hidden_dim
-
-        if self.pooling == "both":
-            in_dim *= 2
 
         for i in range(num_layers - 1):
             layers.append(nn.Linear(in_dim, hidden_dim))
@@ -420,20 +413,30 @@ class CellClassifier(nn.Module):
         layers.append(nn.Linear(in_dim, num_classes))
         self.net = nn.Sequential(*layers)
 
+    def forward(self, x):
+        # x: [B, D]
+        return self.net(x)
+
+
+class GATCellClassifier(CellClassifier):
+    def __init__(self, pooling="mean", **kwargs):
+        super().__init__(**kwargs)
+        self.pooling = pooling.lower()
+        self.encoder = GATEncoder(self.input_dim, self.hidden_dim, self.hidden_dim)
+
     def forward(self, x, edge_index_list=None, seq_lengths=None):
         # x: [B, N, D], edge_index_list: List of [2, E]
         B, N, D = x.shape
-        if self.use_gat:
-            x = x.view(B * N, D)
+        x = x.view(B * N, D)
 
-            # build batched edge_index
-            edge_indices = []
-            for i, ei in enumerate(edge_index_list):
-                edge_indices.append(ei + i * N)
-            edge_index = torch.cat(edge_indices, dim=1)
+        # build batched edge_index
+        edge_indices = []
+        for i, ei in enumerate(edge_index_list):
+            edge_indices.append(ei + i * N)
+        edge_index = torch.cat(edge_indices, dim=1)
 
-            x = self.encoder(x, edge_index)
-            x = x.view(B, N, -1)
+        x = self.encoder(x, edge_index)
+        x = x.view(B, N, -1)
 
         mask = torch.arange(N, device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
         mask_float = mask.unsqueeze(-1).float()
@@ -444,15 +447,11 @@ class CellClassifier(nn.Module):
         elif self.pooling == "max":
             x_masked[~mask] = float('-inf')
             x_pooled, _ = x_masked.max(dim=1)
-        elif self.pooling == "both":
-            x_mean = x_masked.sum(dim=1) / mask_float.sum(dim=1)
-            x_masked[~mask] = float('-inf')
-            x_max, _ = x_masked.max(dim=1)
-            x_pooled = torch.cat([x_mean, x_max], dim=1)
         else:
             raise ValueError(f"Unsupported pooling type: {self.pooling}")
 
-        return self.net(x_pooled)
+        return super().forward(x_pooled)
+
 
 class MaskedGeneExpressionPredictor(nn.Module):
     def __init__(self, embed_dim, output_dim=1):
@@ -594,7 +593,10 @@ def cell_classification_loss(
         seq_lengths=None,
         class_weights=None,
         device="cuda"):
-    logits = predictor(node_embedding, edge_index_list, seq_lengths)
+    if isinstance(predictor, GATCellClassifier):
+        logits = predictor(node_embedding, edge_index_list, seq_lengths)
+    elif isinstance(predictor, CellClassifier):
+        logits = predictor(node_embedding)
     labels = labels.to(device)
     loss = F.cross_entropy(logits, labels, weight=class_weights)
     preds = torch.argmax(logits, dim=1)
@@ -1066,10 +1068,17 @@ def main(args):
             with_metadata=True
         )
         collate_fn = partial(embedding_collate_fn, expression=True)
-    elif args.task == "cls":
+    elif args.task == "cls" and args.use_gat:
         dataset = EmbeddingDataset(
             paths=args.data_paths,
             target_metadata_key=args.target
+        )
+        collate_fn=partial(embedding_collate_fn, target_label=True)
+    elif args.task == "cls":
+        dataset = EmbeddingDataset(
+            paths=args.data_paths,
+            target_metadata_key=args.target,
+            pooling="mean"
         )
         collate_fn=partial(embedding_collate_fn, target_label=True)
     elif args.task == "mgm":
@@ -1122,14 +1131,20 @@ def main(args):
             embed_dim=dataset.embedding_dim,
             use_gat=args.use_gat
         )
+    elif args.task == "cls" and args.use_gat:
+        predictor = GATCellClassifier(
+            input_dim=dataset.embedding_dim,
+            num_classes=dataset.num_classes,
+            class_weights=dataset.class_weights if args.use_weighted_ce else None,
+            num_layers=args.cls_layers,
+            pooling="mean"
+        )
     elif args.task == "cls":
         predictor = CellClassifier(
             input_dim=dataset.embedding_dim,
             num_classes=dataset.num_classes,
             class_weights=dataset.class_weights if args.use_weighted_ce else None,
-            use_gat=args.use_gat,
-            num_layers=args.cls_layers,
-            pooling="mean"
+            num_layers=args.cls_layers, 
         )
     elif args.task == "expr":
         predictor = RobertaLMHead(
