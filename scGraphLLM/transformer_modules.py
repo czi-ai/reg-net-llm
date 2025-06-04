@@ -406,7 +406,7 @@ class FlashTransformerEncoderLayer(nn.Module):
             else:
                 q, k, v = self.wqkv(x)
             
-            if self.use_attn_mask:
+            if self.diffusion_kernel_attn:
                 x = x + self.self_attention(q, k, v, 
                                             edge_index_list=edge_index_list, 
                                             num_nodes_list=num_nodes_list,

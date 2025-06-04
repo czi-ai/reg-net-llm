@@ -1,5 +1,6 @@
 import torch
-from torch_geometric.data import Data, Dataset
+from torch_geometric.data import Data as torchGeomData
+from torch_geometric.data import Dataset as torchGeomDataset
 from torch.utils.data import Dataset as torchDataset
 from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
@@ -28,6 +29,16 @@ from scGraphLLM._globals import * ## imported global variables are all caps
 
 
 rng = default_rng(42)
+
+def send_to_gpu(data):
+    if isinstance(data, torch.Tensor):
+        return data.to('cuda')  # Send tensor to GPU
+    elif isinstance(data, list):
+        return [send_to_gpu(item) for item in data]  # Recursively process lists
+    elif isinstance(data, dict):
+        return {key: send_to_gpu(value) for key, value in data.items()}  # Recursively process dicts
+    else:
+        return data  # If not a tensor or list/dict, leave unchanged
 
 def scglm_collate_fn(batch, inference=False):
     data = {
@@ -175,13 +186,13 @@ def get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_g
         
     if with_edge_weights:
         edge_weights = torch.tensor(np.array(network_cell[MI_VALS]))
-        data = Data(
+        data = torchGeomData(
             x=node_expression, 
             edge_index=edge_list, 
             edge_weight=edge_weights
         )
     else:
-        data = Data(
+        data = torchGeomData(
             x=node_expression, 
             edge_index=edge_list
         )
@@ -249,7 +260,7 @@ def cache_aracane_and_bins(
 
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str, mask_fraction=0.15, debug:bool=False, inference=False):
+    def __init__(self, cache_dir:str, dataset_name:str=None, mask_fraction=0.15, debug:bool=False, inference=False):
         self.debug = debug
         self.inference = inference
         self.cached_files = sorted([cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")])
@@ -264,7 +275,9 @@ class GraphTransformerDataset(torchDataset):
     def __getitem__(self, idx):
         ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
-        print(self.cached_files[idx])
+        return self._item_from_tokenized_data(data)
+
+    def _item_from_tokenized_data(self, data: torchGeomData):
         node_indices = data.x
         ## for each mask type, create boolean mask of the same shape as node_indices
         if self.mask_fraction == 0:

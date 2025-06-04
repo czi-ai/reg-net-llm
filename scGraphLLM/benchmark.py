@@ -61,16 +61,6 @@ GREEN = (.2, .5, 0.3)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def send_to_gpu(data):
-    if isinstance(data, torch.Tensor):
-        return data.to('cuda')  # Send tensor to GPU
-    elif isinstance(data, list):
-        return [send_to_gpu(item) for item in data]  # Recursively process lists
-    elif isinstance(data, dict):
-        return {key: send_to_gpu(value) for key, value in data.items()}  # Recursively process dicts
-    else:
-        return data  # If not a tensor or list/dict, leave unchanged
-
 class EmbeddingDataset(Dataset):
     def __init__(self, paths, with_expression=False, with_metadata=False, target_metadata_key=None, label_encoder=None):
         self.with_expression = with_expression
@@ -1286,12 +1276,12 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--val_check_interval", type=float, default=1.0)
     parser.add_argument("--random_seed", default=0)
-    
+    args = parser.parse_args()
     # effectively, early stopping will kick in if the model has not improved after
     # seeing (batch_size * val_check_interval * patience) cells
     # e.g, trainer will stop if validation score hasn't improved after
     # training on batch_size=8 * val_check_interval=16 * patience=8 = 1024 cells
-    args = parser.parse_args()
+    
     args.res_dir = join(args.out_dir, f"{args.suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}")
     args.model_save_dir = join(args.res_dir, "model")
     args.info_path = join(args.res_dir, f"info.json")

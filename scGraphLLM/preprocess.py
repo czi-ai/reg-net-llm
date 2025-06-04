@@ -488,32 +488,34 @@ def make_metacells(
         metacells_adata.write_h5ad(save_path)
 
     return metacells_adata, qc_metrics_dict(metacells_adata)
-    
 
-def quantize_cells(gex, n_bins, method="quantile"):
-    # Create a dataframe of the same size as df with all zeros
-    expression_bins = np.zeros(gex.shape, dtype=np.int16)
-    
-    for i in range(gex.shape[0]): # Iterate through rows (single cells)
-        cell = gex.iloc[i].to_numpy(dtype=float) # Get single cell expression
-        non_zero = cell.nonzero()[0] # Get indices where expression is non-zero
-        
-        # "Binnify" the rankings
-        if np.unique(cell[non_zero]).shape[0] > 1: # More than one expression value - should be in all cases
-            if method == "quantile":
-                bins = np.quantile(cell[non_zero], np.linspace(0, 1, n_bins))[1:-1] # Get the bin edges, this gets n_bins-2 bin edges - [1:-1] so anything under/over the bottom/top edge gets added to the same bin
-            else: 
-                bins = np.linspace(min(cell[non_zero]), max(cell[non_zero]), n_bins)
-            expression_bins[i, non_zero] = np.digitize(cell[non_zero], bins, right=True) + 1 # Assign bins, add 1 as the bins are numbered from 0 up and we have already reserved 0 for zero-expression. right=True to differentiate high expression over low expression
-        
-        elif np.unique(cell[non_zero]).shape[0] == 1: # Edge case: If the cell has two expression levels (zero and x) - this shouldn't really happen
-            expression_bins[i, non_zero] = np.zeros(cell[non_zero].shape[0]) + round(n_bins/2) # Set to expressed genes to median bin value
-        else: # No update needed if cell is all zeros
-            pass
-    
-    # Convert the binned expressions to a pandas dataframe
-    expression_bins = pd.DataFrame(expression_bins, columns=gex.columns, index=gex.index)
-    return expression_bins
+
+def tokenize_expr(expr: pd.Series, n_bins: int = 5, method: str = "quantile") -> pd.Series:
+    non_zero = expr.to_numpy(dtype=float).nonzero()[0]
+    binned = np.zeros_like(expr, dtype=np.int16)
+
+    if len(non_zero) == 0:
+        return pd.Series(binned, index=expr.index)
+
+    unique_vals = np.unique(expr[non_zero])
+    if unique_vals.shape[0] > 1:
+        if method == "quantile":
+            bins = np.quantile(expr[non_zero], np.linspace(0, 1, n_bins))[1:-1]
+        else:
+            bins = np.linspace(min(expr[non_zero]), max(expr[non_zero]), n_bins)
+        binned[non_zero] = np.digitize(expr[non_zero], bins, right=True) + 1
+    else:
+        binned[non_zero] = round(n_bins / 2)
+
+    return pd.Series(binned, index=expr.index)
+
+
+def quantize_cells(gex: pd.DataFrame, n_bins: int = 5, method: str = "quantile") -> pd.DataFrame:
+    tokenized_cells = [
+        tokenize_expr(gex.iloc[i], n_bins=n_bins, method=method)
+        for i in range(len(gex))
+    ]
+    return pd.DataFrame(tokenized_cells, index=gex.index, columns=gex.columns)
 
 
 def quantize(cells, n_bins, save_path=None):    
