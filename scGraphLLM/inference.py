@@ -46,18 +46,14 @@ class GraphTokenizer:
             network: RegulatoryNetwork=None, 
             max_seq_length=2048, 
             only_expressed_genes=True, 
-            limit_regulon=None, 
-            drop_unpaired=False,
             with_edge_weights=False, 
-            n_bins=100, 
+            n_bins=NUM_BINS, 
             method="quantile"
         ):
         self.vocab = vocab
         self.network = network
         self.max_seq_length = max_seq_length
         self.only_expressed_genes = only_expressed_genes
-        self.limit_regulon = limit_regulon
-        self.drop_unpaired = drop_unpaired
         self.with_edge_weights = with_edge_weights
         self.n_bins = n_bins
         self.method = method
@@ -76,9 +72,11 @@ class GraphTokenizer:
         """
         # override original network if network is provided
         network = override_network if override_network is not None else self.network
+        
+        # limit cell to genes in the the network
+        cell_expr = cell_expr[cell_expr.index.isin(network.genes)]
 
         cell = tokenize_expr(cell_expr, n_bins=self.n_bins, method=self.method)
-
         if self.only_expressed_genes:
             cell = cell[cell != ZERO_IDX]
         
@@ -121,13 +119,11 @@ class GraphTokenizer:
         return data
     
 
-class GraphTransformerInferenceDataset(GraphTransformerDataset):
+class InferenceDataset(GraphTransformerDataset):
     def __init__(self, expression: pd.DataFrame, tokenizer: GraphTokenizer, cache_dir=None):
         self.tokenizer = tokenizer
         self.obs_names = expression.index
-        self.common_genes = sorted(list(
-            set(self.gene_to_node.keys()) & set(expression.columns) & set(self.network.genes)
-        ))
+        self.common_genes = sorted(list(set(self.gene_to_node.keys()) & set(expression.columns)))
         self.expression = expression[self.common_genes]
         super().__init__(cache_dir=cache_dir, mask_fraction=0.0)
     
@@ -151,6 +147,48 @@ class GraphTransformerInferenceDataset(GraphTransformerDataset):
         data = self.tokenizer(cell)
         item = self._item_from_tokenized_data(data)
         item["obs_name"] = self.obs_names[idx]
+        return item
+
+
+class VariableNetworksInferenceDataset(InferenceDataset):
+    def __init__(
+            self, 
+            edge_ids_list,
+            all_edges,
+            weights_list=None,
+            limit_regulon=None,
+            limit_graph=None,
+            **kwargs
+        ):
+        super().__init__(**kwargs)
+        self.edge_ids_list = edge_ids_list
+        self.all_edges = np.array(all_edges)
+        self.weights_list = weights_list
+        self.limit_regulon = limit_regulon
+        self.limit_graph = limit_graph
+    
+    @property
+    def prune_graph(self):
+        return not(self.limit_regulon is None and self.limit_graph is None)
+
+    def __getitem__(self, idx):
+        cell = self.expression.iloc[idx]
+        
+        # construct network
+        edge_ids = self.edge_ids_list[idx]
+        edges = self.all_edges[edge_ids]
+        regulators, targets = zip(*edges)
+        weights = self.weights_list[idx] if self.weights_list else None
+        cell_network = RegulatoryNetwork(
+            regulators=regulators, targets=targets, weights=weights, likelihoods=None)
+        
+        if self.prune_graph:
+            cell_network.prune(limit_regulon=self.limit_regulon, limit_graph=self.limit_graph, inplace=True)
+        
+        data = self.tokenizer(cell, cell_network)
+        item = self._item_from_tokenized_data(data)
+        item["obs_name"] = self.obs_names[idx]
+
         return item
 
 
@@ -202,7 +240,7 @@ def main(args):
     model = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_3L_4096)
 
     # Initialize dataset for inference
-    dataset = GraphTransformerInferenceDataset(
+    dataset = InferenceDataset(
         expression=adata.to_df(), 
         tokenizer=GraphTokenizer(vocab=vocab, network=network, n_bins=NUM_BINS)
     )

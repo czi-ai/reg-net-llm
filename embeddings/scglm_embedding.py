@@ -25,7 +25,8 @@ from scGraphLLM.config import *
 from scGraphLLM.data import *
 from scGraphLLM.eval_config import *
 from scGraphLLM._globals import *
-from scGraphLLM.inference import GeneVocab, GraphTokenizer 
+from scGraphLLM.inference import \
+    GeneVocab, GraphTokenizer, InferenceDataset, VariableNetworksInferenceDataset
 from scGraphLLM.network import RegulatoryNetwork
 from utils import (
     mask_values, 
@@ -34,53 +35,6 @@ from utils import (
     save_embedding,
     collect_metadata
 )
-
-def get_edges_dict(edges_list, base_index=0):
-    edges = {}
-    i = 0
-    for lst in edges_list:
-        for e in lst:
-            edges[base_index + i] = e
-            i += 1
-    return edges
-
-def run_inference_cache(
-        cache_dir,
-        expression: pd.DataFrame,
-        tokenizer: GraphTokenizer,
-        networks: Dict[str, RegulatoryNetwork] = None,
-        edge_ids_list=None,
-        mis_list=None,
-        all_edges=None,
-        limit_regulon=None,
-        limit_graph=None,
-):
-    """
-    Assign local ARACNe graph to each cell and cache each cell.
-    Works in two modes:
-      - Static network (`network`)
-      - Per-cell network (`networks`, `edge_ids_list`, `mis_list`, `all_edges`)
-    """
-    os.makedirs(cache_dir, exist_ok=True)
-    assert (tokenizer.network is None) != (networks is None), "Specify either `network` or `networks`, not both"
-    infer_networks = networks is not None
-
-    for i in range(expression.shape[0]):
-        if i % 10 == 0:
-            print(f"Processed {i+1} cells", end="\r")
-        cell = expression.iloc[i]
-        if infer_networks:
-            edge_ids = edge_ids_list[i]
-            edges = np.array(all_edges)[edge_ids]
-            regulators, targets = zip(*edges)
-            cell_network = RegulatoryNetwork(regulators=regulators, targets=targets, weights=mis_list[i],likelihoods=None)
-            cell_network.prune(limit_regulon=limit_regulon, limit_graph=limit_graph, inplace=True)
-            data = tokenizer(cell, cell_network)
-        else:
-            data = tokenizer(cell)
-        data.obs_name = expression.index[i]
-        outfile = f"{cache_dir}/cell_{i}.pt"
-        torch.save(data, outfile)
 
 
 def main(args):
@@ -99,14 +53,13 @@ def main(args):
         X_masked, masked_indices = mask_values(adata.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
         adata.X = X_masked
     
-    # Infer edges
     if args.infer_network:
         print("Inferring cell networks...")
         class_networks = {
             name: RegulatoryNetwork.from_csv(path, sep="\t")
             for name, path in args.networks.items()
         }
-        all_edges, edge_ids_list, mis_list = infer_edges(
+        all_edges, edge_ids_list, weights_list = infer_edges(
             probs=adata.obsm["class_probs"],
             classes=adata.uns["class_probs_names"],
             class_networks=class_networks,
@@ -114,33 +67,23 @@ def main(args):
             alpha=args.infer_network_alpha,
             default_alpha=(0.05 + 1) / 2
         )
-        run_inference_cache(
-            cache_dir=args.cache_dir,
-            expression=adata.to_df(),
-            tokenizer=GraphTokenizer(vocab=vocab),
-            networks=class_networks,
+        dataset = VariableNetworksInferenceDataset(
+            expression=adata.to_df(), 
+            tokenizer=GraphTokenizer(vocab=vocab, n_bins=NUM_BINS),
             edge_ids_list=edge_ids_list,
-            mis_list=mis_list,
+            weights_list=weights_list,
             all_edges=all_edges,
             limit_regulon=args.limit_regulon, 
             limit_graph=args.limit_graph
         )
     else:
-        network = RegulatoryNetwork.from_csv(args.network_path, sep="\t")
-        network.prune(limit_regulon=args.limit_regulon, limit_graph=args.limit_graph, inplace=True)
-        run_inference_cache(
-            cache_dir=args.cache_dir,
-            expression=adata.to_df(),
-            tokenizer=GraphTokenizer(vocab=vocab, network=network)
+        network = RegulatoryNetwork.from_csv(args.network_path, sep="\t")\
+            .prune(limit_regulon=args.limit_regulon, limit_graph=args.limit_graph, inplace=True)
+        
+        dataset = InferenceDataset(
+            expression=adata.to_df(), 
+            tokenizer=GraphTokenizer(vocab=vocab, network=network, n_bins=NUM_BINS)
         )
-
-    dataset = GraphTransformerDataset(
-        cache_dir=args.all_data_dir,
-        dataset_name="cells",
-        debug=False,
-        inference=True,
-        mask_fraction=0.0,
-    )
     
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -321,6 +264,16 @@ def infer_edges(probs, classes, class_networks, hard_assignment, alpha, default_
         mis_list.append(mis)
 
     return all_edges, edge_ids_list, mis_list
+
+
+def get_edges_dict(edges_list, base_index=0):
+    edges = {}
+    i = 0
+    for lst in edges_list:
+        for e in lst:
+            edges[base_index + i] = e
+            i += 1
+    return edges
 
 
 def get_scglm_embedding_vars(retain_obs_vars, adata, global_gene_to_node, global_node_to_gene, embedding_list, edges_list, masked_edges_list, non_masked_edges_list, seq_lengths, input_gene_ids_list, base_index=0):

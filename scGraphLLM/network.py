@@ -14,6 +14,7 @@ class RegulatoryNetwork(object):
             self.wt_name: weights,
             self.lik_name: likelihoods
         })
+        self.genes = set(self.regulators) & set(self.targets)
     
     @property
     def regulators(self):
@@ -30,10 +31,6 @@ class RegulatoryNetwork(object):
     @property
     def likelihoods(self):
         return self.df[self.lik_name]
-
-    @property
-    def genes(self):
-        return list(set(self.regulators) & set(self.targets))
 
     @property
     def edges(self):
