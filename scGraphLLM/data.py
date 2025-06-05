@@ -159,6 +159,7 @@ def run_cache(
         
     return (skipped, ncells)
 
+
 def get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell):
     if only_expressed_genes:
         cell = cell[cell != ZERO_IDX]
@@ -273,7 +274,6 @@ class GraphTransformerDataset(torchDataset):
         return len(self.cached_files)
 
     def __getitem__(self, idx):
-        ## mask 5% as a gene only mask; mask 5% as a rank only mask ; mask 5% as both gene and rank mask
         data = torch.load(self.cached_files[idx], weights_only=False)
         return self._item_from_tokenized_data(data)
 

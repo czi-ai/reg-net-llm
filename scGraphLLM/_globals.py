@@ -14,3 +14,10 @@ MASK_RANK_IDX=(NUM_BINS-1) + 2 # The mask token
 CLS_TOKEN = (NUM_BINS-1) + 3 # CLS token
 BETA = 0.1 # Diffusion rate
 
+# Variables from ARACNe
+REG_VALS = "regulator.values"
+TAR_VALS = "target.values"
+MI_VALS = "mi.values"
+LOGP_VALS = "log.p.values"
+SCC_VALS = "scc.values"
+WT_VALS = "weight.values"

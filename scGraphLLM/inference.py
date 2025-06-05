@@ -17,45 +17,7 @@ from scGraphLLM.preprocess import tokenize_expr
 from scGraphLLM._globals import *
 from scGraphLLM.models import GDTransformer
 from scGraphLLM.config import graph_kernel_attn_3L_4096
-
-
-class RegulatoryNetwork(object):
-    reg_name = "regulators"
-    tar_name = "targets"
-    wt_name = "weights"
-    lik_name = "likelihoods"
-    def __init__(self, regulators, targets, weights, likelihoods):
-        self.df = pd.DataFrame({
-            self.reg_name: regulators,
-            self.tar_name: targets,
-            self.wt_name: weights,
-            self.lik_name: likelihoods
-        })
-    
-    @property
-    def regulators(self):
-        return self.df.regulators
-    
-    @property
-    def targets(self):
-        return self.df.targets
-
-    @property
-    def weights(self):
-        return self.df.weights
-    
-    @property
-    def likelihoods(self):
-        return self.df.likelihoods
-
-    @property
-    def genes(self):
-        return list(set(self.regulators) & set(self.targets))
-
-    @classmethod
-    def from_csv(cls, path, reg_name="regulator.values", tar_name="target.values", wt_name="mi.values", like_name="log.p.values", **kwargs):
-        df = pd.read_csv(path, **kwargs)    
-        return cls(df[reg_name], df[tar_name], df[wt_name], df[like_name])
+from scGraphLLM.network import RegulatoryNetwork
 
 
 class GeneVocab(object):
@@ -68,7 +30,7 @@ class GeneVocab(object):
             raise ValueError("Relationship between genes and nodes is not one-to-one.")
     
     @classmethod
-    def from_csv(cls, path, gene_col="gene", node_col="node", **kwargs):
+    def from_csv(cls, path, gene_col="gene_name", node_col="idx", **kwargs):
         df = pd.read_csv(path, **kwargs)
         if gene_col not in df.columns or node_col not in df.columns:
             raise ValueError(f"Expected columns '{gene_col}' and '{node_col}' not found in CSV.")
@@ -81,7 +43,7 @@ class GraphTokenizer:
     def __init__(
             self, 
             vocab: GeneVocab,
-            network: RegulatoryNetwork, 
+            network: RegulatoryNetwork=None, 
             max_seq_length=2048, 
             only_expressed_genes=True, 
             limit_regulon=None, 
@@ -108,32 +70,35 @@ class GraphTokenizer:
     def node_to_gene(self):
         return self.vocab.node_to_gene
 
-    def __call__(self, cell_expr: pd.Series):
+    def __call__(self, cell_expr: pd.Series, override_network: RegulatoryNetwork = None):
         """
         Tokenize a single cell expression vector into a PyG Data object.
         """
+        # override original network if network is provided
+        network = override_network if override_network is not None else self.network
+
         cell = tokenize_expr(cell_expr, n_bins=self.n_bins, method=self.method)
 
         if self.only_expressed_genes:
             cell = cell[cell != ZERO_IDX]
-
+        
         # enforce max sequence length
-        if self.max_seq_length is not None and cell.shape[0] > self.max_seq_length:
+        if (self.max_seq_length is not None) and (cell.shape[0] > self.max_seq_length):
             cell = cell.nlargest(n=self.max_seq_length)
 
         # create local gene to node mapping
         local_gene_to_node = {gene:i for i, gene in enumerate(cell.index)}
 
         # Subset network to only include genes in the cell
-        network_cell = self.network.df.copy()
+        network_cell = network.df.copy()
         network_cell = network_cell[
-            network_cell[self.network.reg_name].isin(cell.index) & 
-            network_cell[self.network.tar_name].isin(cell.index)
+            network_cell[network.reg_name].isin(cell.index) & 
+            network_cell[network.tar_name].isin(cell.index)
         ]
 
         edge_index = torch.tensor(np.array([
-            network_cell[self.network.reg_name].map(local_gene_to_node).values, 
-            network_cell[self.network.tar_name].map(local_gene_to_node).values
+            network_cell[network.reg_name].map(local_gene_to_node).values, 
+            network_cell[network.tar_name].map(local_gene_to_node).values
         ]))
 
         node_expression = torch.tensor(np.array([
@@ -141,7 +106,7 @@ class GraphTokenizer:
         ]), dtype=torch.long)
             
         if self.with_edge_weights:
-            edge_weights = torch.tensor(np.array(network_cell[self.network.wt_name]))
+            edge_weights = torch.tensor(np.array(network_cell[network.wt_name]))
             data = torchGeomData(
                 x=node_expression, 
                 edge_index=edge_index, 

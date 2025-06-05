@@ -4,37 +4,29 @@ os.environ["TORCH_USE_CUDA_DSA"] = "1"  # Enable device-side assertions
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # Make CUDA errors more visible
 
 import argparse
+import gc
+import shutil
+from os.path import join, dirname, abspath
+from functools import partial
+from typing import Dict
+import warnings
+warnings.filterwarnings("ignore")
+
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import torch
-from torch.nn.utils.rnn import pad_sequence
-from anndata import AnnData
-import torch
-from torch.utils.data import DataLoader, SequentialSampler
-import os
-import sys
-import gc
-import importlib
-import shutil
-import json
-from pathlib import Path
-from tqdm import tqdm
-from typing import Optional, Union
-from os.path import join, dirname, abspath
-from functools import partial
-import warnings
-warnings.filterwarnings("ignore")
 
 from scGraphLLM._globals import * ## these define the indices for the special tokens 
 from scGraphLLM.models import GDTransformer
-from scGraphLLM.preprocess import quantize_cells
-from scGraphLLM.infer_graph import infer_cell_edges_, build_class_edge_matrix, get_cell_network_df, prune_graph
+from scGraphLLM.infer_graph import infer_cell_edges_, build_class_edge_matrix
 from scGraphLLM.benchmark import send_to_gpu, random_edge_mask
 from scGraphLLM.config import *
 from scGraphLLM.data import *
 from scGraphLLM.eval_config import *
-from scGraphLLM._globals import NUM_BINS
+from scGraphLLM._globals import *
+from scGraphLLM.inference import GeneVocab, GraphTokenizer 
+from scGraphLLM.network import RegulatoryNetwork
 from utils import (
     mask_values, 
     get_locally_indexed_edges, 
@@ -42,52 +34,6 @@ from utils import (
     save_embedding,
     collect_metadata
 )
-
-scglm_rootdir = dirname(dirname(abspath(importlib.util.find_spec("scGraphLLM").origin)))
-gene_names_map = pd.read_csv(join(scglm_rootdir, "data/gene-name-map.csv"), index_col=0)
-ensg2hugo = gene_names_map.set_index("ensg.values")["hugo.values"].to_dict()
-hugo2ensg = gene_names_map.set_index("hugo.values")["ensg.values"].to_dict()
-ensg2hugo_vectorized = np.vectorize(ensg2hugo.get)
-hugo2ensg_vectorized = np.vectorize(hugo2ensg.get)
-
-REG_VALS = "regulator.values"
-TAR_VALS = "target.values"
-MI_VALS = "mi.values"
-LOGP_VALS = "log.p.values"
-SCC_VALS = "scc.values"
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", type=str, default=None)
-parser.add_argument("--cells_path", type=str, default=None)
-parser.add_argument("--out_dir", type=str, required=True)
-parser.add_argument("--model_path", type=str, required=True)
-# parser.add_argument("--aracne_dir", type=str, required=True)
-parser.add_argument("--network_path", type=str)
-parser.add_argument("--infer_network", action="store_true")
-parser.add_argument("--hard_assignment", action="store_true")
-parser.add_argument("--limit_regulon", type=int, default=None)
-parser.add_argument("--limit_graph", type=int, default=100)
-parser.add_argument("--infer_network_alpha", type=float, default=0.25)
-parser.add_argument("--networks", type=str, default=None)
-parser.add_argument("--max_seq_length", type=int, default=2048)
-parser.add_argument("--use_masked_edges", action="store_true")
-parser.add_argument("--mask_ratio", type=float, default=0.15)
-parser.add_argument("--mask_fraction", type=float, default=None)
-parser.add_argument("--mask_value", type=float, default=1e-4)
-parser.add_argument("--retain_obs_vars", nargs="+", default=[])
-parser.add_argument("--gene_index_path", type=str, required=True)
-parser.add_argument("--sample_n_cells", type=int, default=None)
-parser.add_argument("--batch_size", type=int, default=256)
-parser.add_argument("--skip_preprocess", action="store_true")
-parser.add_argument("--cache", action="store_true")
-
-try:
-    args = parser.parse_args()
-except Exception as e:
-    print(f"Error in parsing arguments: {e}")
-    sys.exit(1)
-
-
 
 def get_edges_dict(edges_list, base_index=0):
     edges = {}
@@ -99,109 +45,50 @@ def get_edges_dict(edges_list, base_index=0):
     return edges
 
 def run_inference_cache(
-        network: pd.DataFrame,
+        cache_dir,
         expression: pd.DataFrame,
-        global_gene_to_node, 
-        cache_dir, 
-        overwrite, 
-        msplit, 
-        valsg_split_ratio, 
-        cell_type,
-        networks: dict = None,
-        classes: list = None,
-        all_edges = None,
-        edge_ids_list = None,
-        mis_list = None,
-        limit_regulon = None,
-        limit_graph = None,
-        min_genes_per_graph=MIN_GENES_PER_GRAPH, 
-        max_seq_length=None, 
-        only_expressed_genes=True,
-        with_edge_weights=True,
-        skipped=0, 
-        ncells=0, 
-        verbose=False
-    ):
+        tokenizer: GraphTokenizer,
+        networks: Dict[str, RegulatoryNetwork] = None,
+        edge_ids_list=None,
+        mis_list=None,
+        all_edges=None,
+        limit_regulon=None,
+        limit_graph=None,
+):
     """
-    Assign local ARACNe graph to each cell and cache each cell
+    Assign local ARACNe graph to each cell and cache each cell.
+    Works in two modes:
+      - Static network (`network`)
+      - Per-cell network (`networks`, `edge_ids_list`, `mis_list`, `all_edges`)
     """
-    os.makedirs(join(cache_dir, msplit), exist_ok=True)
-    # remove unknown genes
-    expression = expression[expression.columns[expression.columns.isin(global_gene_to_node)]]
-
-    assert (network is None) != (networks is None), "Either network or networks must be provided, not both"
+    os.makedirs(cache_dir, exist_ok=True)
+    assert (tokenizer.network is None) != (networks is None), "Specify either `network` or `networks`, not both"
     infer_networks = networks is not None
-    expression_genes = set(expression.columns)
-    if not infer_networks:
-        network = prune_graph(df=network, limit_regulon=limit_regulon, limit_graph=limit_graph, drop_unpaired=False)
-        network_genes = set(network[REG_VALS].to_list() + network[TAR_VALS].to_list())
-        common_genes = sorted(list(network_genes.intersection(expression_genes)))
 
     for i in range(expression.shape[0]):
-        if ncells % 10 == 0:
-            print(f"Processed {ncells} cells", end="\r")
-
-        obs_name = expression.index[i]
-        cell_number = i
-        
-        if msplit == "valSG":
-            rand = rng.random()
-            if rand > valsg_split_ratio:
-                split = "train"
-            else:
-                split = msplit
-        else:
-            split = msplit
-        
-        outfile = f"{cache_dir}/{split}/{cell_type}_{cell_number}.pt"
-        if (os.path.exists(outfile)) and (not overwrite):
-            ncells+=1
-            continue
-        
+        if i % 10 == 0:
+            print(f"Processed {i+1} cells", end="\r")
+        cell = expression.iloc[i]
         if infer_networks:
-            cell_network = get_cell_network_df(
-                edge_ids=edge_ids_list[i], 
-                pvals=None, 
-                mis=mis_list[i], 
-                all_edges=all_edges, 
-                limit_regulon=limit_regulon, 
-                limit_graph=limit_graph, 
-                require_undirected=False
-            )
-            network_genes = set(cell_network[REG_VALS].tolist() +  cell_network[TAR_VALS].tolist())
-            common_genes = sorted(list(network_genes.intersection(expression_genes)))
-        else:   
-            cell_network = network
-
-        cell: pd.Series = expression.iloc[i, :][common_genes]
-
-        if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
-            skipped += 1
-            ncells+=1
-            continue
-
-        data = get_cell_data(cell_network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
-        data.obs_name = obs_name
-        
+            edge_ids = edge_ids_list[i]
+            edges = np.array(all_edges)[edge_ids]
+            regulators, targets = zip(*edges)
+            cell_network = RegulatoryNetwork(regulators=regulators, targets=targets, weights=mis_list[i],likelihoods=None)
+            cell_network.prune(limit_regulon=limit_regulon, limit_graph=limit_graph, inplace=True)
+            data = tokenizer(cell, cell_network)
+        else:
+            data = tokenizer(cell)
+        data.obs_name = expression.index[i]
+        outfile = f"{cache_dir}/cell_{i}.pt"
         torch.save(data, outfile)
-        ncells += 1
-        
-        if verbose:
-            try:
-                torch.load(outfile)
-                print(outfile)
-            except:
-                print(outfile, "-------- Failed")
-        
-    return (skipped, ncells)
 
 
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
-    global_gene_df = pd.read_csv(args.gene_index_path)
-    global_gene_to_node = global_gene_df.set_index("gene_name")["idx"].to_dict()
-    global_node_to_gene = global_gene_df.set_index("idx")["gene_name"].to_dict()
+
+    print("Loading Gene Vocabulary")
+    vocab = GeneVocab.from_csv(args.gene_index_path)
 
     if args.sample_n_cells is not None and adata.n_obs > args.sample_n_cells:
         sc.pp.subsample(adata, n_obs=args.sample_n_cells, random_state=12345, copy=False)
@@ -212,86 +99,40 @@ def main(args):
         X_masked, masked_indices = mask_values(adata.X.astype(float), mask_prob=args.mask_fraction, mask_value=args.mask_value)
         adata.X = X_masked
     
-    ranks = quantize_cells(adata.to_df(), n_bins=NUM_BINS, method="quantile")
-    ranks = sc.AnnData(X=ranks.values, obs=adata.obs, var=adata.var, uns=adata.uns, obsm=adata.obsm)
+    # Infer edges
     if args.infer_network:
         print("Inferring cell networks...")
         class_networks = {
-            name: pd.read_csv(path, sep="\t").set_index([REG_VALS, TAR_VALS]) 
+            name: RegulatoryNetwork.from_csv(path, sep="\t")
             for name, path in args.networks.items()
         }
-        probs = ranks.obsm["class_probs"]
-        classes = ranks.uns["class_probs_names"]
-        E, MI, all_edges = build_class_edge_matrix(class_networks, classes, default_alpha=(0.05 + 1)/2)
-        all_edges_to_idx = {edge: idx for idx, edge in enumerate(all_edges)}
-        edge_ids_list, mis_list = [], []
-
-        for i, probs_i in enumerate(probs):
-            if i % 100 == 0:
-                print(f"Inferred {i:,} cell networks...")
-            
-            zero_soft_edges = False
-            if not args.hard_assignment:
-                edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, MI, alpha=args.infer_network_alpha)
-                zero_soft_edges = len(edge_ids) == 0
-
-            if args.hard_assignment or zero_soft_edges:
-                class_hat = classes[probs_i.argmax()]
-                network = class_networks[class_hat]
-                mis = network[MI_VALS].to_numpy()
-                edges = network.index.tolist()
-                edge_ids = [all_edges_to_idx[edge] for edge in edges]
-            
-            edge_ids_list.append(edge_ids)
-            mis_list.append(mis)
-
+        all_edges, edge_ids_list, mis_list = infer_edges(
+            probs=adata.obsm["class_probs"],
+            classes=adata.uns["class_probs_names"],
+            class_networks=class_networks,
+            hard_assignment=args.hard_assignment,
+            alpha=args.infer_network_alpha,
+            default_alpha=(0.05 + 1) / 2
+        )
         run_inference_cache(
-            network=None,
+            cache_dir=args.cache_dir,
+            expression=adata.to_df(),
+            tokenizer=GraphTokenizer(vocab=vocab),
             networks=class_networks,
-            classes=None,
             edge_ids_list=edge_ids_list,
             mis_list=mis_list,
             all_edges=all_edges,
-            limit_regulon=args.limit_regulon,
-            limit_graph=args.limit_graph,
-            expression=ranks.to_df(),
-            global_gene_to_node=global_gene_to_node, 
-            cache_dir=args.cache_dir,
-            overwrite=True, 
-            msplit="all", 
-            valsg_split_ratio=None, 
-            cell_type="cell",
-            max_seq_length=args.max_seq_length,
-            only_expressed_genes=True,
-            with_edge_weights=False,
-            min_genes_per_graph=-1, 
-            skipped=0, 
-            ncells=0
+            limit_regulon=args.limit_regulon, 
+            limit_graph=args.limit_graph
         )
     else:
-        network = pd.read_csv(args.network_path, sep="\t")
+        network = RegulatoryNetwork.from_csv(args.network_path, sep="\t")
+        network.prune(limit_regulon=args.limit_regulon, limit_graph=args.limit_graph, inplace=True)
         run_inference_cache(
-            network=network, 
-            expression=ranks.to_df(), 
-            global_gene_to_node=global_gene_to_node,
-            limit_regulon=args.limit_regulon,
-            limit_graph=args.limit_graph,
             cache_dir=args.cache_dir,
-            overwrite=True, 
-            msplit="all", 
-            valsg_split_ratio=None, 
-            cell_type="cell",
-            max_seq_length=args.max_seq_length,
-            only_expressed_genes=True,
-            with_edge_weights=False,
-            min_genes_per_graph=-1, 
-            skipped=0, 
-            ncells=0
+            expression=adata.to_df(),
+            tokenizer=GraphTokenizer(vocab=vocab, network=network)
         )
-
-    # reclaim memory
-    del ranks
-    gc.collect()
 
     dataset = GraphTransformerDataset(
         cache_dir=args.all_data_dir,
@@ -350,8 +191,8 @@ def main(args):
                 seq_lengths, edges, masked_edges, non_masked_edges, x_cls, x, input_genes, expression, metadata = get_scglm_embedding_vars(
                     retain_obs_vars=args.retain_obs_vars, 
                     adata=adata_original[batch["obs_name"],:],
-                    global_gene_to_node=global_gene_to_node, 
-                    global_node_to_gene=global_node_to_gene,
+                    global_gene_to_node=vocab.gene_to_node, 
+                    global_node_to_gene=vocab.node_to_gene,
                     embedding_list=embedding_list_, 
                     edges_list=edges_list_,
                     masked_edges_list=masked_edges_list_,
@@ -400,8 +241,8 @@ def main(args):
     seq_lengths, edges, x_cls, x, input_genes, expression, metadata = get_scglm_embedding_vars(
         retain_obs_vars=args.retain_obs_vars, 
         adata=adata_original,
-        global_gene_to_node=global_gene_to_node, 
-        global_node_to_gene=global_node_to_gene,  
+        global_gene_to_node=vocab.gene_to_node, 
+        global_node_to_gene=vocab.node_to_gene,  
         embedding_list=embedding_list, 
         edges_list=edges_list,
         masked_edges_list=masked_edges_list,
@@ -454,6 +295,34 @@ def main(args):
         metadata=metadata
     )
 
+
+def infer_edges(probs, classes, class_networks, hard_assignment, alpha, default_alpha):
+    E, W, all_edges = build_class_edge_matrix(class_networks, classes, default_alpha)
+    all_edges_to_idx = {edge: idx for idx, edge in enumerate(all_edges)}
+    edge_ids_list, mis_list = [], []
+
+    for i, probs_i in enumerate(probs):
+        if i % 100 == 0:
+            print(f"Inferred {i:,} cell networks...")
+            
+        zero_soft_edges = False
+        if not hard_assignment:
+            edge_ids, pvals, mis = infer_cell_edges_(probs_i, E, W, alpha=alpha)
+            zero_soft_edges = len(edge_ids) == 0
+
+        if hard_assignment or zero_soft_edges:
+            class_hat = classes[probs_i.argmax()]
+            network = class_networks[class_hat]
+            mis = network.weights
+            edges = network.edges
+            edge_ids = [all_edges_to_idx[edge] for edge in edges]
+            
+        edge_ids_list.append(edge_ids)
+        mis_list.append(mis)
+
+    return all_edges, edge_ids_list, mis_list
+
+
 def get_scglm_embedding_vars(retain_obs_vars, adata, global_gene_to_node, global_node_to_gene, embedding_list, edges_list, masked_edges_list, non_masked_edges_list, seq_lengths, input_gene_ids_list, base_index=0):
     seq_lengths = np.concatenate(seq_lengths, axis=0) # increment for cls token
     max_seq_length = max(seq_lengths)
@@ -499,9 +368,32 @@ def get_scglm_embedding_vars(retain_obs_vars, adata, global_gene_to_node, global
 
 
 if __name__ == "__main__":
-    print("Starting main execution...")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", type=str, default=None)
+    parser.add_argument("--cells_path", type=str, default=None)
+    parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--network_path", type=str)
+    parser.add_argument("--infer_network", action="store_true")
+    parser.add_argument("--hard_assignment", action="store_true")
+    parser.add_argument("--limit_regulon", type=int, default=None)
+    parser.add_argument("--limit_graph", type=int, default=100)
+    parser.add_argument("--infer_network_alpha", type=float, default=0.25)
+    parser.add_argument("--networks", type=str, default=None)
+    parser.add_argument("--max_seq_length", type=int, default=2048)
+    parser.add_argument("--use_masked_edges", action="store_true")
+    parser.add_argument("--mask_ratio", type=float, default=0.15)
+    parser.add_argument("--mask_fraction", type=float, default=None)
+    parser.add_argument("--mask_value", type=float, default=1e-4)
+    parser.add_argument("--retain_obs_vars", nargs="+", default=[])
+    parser.add_argument("--gene_index_path", type=str, required=True)
+    parser.add_argument("--sample_n_cells", type=int, default=None)
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--skip_preprocess", action="store_true")
+    parser.add_argument("--cache", action="store_true")
+    args = parser.parse_args()
+
     args.cells_path = join(args.data_dir, "cells.h5ad") if args.cells_path is None else args.cells_path
-    # args.ranks_path = join(args.data_dir, "rank_raw.csv")
     args.emb_path = join(args.out_dir, "embedding.npz")
     args.emb_cache = join(args.out_dir, "cached_embeddings")
     args.cache_dir = join(args.out_dir, "cache")
@@ -517,9 +409,3 @@ if __name__ == "__main__":
 
     main(args)
 
-
-
-
-
-
-    
