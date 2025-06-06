@@ -174,13 +174,12 @@ class VariableNetworksInferenceDataset(InferenceDataset):
     def __getitem__(self, idx):
         cell = self.expression.iloc[idx]
         
-        # construct network
+        # construct cell's network
         edge_ids = self.edge_ids_list[idx]
         edges = self.all_edges[edge_ids]
         regulators, targets = zip(*edges)
         weights = self.weights_list[idx] if self.weights_list else None
-        cell_network = RegulatoryNetwork(
-            regulators=regulators, targets=targets, weights=weights, likelihoods=None)
+        cell_network = RegulatoryNetwork(regulators=regulators, targets=targets, weights=weights, likelihoods=None)
         
         if self.prune_graph:
             cell_network.prune(limit_regulon=self.limit_regulon, limit_graph=self.limit_graph, inplace=True)
@@ -196,7 +195,7 @@ def get_cell_embeddings(dataset, model):
     # Initialize Dataloader
     dataloader = DataLoader(
         dataset, 
-        batch_size=64, 
+        batch_size=256, 
         shuffle=False, 
         collate_fn=partial(scglm_collate_fn, inference=True)
     )
@@ -208,10 +207,8 @@ def get_cell_embeddings(dataset, model):
             seq_lengths = torch.tensor(batch["num_nodes"]).to('cuda')
             obs_names = batch["obs_name"]
             x = model(send_to_gpu(batch))[0]
-            
-            # apply mean pooling
-            B, N, D = x.shape
-            mask = torch.arange(N, device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
+            # apply mean pooling along gene dimesion, respecting sequence length
+            mask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
             mask = mask.unsqueeze(-1).float()
             x_masked = x * mask
             x_pooled = x_masked.sum(dim=1) / mask.sum(dim=1)
@@ -242,7 +239,7 @@ def main(args):
     # Initialize dataset for inference
     dataset = InferenceDataset(
         expression=adata.to_df(), 
-        tokenizer=GraphTokenizer(vocab=vocab, network=network, n_bins=NUM_BINS)
+        tokenizer=GraphTokenizer(vocab=vocab, network=network)
     )
 
     # get embeddings
@@ -261,7 +258,6 @@ if __name__ == "__main__":
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
     args = parser.parse_args()
-    
     os.makedirs(args.out_dir, exist_ok=True)
 
     args.emb_path = join(args.out_dir, "embedding.h5ad")
