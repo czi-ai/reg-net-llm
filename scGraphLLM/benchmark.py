@@ -1,36 +1,21 @@
 import json
 import os 
 import glob
-from os.path import join, abspath, dirname
-from typing import Union
-from collections.abc import Iterable
-from collections import defaultdict
-import sys
 import gc
+import tqdm
+from os.path import join
+from collections import defaultdict
 from argparse import ArgumentParser
 from datetime import datetime
 from functools import partial
 from typing import Dict
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-from torch_geometric.utils import negative_sampling
-import lightning.pytorch as pl
-
-from scGraphLLM.data import *
-from scGraphLLM.GNN_modules import GATEncoder 
-from scGraphLLM.MLP_modules import LinkPredictHead, RobertaLMHead
-from scGraphLLM._globals import *
-# from scGraphLLM.flash_transformer import GDTransformer
-from scGraphLLM.config import *
-from scGraphLLM.eval_config import EMBEDDING_DATASETS, SPLIT_CONFIGS
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset, Subset, DataLoader, random_split
-
+import pandas as pd
+from scipy.stats import pearsonr, spearmanr
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import (
     roc_curve, 
     auc,
@@ -46,11 +31,22 @@ from sklearn.metrics import (
     f1_score,
     confusion_matrix
 )
-from sklearn.preprocessing import LabelEncoder
-from scipy.stats import pearsonr, spearmanr
-import tqdm
-import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import lightning.pytorch as pl
+from torch.utils.data import Subset, random_split
+from torch_geometric.utils import negative_sampling
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Dataset, Subset, DataLoader, random_split
+
+from scGraphLLM.data import *
+from scGraphLLM.GNN_modules import GATEncoder 
+from scGraphLLM.MLP_modules import LinkPredictHead, RobertaLMHead
+from scGraphLLM._globals import *
+from scGraphLLM.config import *
+from scGraphLLM.eval_config import EMBEDDING_DATASETS, SPLIT_CONFIGS
 
 # colors
 NEUTRAL = (.1, .1, .1)
@@ -60,6 +56,7 @@ PURPLE = (.3, .3, 0.5)
 GREEN = (.2, .5, 0.3)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class EmbeddingDataset(Dataset):
     def __init__(self, paths, with_expression=False, with_metadata=False, target_metadata_key=None, label_encoder=None):
@@ -897,10 +894,6 @@ def plot_confusion_matrix(y, yhat, normalize=True, title="Confusion Matrix", bas
 def print_dataset_info(name, dataset):
     print(f"{name} Dataset: Number of cells: {len(dataset):,}, Max sequence length: {dataset.max_seq_length:,}, Embedding size: {dataset.embedding_dim:,}")
 
-
-import pandas as pd
-import torch
-from torch.utils.data import Subset, random_split
 
 def split_dataset(
         dataset, 
