@@ -3,11 +3,32 @@ from scGraphLLM._globals import *
 
 
 class RegulatoryNetwork(object):
+    """
+    Represents a gene regulatory network as a dataframe of directed edges 
+    between regulators and targets, with associated weights and likelihoods.
+
+    Attributes:
+        df (pd.DataFrame): Internal representation of the network.
+        genes (set): Genes that appear both as regulators and targets.
+
+    Column naming follows constants from `_globals.py`:
+        REG_VALS, TAR_VALS, WT_VALS, LOGP_VALS
+    """
     reg_name = REG_VALS
     tar_name = TAR_VALS
     wt_name = WT_VALS
     lik_name = LOGP_VALS
+
     def __init__(self, regulators, targets, weights, likelihoods):
+        """
+        Initializes the RegulatoryNetwork object.
+
+        Args:
+            regulators (list): List of regulator gene names.
+            targets (list): List of target gene names.
+            weights (list): List of edge weights (e.g. MI values).
+            likelihoods (list): List of statistical confidences (e.g. log p-values).
+        """
         self.df = pd.DataFrame({
             self.reg_name: regulators,
             self.tar_name: targets,
@@ -38,6 +59,20 @@ class RegulatoryNetwork(object):
 
     @classmethod
     def from_csv(cls, path, reg_name="regulator.values", tar_name="target.values", wt_name="mi.values", lik_name="log.p.values", **kwargs):
+        """
+        Instantiates a RegulatoryNetwork from a CSV file.
+
+        Args:
+            path (str): Path to CSV file.
+            reg_name (str): Column name for regulators.
+            tar_name (str): Column name for targets.
+            wt_name (str): Column name for weights.
+            lik_name (str): Column name for likelihoods.
+            **kwargs: Additional arguments passed to `pd.read_csv`.
+
+        Returns:
+            RegulatoryNetwork: A new instance based on the CSV content.
+        """
         df = pd.read_csv(path, **kwargs)    
         return cls(df[reg_name], df[tar_name], df[wt_name], df[lik_name])
 
@@ -47,6 +82,17 @@ class RegulatoryNetwork(object):
         limit_graph=None,
         inplace=False
     ) -> "RegulatoryNetwork":
+        """
+        Prunes the network to reduce the number of edges.
+
+        Args:
+            limit_regulon (int, optional): Max number of targets per regulator.
+            limit_graph (int, optional): Max number of total edges (by weight).
+            inplace (bool): If True, modifies this object. Otherwise returns a new instance.
+
+        Returns:
+            RegulatoryNetwork: The pruned network (self or new).
+        """
         df = self.df if inplace else self.df.copy()
 
         if limit_regulon is not None:
