@@ -5,7 +5,6 @@ from torch_geometric.data import Data as torchGeomData
 
 from scGraphLLM.vocab import GeneVocab
 from scGraphLLM.network import RegulatoryNetwork
-from scGraphLLM.preprocess import tokenize_expr
 from scGraphLLM._globals import *
 
 
@@ -72,12 +71,16 @@ class GraphTokenizer:
         # override original network if network is provided
         network = override_network if override_network is not None else self.network
         
-        # limit cell to genes in the the network
-        cell_expr = cell_expr[cell_expr.index.isin(network.genes)]
+        # limit cell to known gene in vocabulary
+        cell_expr = cell_expr[cell_expr.index.isin(self.gene_to_node)]
 
+        # tokenize cell by by binning expression values
         cell = tokenize_expr(cell_expr, n_bins=self.n_bins, method=self.method)
         if self.only_expressed_genes:
             cell = cell[cell != ZERO_IDX]
+
+        # limit cell to genes in the the network
+        cell = cell[cell.index.isin(network.genes)]
         
         # enforce max sequence length
         if (self.max_seq_length is not None) and (cell.shape[0] > self.max_seq_length):
@@ -116,3 +119,50 @@ class GraphTokenizer:
             )
 
         return data
+
+
+def tokenize_expr(expr: pd.Series, n_bins: int = 5, method: str = "quantile") -> pd.Series:
+    """
+    Discretize (bin) a single gene expression profile into categorical bins.
+
+    Parameters
+    ----------
+    expr : pd.Series
+        Gene expression values for a single sample or cell.
+        Index should be gene names, values are raw counts or continuous expression levels.
+    n_bins : int, optional (default=5)
+        Number of bins to categorize expression values into.
+    method : str, optional (default="quantile")
+        Method to determine bin edges:
+        - "quantile": bins are based on quantiles of non-zero expression values.
+        - any other value: bins are equally spaced between min and max of non-zero values.
+
+    Returns
+    -------
+    pd.Series
+        A series of the same index as `expr` where each value is the bin number (1 to n_bins)
+        representing the discretized expression level.
+        Zero-expression genes remain assigned to bin 0.
+
+    Notes
+    -----
+    - Only non-zero expression values are binned; zero values remain zero.
+    - If there is only one unique non-zero value, it is assigned the middle bin (rounded n_bins/2).
+    """
+    non_zero_idx = expr.to_numpy(dtype=float).nonzero()[0]
+    binned = np.zeros_like(expr, dtype=np.int16)
+
+    if len(non_zero_idx) == 0:
+        return pd.Series(binned, index=expr.index)
+    
+    non_zero_expr = expr.iloc[non_zero_idx]
+    if np.unique(non_zero_expr).shape[0] > 1:
+        if method == "quantile":
+            bins = np.quantile(non_zero_expr, np.linspace(0, 1, n_bins))[1:-1]
+        else:
+            bins = np.linspace(min(non_zero_expr), max(non_zero_expr), n_bins)
+        binned[non_zero_idx] = np.digitize(non_zero_expr, bins, right=True) + 1
+    else:
+        binned[non_zero_idx] = round(n_bins / 2)
+
+    return pd.Series(binned, index=expr.index)

@@ -9,7 +9,7 @@ from scGraphLLM.data import GraphTransformerDataset, scglm_collate_fn, send_to_g
 from scGraphLLM.benchmark import send_to_gpu
 from scGraphLLM._globals import *
 from scGraphLLM.network import RegulatoryNetwork
-from scGraphLLM.tokenize import GraphTokenizer
+from scGraphLLM.tokenizer import GraphTokenizer
 
 
 class InferenceDataset(GraphTransformerDataset):

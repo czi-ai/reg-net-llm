@@ -1,11 +1,9 @@
+import os
+from os.path import join
+from argparse import ArgumentParser
 import scanpy as sc
 import anndata as ad
 
-from argparse import ArgumentParser
-import os
-from os.path import join
-
-from scGraphLLM._globals import *
 from scGraphLLM.config import graph_kernel_attn_3L_4096
 from scGraphLLM.inference import get_cell_embeddings
 from scGraphLLM import GDTransformer, RegulatoryNetwork, GeneVocab, GraphTokenizer, InferenceDataset

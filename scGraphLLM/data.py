@@ -1,10 +1,10 @@
 import torch
 from torch_geometric.data import Data as torchGeomData
-from torch_geometric.data import Dataset as torchGeomDataset
 from torch.utils.data import Dataset as torchDataset
 from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
+import scanpy as sc
 
 import os
 from os.path import join
@@ -15,7 +15,6 @@ from multiprocessing import Pool
 import argparse
 import lightning.pytorch as pl
 from torch.nn.utils.rnn import pad_sequence
-from torch_geometric.loader import DataLoader
 from numpy.random import default_rng
 import pickle
 
@@ -26,6 +25,9 @@ SCC_VALS = "scc.values"
 
 # from scGraphLLM.graph_op import spectral_PE
 from scGraphLLM._globals import * ## imported global variables are all caps 
+from scGraphLLM.network import RegulatoryNetwork
+from scGraphLLM.tokenizer import GraphTokenizer
+from scGraphLLM.vocab import GeneVocab
 
 
 rng = default_rng(42)
@@ -39,6 +41,7 @@ def send_to_gpu(data):
         return {key: send_to_gpu(value) for key, value in data.items()}  # Recursively process dicts
     else:
         return data  # If not a tensor or list/dict, leave unchanged
+
 
 def scglm_collate_fn(batch, inference=False):
     data = {
@@ -73,6 +76,7 @@ def scglm_collate_fn(batch, inference=False):
 
     return data
 
+
 def save(obj, file):
     # The above code is using the `pickle` module in Python to serialize the object `obj` and write it
     # to a file specified by the variable `file` in binary mode. This allows the object to be saved to
@@ -81,23 +85,21 @@ def save(obj, file):
         pickle.dump(obj, ofl)
     return 
 
+
 def load(file):
     with open(file, "rb") as ifl:
         return pickle.load(ifl)
 
+
 def run_cache(
-        network: pd.DataFrame, 
         expression: pd.DataFrame, 
-        global_gene_to_node, 
+        tokenizer: GraphTokenizer,
         cache_dir, 
         overwrite, 
         msplit, 
         valsg_split_ratio, 
-        cell_type, 
+        cell_type,
         min_genes_per_graph=MIN_GENES_PER_GRAPH, 
-        max_seq_length=None, 
-        only_expressed_genes=True,
-        with_edge_weights=True,
         skipped=0, 
         ncells=0, 
         verbose=False
@@ -106,16 +108,14 @@ def run_cache(
     Assign local ARACNe graph to each cell and cache each cell
     """
     os.makedirs(join(cache_dir, msplit), exist_ok=True)
-    # remove unknown genes
-    expression = expression[expression.columns[expression.columns.isin(global_gene_to_node)]]
-    # remove edges due to unknown genes
-    network = network[
-        network[REG_VALS].isin(global_gene_to_node) & 
-        network[TAR_VALS].isin(global_gene_to_node)
-    ]
-    network_genes = list(set(network[REG_VALS].to_list() + network[TAR_VALS].to_list()))
-    common_genes = list(set(network_genes).intersection(set(expression.columns)))
-    expression = expression.loc[:, common_genes]
+
+    # limit expression to known genes and genes within network
+    # note that this is not strictly necessary because the tokenizer's call method will also
+    # do this filtering, however, it is more efficient to do it batch-wise
+    expression = expression[expression.columns[
+        expression.columns.isin(tokenizer.gene_to_node) &
+        expression.columns.isin(tokenizer.network.genes)
+    ]]
 
     for i in range(expression.shape[0]):
         if ncells % 1000 == 0:
@@ -144,8 +144,7 @@ def run_cache(
             ncells+=1
             continue
 
-        # filter out genes with 0 expression
-        data = get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell)
+        data = tokenizer(cell)
         
         torch.save(data, outfile)
         ncells += 1
@@ -158,47 +157,6 @@ def run_cache(
                 print(outfile, "-------- Failed")
         
     return (skipped, ncells)
-
-
-def get_cell_data(network, global_gene_to_node, max_seq_length, only_expressed_genes, with_edge_weights, cell):
-    if only_expressed_genes:
-        cell = cell[cell != ZERO_IDX]
-
-    # enforce max sequence length
-    if max_seq_length is not None and cell.shape[0] > max_seq_length:
-        cell = cell.nlargest(n=max_seq_length)
-
-    # Subset network to only include genes in the cell
-    network_cell = network[
-        network[REG_VALS].isin(cell.index) & 
-        network[TAR_VALS].isin(cell.index)
-    ]
-
-    local_gene_to_node_index = {gene:i for i, gene in enumerate(cell.index)}
-
-    with warnings.catch_warnings(): # Suppress annoying pandas warnings
-        warnings.simplefilter("ignore")
-        edges = network_cell[[REG_VALS, TAR_VALS]]
-        edges[REG_VALS] = edges[REG_VALS].map(local_gene_to_node_index)
-        edges[TAR_VALS] = edges[TAR_VALS].map(local_gene_to_node_index)
-
-    edge_list = torch.tensor(np.array(edges[[REG_VALS, TAR_VALS]])).T
-    node_expression = torch.tensor(np.array([(global_gene_to_node[gene], cell[gene]) for gene in cell.index]), dtype=torch.long) # should this be local_gene_to_node?
-        
-    if with_edge_weights:
-        edge_weights = torch.tensor(np.array(network_cell[MI_VALS]))
-        data = torchGeomData(
-            x=node_expression, 
-            edge_index=edge_list, 
-            edge_weight=edge_weights
-        )
-    else:
-        data = torchGeomData(
-            x=node_expression, 
-            edge_index=edge_list
-        )
-        
-    return data
 
 
 def cache_aracane_and_bins(
@@ -223,28 +181,36 @@ def cache_aracane_and_bins(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         
-        ## this file maps gene names to a index: "global" bc we want the same index for each gene across all experiments 
-        global_gene_to_node = pd.read_csv(gene_to_node_file)
-        global_gene_to_node = {row.gene_name:row.idx for _,row in global_gene_to_node.iterrows()}
+        # Load Gene Vocabulary
+        vocab = GeneVocab.from_csv(gene_to_node_file, gene_col="gene_name", node_col="idx")
+
         skipped = 0
-        ncells = 0
-        
-        # msplit, ####
-        # min_genes_per_graph=MIN_GENES_PER_GRAPH, ####
-        # max_seq_length=None, ####
-        
+        ncells = 0    
         for outdir_info in aracne_outdir_info: # If single==True, then this will only run once (for that single cell-type)
             cell_type = outdir_info[0].split('/')[-2] # Get the cell-type's name that is currently being cached
             print(f"Caching: {cell_type}...")
             
             aracne_out = outdir_info[0]
-            network = pd.read_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t") # Get the ARACNe network for this cell-type
-            expression = pd.read_csv(str(Path(aracne_out).parents[0]) + "/binned_expression.csv") # Get expression (most likely in binned format)
+            
+            # Get the ARACNe network for this cell-type
+            network = RegulatoryNetwork.from_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
+            
+            # initialize graph tokenizer
+            tokenizer = GraphTokenizer(
+                vocab=vocab, 
+                network=network,
+                num_bins=NUM_BINS,
+                max_seq_length=None,
+                only_expressed_genes=True,
+                with_edge_weights=True
+            )
+
+            # get processed gene expression
+            expression = sc.read_h5ad(str(Path(aracne_out).parents[0]) + "/cells.h5ad").to_df()
 
             skipped, ncells = run_cache(
-                network=network, 
-                expression=expression, 
-                global_gene_to_node=global_gene_to_node, 
+                expression=expression,
+                tokenizer=tokenizer,
                 cache_dir=cache_dir, 
                 overwrite=overwrite, 
                 msplit=outdir_info[1], # Change this to seen_graph

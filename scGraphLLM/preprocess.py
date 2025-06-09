@@ -35,6 +35,8 @@ from typing import List
 from os.path import join, abspath, dirname
 from functools import partial
 
+from scGraphLLM.tokenizer import tokenize_expr
+
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler(sys.stdout))
@@ -488,26 +490,6 @@ def make_metacells(
         metacells_adata.write_h5ad(save_path)
 
     return metacells_adata, qc_metrics_dict(metacells_adata)
-
-
-def tokenize_expr(expr: pd.Series, n_bins: int = 5, method: str = "quantile") -> pd.Series:
-    non_zero = expr.to_numpy(dtype=float).nonzero()[0]
-    binned = np.zeros_like(expr, dtype=np.int16)
-
-    if len(non_zero) == 0:
-        return pd.Series(binned, index=expr.index)
-
-    unique_vals = np.unique(expr[non_zero])
-    if unique_vals.shape[0] > 1:
-        if method == "quantile":
-            bins = np.quantile(expr[non_zero], np.linspace(0, 1, n_bins))[1:-1]
-        else:
-            bins = np.linspace(min(expr[non_zero]), max(expr[non_zero]), n_bins)
-        binned[non_zero] = np.digitize(expr[non_zero], bins, right=True) + 1
-    else:
-        binned[non_zero] = round(n_bins / 2)
-
-    return pd.Series(binned, index=expr.index)
 
 
 def quantize_cells(gex: pd.DataFrame, n_bins: int = 5, method: str = "quantile") -> pd.DataFrame:
