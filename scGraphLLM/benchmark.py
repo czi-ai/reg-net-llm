@@ -1,14 +1,12 @@
 import json
 import os 
-import glob
 import gc
 import tqdm
 from os.path import join
-from collections import defaultdict
 from argparse import ArgumentParser
 from datetime import datetime
 from functools import partial
-from typing import Dict
+from typing import Optional, Tuple, Literal
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import pandas as pd
@@ -38,8 +36,7 @@ import torch.nn.functional as F
 import lightning.pytorch as pl
 from torch.utils.data import Subset, random_split
 from torch_geometric.utils import negative_sampling
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset, Subset, DataLoader, random_split
+from torch.utils.data import Subset, DataLoader, random_split
 
 from scGraphLLM.data import *
 from scGraphLLM.GNN_modules import GATEncoder 
@@ -47,6 +44,12 @@ from scGraphLLM.MLP_modules import LinkPredictHead, RobertaLMHead
 from scGraphLLM._globals import *
 from scGraphLLM.config import *
 from scGraphLLM.eval_config import EMBEDDING_DATASETS, SPLIT_CONFIGS
+from scGraphLLM.embedding import (
+    EmbeddingDataset, 
+    EmbeddingDatasetWithEdgeMasks, 
+    EmbeddingDatasetWithGeneMasks,
+    embedding_collate_fn
+)
 
 # colors
 NEUTRAL = (.1, .1, .1)
@@ -58,266 +61,23 @@ GREEN = (.2, .5, 0.3)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class EmbeddingDataset(Dataset):
-    def __init__(self, paths, with_expression=False, with_metadata=False, target_metadata_key=None, label_encoder=None):
-        self.with_expression = with_expression
-        self.target_metadata_key = target_metadata_key
-        self.with_metadata = True if self.target_metadata_key is not None else with_metadata
-        self.label_encoder = label_encoder
-        self.cache_mode = False
-        self.samples = []
-
-        # Determine if paths are cache directories or .npz files
-        if all(os.path.isdir(p) for p in paths):
-            self.cache_mode = True
-            self._load_cache_dirs(paths)
-        elif all(os.path.isfile(p) and p.endswith('.npz') for p in paths):
-            self._load_npz_files(paths)
-        else:
-            raise ValueError("All paths must be either directories (for cache mode) or .npz files.")
-
-    def _load_cache_dirs(self, dirs):
-        for dir_path in dirs:
-            pt_files = sorted(glob.glob(os.path.join(dir_path, 'emb_*.pt')))
-            for pt_file in pt_files:
-                self.samples.append(pt_file)
-
-        # Load metadata if required
-        self.max_seq_length = -1
-        if self.target_metadata_key is not None or self.with_metadata:
-            self.metadata = defaultdict(list)
-            for pt_file in self.samples:
-                data = torch.load(pt_file)
-                meta = data.get('metadata', {})
-                for key, value in meta.items():
-                    self.metadata[key].append(value)
-                if data["seq_lengths"] > self.max_seq_length:
-                    self.max_seq_length = data["seq_lengths"]
-                self.metadata["seq_lengths"].append(data["seq_lengths"])
-
-            print(f"Loaded metadata with keys: {self.metadata.keys()}")
-            if self.target_metadata_key is not None:
-                self.encode_labels()
-            
-    def _load_npz_files(self, paths):
-        embeddings = [np.load(p, allow_pickle=True) for p in paths]
-        self.seq_lengths = np.concatenate([emb["seq_lengths"] for emb in embeddings], axis=0)
-        self.max_seq_length = np.max(self.seq_lengths)
-        self.edges = self.aggregate_embedding_dicts(embeddings)
-        self.x = np.concatenate([
-            np.pad(emb["x"], pad_width=((0, 0), (0, self.max_seq_length - emb["x"].shape[1]), (0, 0)),
-                   mode="constant", constant_values=0)
-            for emb in embeddings
-        ], axis=0)
-
-        if self.with_expression:
-            self.expression = np.concatenate([
-                np.pad(emb["expression"], pad_width=((0, 0), (0, self.max_seq_length - emb["expression"].shape[1])),
-                       mode="constant", constant_values=0)
-                for emb in embeddings
-            ], axis=0)
-
-        if self.with_metadata:
-            metadata = defaultdict(list)
-            for emb in embeddings:
-                meta = emb["metadata"].item()
-                for key, value in meta.items():
-                    assert len(value) == emb["x"].shape[0]
-                    metadata[key].extend(value)
-                del meta
-            self.metadata = metadata
-
-            if self.target_metadata_key is not None:
-                self.encode_labels()
-        
-        return embeddings
-
-    def encode_labels(self):
-        assert self.target_metadata_key in self.metadata, f"Target key {self.target_metadata_key} not in metadata"
-        if self.label_encoder is None:
-            self.label_encoder = LabelEncoder()
-            self.y = self.label_encoder.fit_transform(self.metadata[self.target_metadata_key])
-        elif isinstance(self.label_encoder, LabelEncoder):
-            self.y = self.label_encoder.transform(self.metadata[self.target_metadata_key])
-        else:
-            raise ValueError("label_encoder must be None or a LabelEncoder instance")
-        
-        self.class_counts = pd.Series(self.metadata[self.target_metadata_key]).value_counts()[self.label_encoder.classes_]
-        class_weights = 1.0 / self.class_counts
-        self.class_weights = class_weights / class_weights.sum()
-      
-    def aggregate_embedding_dicts(self, embeddings, key="edges"):
-        res = {}
-        i = 0
-        for emb in embeddings:
-            d = emb[key].item()
-            for j, e in d.items():
-                res[i + j] = e
-            i += len(d)
-        return res
-
-    @property
-    def embedding_dim(self):
-        if self.cache_mode:
-            sample = torch.load(self.samples[0])
-            return sample['x'].shape[1]
-        else:
-            return self.x.shape[2]
-
-    @property
-    def shape(self):
-        return (int(len(self)), int(self.max_seq_length), int(self.embedding_dim))
-
-    @property
-    def num_classes(self):
-        if self.label_encoder is None:
-            return None
-        return len(self.label_encoder.classes_)
-
-    def __len__(self):
-        if self.cache_mode:
-            return len(self.samples)
-        else:
-            return len(self.x)
-
-    def __getitem__(self, idx):
-        if self.cache_mode:
-            item, data = self._get_cached_item(idx)
-            return item
-        else:
-            return self._get_item(idx)
-
-    def _get_item(self, idx):
-        item = {
-            "x": torch.tensor(self.x[idx]),
-            "seq_lengths": torch.tensor(self.seq_lengths[idx]),
-            "edges": torch.tensor(self.edges[idx])
-        }
-
-        if self.with_expression:
-            item["expression"] = torch.tensor(self.expression[idx])
-
-        if self.with_metadata:
-            item["metadata"] = {k: self.metadata[k][idx] for k in self.metadata}
-
-        if self.target_metadata_key is not None:
-            item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
-
-        return item
-
-    def _get_cached_item(self, idx):
-        data = torch.load(self.samples[idx])
-        item = {
-            "x": torch.tensor(data["x"]),
-            "seq_lengths": torch.tensor(data["seq_lengths"]),
-            "edges": torch.tensor(data["edges"])
-        }
-
-        if self.with_expression and "expression" in data:
-            item["expression"] = torch.tensor(data["expression"])
-
-        if self.with_metadata and "metadata" in data:
-            item["metadata"] = data["metadata"]
-
-        if self.target_metadata_key is not None:
-            item["y"] = torch.tensor(self.y[idx], dtype=torch.long)
-
-        return item, data
-    
-
-class EmbeddingDatasetWithEdgeMasks(EmbeddingDataset):
-    def __init__(self, paths, mask_ratio=0.15, generate_edge_masks=False, **kwargs):
-        self.mask_ratio = mask_ratio
-        self.generate_edge_masks = generate_edge_masks
-        self.mask_ratio = mask_ratio
-        super().__init__(paths, **kwargs)
-    
-    def _load_npz_files(self, paths):
-        embeddings = super()._load_npz_files(self, paths)
-        if not self.generate_edge_masks:
-            self.masked_edges = self.aggregate_embedding_dicts(embeddings, key="masked_edges")
-            self.non_masked_edges = self.aggregate_embedding_dicts(embeddings, key="non_masked_edges")
-            
-            mean_perc_masked_edges = np.mean([
-                self.masked_edges[k].shape[1] / self.edges[k].shape[1]
-                for k in self.edges.keys()
-            ])
-            print(f"Mean percentage masked edges {mean_perc_masked_edges:.3f}")
-
-            mean_perc_non_masked_edges = np.mean([
-                self.non_masked_edges[k].shape[1] / self.edges[k].shape[1]
-                for k in self.edges.keys()
-            ])
-            print(f"Mean percentage non masked edges {mean_perc_non_masked_edges:.3f}") 
-        
-        return embeddings
-
-    def _get_item(self, idx):
-        item = super()._get_item(idx)
-        if self.generate_edge_masks:
-            non_masked_edges, masked_edges = random_edge_mask(item["edges"], self.mask_ratio)
-            item["masked_edges"] = masked_edges
-            item["non_masked_edges"] = non_masked_edges
-        else:
-            item["masked_edges"] = torch.tensor(self.masked_edges[idx])
-            item["non_masked_edges"] = torch.tensor(self.non_masked_edges[idx])
-        return item
-
-    def _get_cached_item(self, idx):
-        item, data = super()._get_cached_item(idx)
-        if self.generate_edge_masks:
-            non_masked_edges, masked_edges = random_edge_mask(item["edges"], self.mask_ratio)
-            item["masked_edges"] = masked_edges
-            item["non_masked_edges"] = non_masked_edges
-        else:
-            item["masked_edges"] = data["masked_edges"]
-            item["non_masked_edges"] = data["non_masked_edges"]
-        return item, data
-    
-
-class EmbeddingDatasetWithGeneMasks(EmbeddingDataset):
-    def __init__(self, paths, **kwargs):
-        super().__init__(paths, **kwargs)
-        embedding = [np.load(path, allow_pickle=True) for path in self.paths]
-        self.masked_genes = self.aggregate_embedding_dicts(embedding, key="masks")
-        self.expression = self.aggregate_embedding_dicts(embedding, key="masked_expressions")
-    
-    def __getitem__(self, idx):
-        item = super().__getitem__(idx)
-        item["masked_genes"] = torch.tensor(self.masked_genes[idx])
-        item["masked_expression"] = torch.tensor(self.expression[idx])
-        return item
-
-
-def embedding_collate_fn(batch, expression=False, metadata=False, target_label=False, masked_genes=False, masked_edges=False):
-    collated = {
-        "x": pad_sequence([item["x"] for item in batch], batch_first=True, padding_value=0),
-        "seq_lengths": torch.tensor([item["seq_lengths"] for item in batch]),
-        "edges": [item["edges"] for item in batch]
-    }
-
-    if expression:
-        collated["expression"] = pad_sequence([item["expression"] for item in batch], batch_first=True, padding_value=0)
-    
-    if metadata:
-        collated["metadata"] = {k: [item["metadata"][k] for item in batch] for k in batch[0]["metadata"].keys()}
-
-    if target_label:
-        collated["y"] = torch.stack([item["y"] for item in batch])
-    
-    if masked_genes:
-        collated["masked_genes"] = [item["masked_genes"] for item in batch]
-        collated["masked_expression"] = [item["masked_expression"] for item in batch]
-
-    if masked_edges:
-        collated["masked_edges"] = [item["masked_edges"] for item in batch]
-        collated["non_masked_edges"] = [item["non_masked_edges"] for item in batch]
-
-    return collated
-
-
 class LinkPredictor(nn.Module):
-    """Full model: GAT Encoder + Link Prediction Head"""
+    """
+    A full link prediction model consisting of an optional GAT encoder and a link prediction head.
+
+    This model takes node features and a set of node pairs (edges) and predicts a scalar score 
+    for each pair, indicating the likelihood of a link.
+
+    Args:
+        in_channels (int): Dimension of input node features.
+        hidden_dim (int): Hidden dimension used in the GAT encoder (if enabled).
+        embed_dim (int): Output embedding dimension from the GAT encoder.
+        use_gat (bool): If True, applies a GATEncoder to input features before prediction.
+
+    Components:
+        - encoder: A GAT-based encoder (optional).
+        - link_predictor: A pairwise link prediction head operating on node embeddings.
+    """
     def __init__(self, in_channels, hidden_dim, embed_dim, use_gat=False):
         super().__init__()
         self.use_gat = use_gat
@@ -325,6 +85,18 @@ class LinkPredictor(nn.Module):
         self.link_predictor = LinkPredictHead(embed_dim, output_dim=1)
 
     def forward(self, x, edge_index, edge_pairs):
+        """
+        Forward pass for the link predictor.
+
+        Args:
+            x (Tensor): Node feature matrix of shape (B, N, D) or (B, D).
+            edge_index (Tensor): Edge index tensor of shape (2, E), representing the graph.
+            edge_pairs (Tuple[Tensor, Tensor]): Two tensors of indices representing pairs of nodes
+                                                to evaluate for link prediction.
+
+        Returns:
+            Tensor: Predicted link scores of shape (num_pairs, 1).
+        """
         if self.use_gat:
             node_embeddings = self.encoder(x, edge_index)
         else:
@@ -334,102 +106,46 @@ class LinkPredictor(nn.Module):
         return self.link_predictor(x_i, x_j)
     
 
-class CellClassifier(nn.Module):
-    def __init__(
-            self, 
-            input_dim, 
-            num_classes, 
-            class_weights=None, 
-            num_layers=1, 
-            use_gat=False, 
-            lr=1e-3, 
-            hidden_dim=None, 
-            pooling="mean"
-        ):
-        super().__init__()
-        self.lr = lr
-        self.hidden_dim = hidden_dim or input_dim
-        self.use_gat = use_gat
-        self.pooling = pooling.lower()
-        self.encoder = GATEncoder(input_dim, self.hidden_dim, self.hidden_dim) if self.use_gat else None
-        self.class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device) if class_weights is not None else None
-
-        layers = []
-        in_dim = self.encoder.out_channels if self.use_gat else input_dim
-        hidden_dim = self.hidden_dim
-
-        if self.pooling == "both":
-            in_dim *= 2
-
-        for i in range(num_layers - 1):
-            layers.append(nn.Linear(in_dim, hidden_dim))
-            layers.append(nn.GELU())
-            in_dim = hidden_dim
-
-        layers.append(nn.Linear(in_dim, num_classes))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x, edge_index_list=None, seq_lengths=None):
-        # x: [B, N, D], edge_index_list: List of [2, E]
-        B, N, D = x.shape
-        if self.use_gat:
-            x = x.view(B * N, D)
-
-            # build batched edge_index
-            edge_indices = []
-            for i, ei in enumerate(edge_index_list):
-                edge_indices.append(ei + i * N)
-            edge_index = torch.cat(edge_indices, dim=1)
-
-            x = self.encoder(x, edge_index)
-            x = x.view(B, N, -1)
-
-        mask = torch.arange(N, device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
-        mask_float = mask.unsqueeze(-1).float()
-        x_masked = x * mask_float
-
-        if self.pooling == "mean":
-            x_pooled = x_masked.sum(dim=1) / mask_float.sum(dim=1)
-        elif self.pooling == "max":
-            x_masked[~mask] = float('-inf')
-            x_pooled, _ = x_masked.max(dim=1)
-        elif self.pooling == "both":
-            x_mean = x_masked.sum(dim=1) / mask_float.sum(dim=1)
-            x_masked[~mask] = float('-inf')
-            x_max, _ = x_masked.max(dim=1)
-            x_pooled = torch.cat([x_mean, x_max], dim=1)
-        else:
-            raise ValueError(f"Unsupported pooling type: {self.pooling}")
-
-        return self.net(x_pooled)
-
-class MaskedGeneExpressionPredictor(nn.Module):
-    def __init__(self, embed_dim, output_dim=1):
-        super().__init__()
-        self.roberta_head = RobertaLMHead(embed_dim, output_dim)
-        self.mask_embedding = nn.Embedding(2, embed_dim)  # 0 = unmasked, 1 = masked
-
-    def forward(self, node_embedding: torch.Tensor, mask: torch.Tensor):
-        """
-        node_embedding: (B, G, D) - B=batch, G=genes, D=embed_dim
-        mask_status: (B, G) - LongTensor with values 0 (unmasked) or 1 (masked)
-        """
-        mask_emb = self.mask_embedding(mask)  # (B, G, D)
-        combined = node_embedding + mask_emb
-        return self.roberta_head(combined)
-
-
 def generalized_link_pred_loss(
-    predictor: LinkPredictor,
-    node_embedding,
-    edge_index_list,
-    masked_edge_index_list=None,
-    non_masked_edge_index_list=None,
-    mask_locs=None,
-    seq_lengths=None,
-    device="cuda",
-    use_bce_loss=True
-):
+        predictor,
+        node_embedding: torch.Tensor,
+        edge_index_list: list[torch.Tensor],
+        masked_edge_index_list: list[torch.Tensor] = None,
+        non_masked_edge_index_list: list[torch.Tensor] = None,
+        mask_locs: torch.Tensor = None,
+        seq_lengths: torch.Tensor = None,
+        use_bce_loss: bool = True,
+        device: str = "cuda"
+    ):
+    """
+    Computes the generalized link prediction loss over a batch of graphs with optional masking.
+
+    Args:
+        predictor: A model that takes (node_embedding, edge_index, edge_pairs) and returns
+                   edge scores in [0,1].
+        node_embedding (torch.Tensor): Node embeddings with shape (batch_size, max_seq_length, embed_dim).
+        edge_index_list (list[torch.Tensor]): List of edge_index tensors (2 x E) for each graph in batch.
+        masked_edge_index_list (list[torch.Tensor], optional): List of masked (positive) edges per graph.
+        non_masked_edge_index_list (list[torch.Tensor], optional): List of non-masked edges per graph.
+        mask_locs (torch.Tensor, optional): Boolean mask tensor (batch_size x max_seq_length) indicating masked nodes.
+        seq_lengths (torch.Tensor, optional): Lengths of sequences per batch element, shape (batch_size,).
+        device (str, optional): Device string, e.g., "cuda" or "cpu".
+        use_bce_loss (bool, optional): Whether to use binary cross-entropy loss (True) or log loss (False).
+
+    Returns:
+        loss (torch.Tensor): Scalar loss tensor.
+        all_outputs (torch.Tensor): Concatenated predicted scores for positive and negative edges.
+        all_labels (torch.Tensor): Concatenated ground truth labels (1 for positive, 0 for negative).
+    
+    Notes:
+        - If both masked_edge_index_list and non_masked_edge_index_list are provided, the positive
+          edges are considered to be the masked edges, and the operative graph used for message passing
+          is the non-masked edges.
+        - If mask_locs is provided (and masked_edge_index_list is None), edges connected to masked nodes
+          are excluded when selecting positive edges.
+        - If no masking information is provided, all edges are considered positive.
+        - Negative edges are sampled dynamically per batch element to balance positive examples.
+    """
     pos_preds, neg_preds = [], []
     pos_labels, neg_labels = [], []
     
@@ -504,13 +220,178 @@ def generalized_link_pred_loss(
     return loss, all_outputs, all_labels
 
 
+class CellClassifier(nn.Module):
+    """
+    A neural network model for classifying cells based on node embeddings.
+
+    Optionally uses a GAT encoder followed by a customizable MLP. Supports
+    various pooling strategies (mean, max, or both) over the sequence of nodes.
+
+    Args:
+        input_dim (int): Dimension of input node features.
+        num_classes (int): Number of output classes.
+        class_weights (Optional[List[float]]): Class weights for loss computation (for imbalanced data).
+        num_layers (int): Number of layers in the classification head MLP.
+        use_gat (bool): Whether to use a GAT encoder before classification.
+        lr (float): Learning rate (stored for convenience).
+        hidden_dim (Optional[int]): Hidden layer size; defaults to `input_dim` if not provided.
+        pooling (str): Pooling strategy to aggregate node features. Options: "mean", "max", "both".
+    """
+    def __init__(
+            self, 
+            input_dim: int, 
+            num_classes: int, 
+            class_weights: Optional[List[float]] = None, 
+            num_layers: int = 1, 
+            use_gat: bool = False, 
+            lr: float = 1e-3, 
+            hidden_dim: Optional[int] = None, 
+            pooling: Literal["mean", "max", "both"] = "mean"
+        ):
+        super().__init__()
+        self.lr = lr
+        self.hidden_dim = hidden_dim or input_dim
+        self.use_gat = use_gat
+        self.pooling = pooling.lower()
+        self.encoder = GATEncoder(input_dim, self.hidden_dim, self.hidden_dim) if self.use_gat else None
+        self.class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device) if class_weights is not None else None
+
+        layers = []
+        in_dim = self.encoder.out_channels if self.use_gat else input_dim
+        hidden_dim = self.hidden_dim
+
+        if self.pooling == "both":
+            in_dim *= 2
+
+        for i in range(num_layers - 1):
+            layers.append(nn.Linear(in_dim, hidden_dim))
+            layers.append(nn.GELU())
+            in_dim = hidden_dim
+
+        layers.append(nn.Linear(in_dim, num_classes))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x, edge_index_list=None, seq_lengths=None):
+        """
+        Forward pass through the model.
+
+        Args:
+            x (Tensor): Input node features of shape (B, N, D).
+            edge_index_list (Optional[List[Tensor]]): List of edge indices per sample.
+            seq_lengths (Optional[Tensor]): Sequence lengths for each sample in the batch.
+
+        Returns:
+            Tensor: Logits of shape (B, num_classes).
+        """
+        B, N, D = x.shape
+        if self.use_gat:
+            x = x.view(B * N, D)
+
+            # build batched edge_index
+            edge_indices = []
+            for i, ei in enumerate(edge_index_list):
+                edge_indices.append(ei + i * N)
+            edge_index = torch.cat(edge_indices, dim=1)
+
+            x = self.encoder(x, edge_index)
+            x = x.view(B, N, -1)
+
+        mask = torch.arange(N, device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
+        mask_float = mask.unsqueeze(-1).float()
+        x_masked = x * mask_float
+
+        if self.pooling == "mean":
+            x_pooled = x_masked.sum(dim=1) / mask_float.sum(dim=1)
+        elif self.pooling == "max":
+            x_masked[~mask] = float('-inf')
+            x_pooled, _ = x_masked.max(dim=1)
+        elif self.pooling == "both":
+            x_mean = x_masked.sum(dim=1) / mask_float.sum(dim=1)
+            x_masked[~mask] = float('-inf')
+            x_max, _ = x_masked.max(dim=1)
+            x_pooled = torch.cat([x_mean, x_max], dim=1)
+        else:
+            raise ValueError(f"Unsupported pooling type: {self.pooling}")
+
+        return self.net(x_pooled)
+
+
+def cell_classification_loss(
+        predictor,
+        node_embedding: torch.Tensor,
+        edge_index_list: List[torch.Tensor],
+        labels: torch.Tensor,
+        seq_lengths: Optional[torch.Tensor] = None,
+        class_weights: Optional[torch.Tensor] = None,
+        device: str = "cuda"
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Compute the cross-entropy loss for cell classification and return predictions.
+
+    Args:
+        predictor: A model that outputs class logits from node embeddings and edges.
+        node_embedding (Tensor): Node embeddings of shape (N, F).
+        edge_index_list (List[Tensor]): List of edge index tensors per sample or batch.
+        labels (Tensor): Ground-truth class labels of shape (N,).
+        seq_lengths (Optional[Tensor]): Optional sequence lengths, if required by the predictor.
+        class_weights (Optional[Tensor]): Class weights tensor for imbalanced classification.
+        device (str): Device to compute the loss on (e.g., "cuda" or "cpu").
+
+    Returns:
+        Tuple[Tensor, Tensor, Tensor]:
+            - loss: Cross-entropy loss tensor (scalar).
+            - preds: Predicted class indices.
+            - labels: Ground truth labels (moved to target device).
+    """
+    logits = predictor(node_embedding, edge_index_list, seq_lengths)
+    labels = labels.to(device)
+    loss = F.cross_entropy(logits, labels, weight=class_weights)
+    preds = torch.argmax(logits, dim=1)
+    return loss, preds, labels
+    
+
+class MaskedGeneExpressionPredictor(nn.Module):
+    def __init__(self, embed_dim, output_dim=1):
+        super().__init__()
+        self.roberta_head = RobertaLMHead(embed_dim, output_dim)
+        self.mask_embedding = nn.Embedding(2, embed_dim)  # 0 = unmasked, 1 = masked
+
+    def forward(self, node_embedding: torch.Tensor, mask: torch.Tensor):
+        """
+        node_embedding: (B, G, D) - B=batch, G=genes, D=embed_dim
+        mask_status: (B, G) - LongTensor with values 0 (unmasked) or 1 (masked)
+        """
+        mask_emb = self.mask_embedding(mask)  # (B, G, D)
+        combined = node_embedding + mask_emb
+        return self.roberta_head(combined)
+
+
 def masked_gene_expression_pred_loss(
         predictor: nn.Module, 
         node_embedding: torch.Tensor,
-        masked_genes: Dict,
+        masked_genes: dict,
         masked_expression: torch.Tensor,
         device="cuda"
     ):
+    """
+    Computes mean squared error loss for predicting masked gene expression values.
+
+    Args:
+        predictor (nn.Module): Model that predicts gene expression from node embeddings and a mask.
+        node_embedding (torch.Tensor): Node embeddings tensor of shape (batch_size, num_genes, embed_dim).
+        masked_genes (dict): Dictionary mapping batch indices to lists or tensors of masked gene indices.
+        masked_expression (torch.Tensor): Concatenated true expression values corresponding to masked genes.
+        device (str, optional): Device on which tensors are allocated (default: "cuda").
+
+    Returns:
+        loss (torch.Tensor): Mean squared error loss computed only on masked gene predictions.
+        yhat_masked (torch.Tensor): Predicted expression values for masked genes.
+        y_masked (torch.Tensor): Ground truth expression values for masked genes.
+    
+    Notes:
+        - The mask is constructed as a binary tensor with 1 indicating masked gene locations.
+        - Only predictions at masked gene positions are used to compute the loss.
+    """
     mask_index = torch.tensor([(i, idx.item()) for i, indices in enumerate(masked_genes) for idx in indices])
     mask = torch.zeros(len(masked_genes), node_embedding.shape[1], dtype=torch.int, device=device)
     mask[mask_index[:,0], mask_index[:,1]] = 1
@@ -521,12 +402,31 @@ def masked_gene_expression_pred_loss(
     loss = nn.MSELoss()(yhat_masked, y_masked)
     return loss, yhat_masked, y_masked
 
+
 def gene_expression_pred_loss(
         predictor: nn.Module, 
         node_embedding: torch.Tensor,
         expression: torch.Tensor,
         seq_lengths: torch.Tensor
     ):
+    """
+    Computes mean squared error loss between predicted and true gene expression values
+    for valid (non-padded) sequence positions.
+
+    Args:
+        predictor (nn.Module): Model that predicts gene expression from node embeddings.
+        node_embedding (torch.Tensor): Tensor of node embeddings with shape [batch_size, seq_length, embed_dim].
+        expression (torch.Tensor): Ground truth gene expression tensor with shape [batch_size, seq_length].
+        seq_lengths (torch.Tensor): 1D tensor containing valid sequence lengths per batch element.
+
+    Returns:
+        loss (torch.Tensor): Mean squared error loss over valid gene positions.
+        yhat (torch.Tensor): Predicted gene expression values corresponding to valid positions.
+        y (torch.Tensor): True gene expression values corresponding to valid positions.
+
+    Notes:
+        - Padding positions beyond the valid sequence length are masked out and excluded from the loss.
+    """
     device = node_embedding.device
     mask = torch.arange(node_embedding.shape[1], device=device).unsqueeze(0) < seq_lengths.unsqueeze(1)
     pred = predictor(node_embedding).squeeze(-1) # From [B, L, 1] → [B, L]
@@ -535,22 +435,41 @@ def gene_expression_pred_loss(
     loss = nn.MSELoss()(yhat, y)
     return loss, yhat, y
 
-def cell_classification_loss(
-        predictor,
-        node_embedding,
-        edge_index_list,
-        labels,
-        seq_lengths=None,
-        class_weights=None,
-        device="cuda"):
-    logits = predictor(node_embedding, edge_index_list, seq_lengths)
-    labels = labels.to(device)
-    loss = F.cross_entropy(logits, labels, weight=class_weights)
-    preds = torch.argmax(logits, dim=1)
-    return loss, preds, labels
-
 
 class FineTuneModule(pl.LightningModule):
+    """
+    PyTorch Lightning module for fine-tuning models on various biological tasks.
+
+    Supports tasks:
+      - "link": Link prediction using generalized_link_pred_loss.
+      - "mgm": Masked graph modeling (graph edge prediction) using generalized_link_pred_loss.
+      - "cls": Cell classification using cross-entropy loss.
+      - "expr": Gene expression prediction using mean squared error loss.
+      - "mlm": Masked gene expression prediction using mean squared error loss.
+
+    Args:
+        model (nn.Module): The model to be fine-tuned.
+        task (str): Task identifier; one of {"link", "mgm", "cls", "expr", "mlm"}.
+        lr (float, optional): Learning rate for the optimizer. Default: 1e-3.
+        weight_decay (float, optional): Weight decay (L2 regularization) for optimizer. Default: 1e-4.
+
+    Methods:
+        training_step(batch, batch_idx):
+            Executes one training step and logs training loss.
+
+        validation_step(batch, batch_idx):
+            Executes one validation step and logs validation loss.
+
+        predict_step(batch, batch_idx):
+            Performs prediction during inference, returns predictions and targets.
+
+        _step(batch):
+            Internal method to compute loss and predictions for the given batch
+            depending on the task type.
+
+        configure_optimizers():
+            Sets up Adam optimizer with specified learning rate and weight decay.
+    """
     def __init__(self, model, task, lr=1e-3, weight_decay=1e-4):
         super().__init__()
         self.model = model
@@ -623,6 +542,7 @@ class FineTuneModule(pl.LightningModule):
             "frequency": 1
         }
 
+
 def fine_tune_pl(
         ft_model, 
         train_dataloader, 
@@ -636,6 +556,25 @@ def fine_tune_pl(
         patience,
         val_dataloader=None
     ):
+    """
+    Fine-tunes a given PyTorch model using PyTorch Lightning with early stopping and checkpointing.
+
+    Args:
+        ft_model (nn.Module): The model to be fine-tuned.
+        train_dataloader (DataLoader): DataLoader for training data.
+        task (str): Task type (e.g., "link", "mgm", "cls", "expr", "mlm") passed to FineTuneModule.
+        save_dir (str): Directory path to save model checkpoints.
+        lr (float): Learning rate for the optimizer.
+        weight_decay (float): Weight decay (L2 regularization) for the optimizer.
+        num_epochs (int): Maximum number of epochs for training.
+        max_num_batches (int or float): Maximum number or fraction of batches per epoch to train on (for debugging or partial training).
+        val_check_interval (float or int): Interval (in fraction or batches) to check validation performance.
+        patience (int): Number of validation checks with no improvement before early stopping triggers.
+        val_dataloader (DataLoader, optional): DataLoader for validation data. If None, no validation will be performed.
+
+    Returns:
+        FineTuneModule: The trained FineTuneModule instance loaded with the best checkpoint if available, otherwise the last trained model.
+    """
     early_stop_callback = pl.callbacks.EarlyStopping(
         monitor="val_loss", 
         mode="min",
@@ -689,43 +628,19 @@ def fine_tune_pl(
     return best_model
 
 
-def random_edge_mask(edge_index, mask_ratio=0.15):
-    device = edge_index.device
-    src = edge_index[0].tolist()
-    dst = edge_index[1].tolist()
-    E = edge_index.shape[1]
-    
-    pairs = {}
-    for i in range(E):
-        u, v = src[i], dst[i]
-        mn, mx = (u, v) if u <= v else (v, u)
-        if (mn, mx) not in pairs:
-            pairs[(mn, mx)] = []
-        pairs[(mn, mx)].append(i)
-    
-    unique_pairs = list(pairs.keys())  
-    num_unique = len(unique_pairs)
-    num_mask = int(mask_ratio * num_unique)
-    
-    perm = torch.randperm(num_unique, device=device)
-    masked_pairs = [unique_pairs[i.item()] for i in perm[:num_mask]]
-    masked_indices = []
+def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):
+    """
+    Generates predictions from a fine-tuned model on a given dataset and computes evaluation metrics based on the task.
 
-    for pair in masked_pairs:
-        masked_indices.extend(pairs[pair]) 
-
-    masked_indices = torch.tensor(masked_indices, device=device, dtype=torch.long)
-    # get non_masked indices
-    all_indices = torch.arange(E, device=device)
-    non_masked_indices = all_indices[~torch.isin(all_indices, masked_indices)]
-
-    masked_edge_index = edge_index[:,masked_indices]
-    non_masked_edge_index = edge_index[:,non_masked_indices]
-
-    return non_masked_edge_index, masked_edge_index
-
-
-def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):    
+    Args:
+        model (FineTuneModule): The fine-tuned PyTorch Lightning module to use for prediction.
+        dataloader (DataLoader): DataLoader providing batches of data for prediction.
+        task (str): The prediction task type. Supported values:
+            - "link" or "mgm": link prediction tasks (binary classification on edges).
+            - "expr" or "mlm": regression tasks predicting gene expression.
+            - "cls": cell classification task (multi-class classification).
+        max_num_batches (int or None): Optional maximum number of batches to predict on. If None, predict on all batches.
+    """
     model.eval().to("cuda")
     yhat = []
     y = []
@@ -789,13 +704,12 @@ def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):
         y = label_encoder.inverse_transform(y)
         yhat = label_encoder.inverse_transform(yhat)
 
-        return y, yhat, acc, pre_w, rec_w, f1_w
+        return y, yhat, acc, pre_mac, rec_mac, f1_mac
     
 
 def plot_auc_roc_pr(fpr_train, tpr_train, auc_score_train, precision_train, recall_train, apr_train,
                     fpr_test, tpr_test, auc_score_test, precision_test, recall_test, apr_test, 
                     save_path=None):
-
     plt.style.use("ggplot")
     fig, ax = plt.subplots(1, 2, figsize=(18, 8))
 
@@ -826,7 +740,7 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
     fig, ax = plt.subplots(figsize=(14, 14))
     ax.scatter(y, yhat, alpha=0.6, edgecolor='k', label='Predictions')
 
-        # Reference line: y = x
+    # Reference line: y = x
     min_val = min(np.min(y), np.min(yhat))
     max_val = max(np.max(y), np.max(yhat))
     ax.plot([min_val, max_val], [min_val, max_val], '--', label='Perfect prediction (y = x)')
@@ -834,7 +748,6 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
     ax.text(0.95, 0.05, f"R² = {r2:.3f}", transform=ax.transAxes,
                 fontsize=20, verticalalignment='bottom', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.6))
-
 
     # Labels and formatting
     ax.set_xlabel("Actual Expression", fontsize=20)
@@ -849,7 +762,6 @@ def plot_expression_prediction(y, yhat, r2, save_path=None):
 
 
 def plot_confusion_matrix(y, yhat, normalize=True, title="Confusion Matrix", base_color=GREEN, save_path=None):
-    
     light_color = tuple(0.5 * g + 0.5 for g in base_color)
     custom_cmap = LinearSegmentedColormap.from_list(name="light_color", colors=[(1, 1, 1), light_color])
 
@@ -902,8 +814,43 @@ def split_dataset(
         filter_config=None,
         seed=42):
     """
-    Function for splitting a dataset into train, validation and test subsets 
-    according to metadata values and/or randomly. Additionally
+    Splits a dataset into training, validation, and test subsets based on metadata criteria and/or specified ratios.
+
+    This function supports:
+    - Filtering the dataset by metadata keys and values (inclusion or exclusion).
+    - Splitting by metadata values for each subset (train/val/test).
+    - Random splitting by specified ratios for remaining data after metadata splits.
+    - Ensuring no overlap in metadata-based splits.
+    - Handling cases where some splits use metadata and others use ratios.
+    
+    Parameters
+    ----------
+    dataset : torch.utils.data.Dataset
+        The full dataset to be split. Should have a `metadata` attribute (dict or DataFrame-compatible).
+    ratio_config : tuple of float or None, default=(None, None, None)
+        Ratios for random splitting into (train, val, test) subsets. Values should sum to 1.0 if specified.
+        Use None for splits that will be defined by metadata_config.
+    metadata_config : tuple (str, list of lists) or None, default=None
+        Metadata key and list of metadata values defining each subset.
+        For example, ('batch', [['batch1', 'batch2'], None, ['batch3']]) assigns train to batches 1 & 2, test to batch3, and val by ratio.
+    filter_config : dict or None, default=None
+        Dictionary specifying filters on metadata before splitting.
+        Format: {key: {"values": [...], "mode": "include" or "exclude"}}.
+        Only samples matching filters are kept.
+    seed : int, default=42
+        Random seed for reproducible splitting when using ratios.
+
+    Returns
+    -------
+    train_dataset, val_dataset, test_dataset : torch.utils.data.Subset or None
+        Subsets of the dataset corresponding to train, val, and test splits.
+        Some may be None if not defined.
+
+    Raises
+    ------
+    ValueError
+        If ratios do not sum to 1, or both ratio and metadata are specified for the same split,
+        or if metadata split values overlap between splits, or invalid filter mode is specified.
     """
     # get metadata as dataframe
     if (metadata_config is not None) or (filter_config is not None):
@@ -1060,6 +1007,7 @@ def main(args):
         collate_fn=collate_fn
     )   
 
+    # Initialize model to train
     if args.task in {"link", "mgm"}:
         predictor = LinkPredictor(
             in_channels=dataset.embedding_dim,
@@ -1124,6 +1072,7 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    # Run inference on test set
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=args.batch_size,
@@ -1168,7 +1117,6 @@ def main(args):
             n_pos_train=n_pos_train,
             n_neg_train=n_neg_train
         )
-
     elif args.task in {"mlm", "expr"}:
         y_train, yhat_train, mae_train, mse_train, mape_train, r2_train, pear_train, spear_train = result_train
         y_test, yhat_test, mae_test, mse_test, mape_test, r2_test, pear_test, spear_test = result_test

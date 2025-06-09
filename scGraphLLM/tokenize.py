@@ -53,17 +53,22 @@ class GraphTokenizer:
     def node_to_gene(self):
         return self.vocab.node_to_gene
 
-    def __call__(self, cell_expr: pd.Series, override_network: RegulatoryNetwork = None):
+    def __call__(self, cell_expr: pd.Series, override_network: RegulatoryNetwork = None, from_counts=False, target_sum=1e6):
         """
         Tokenizes a single cell's expression profile into a torch_geometric Data object.
 
         Args:
             cell_expr (pd.Series): A single-cell gene expression vector (gene names as index).
             override_network (RegulatoryNetwork, optional): Overrides the default network for this cell.
+            from_counts (boolean): If True, assume cell_expr is raw UMI counts and normalize + log transform.
+            target_sum (float): target sum for normalization if from_counts is True
 
         Returns:
             torch_geometric.data.Data: Expression features and regulatory edges.
         """
+        if from_counts:
+            cell_expr = np.log1p(cell_expr / cell_expr.sum() * target_sum)
+
         # override original network if network is provided
         network = override_network if override_network is not None else self.network
         
