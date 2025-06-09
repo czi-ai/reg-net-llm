@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader as torchDataLoader
 import numpy as np
 import pandas as pd 
 import scanpy as sc
+import anndata as ad
 
 import os
 from os.path import join
@@ -199,17 +200,19 @@ def cache_aracane_and_bins(
             tokenizer = GraphTokenizer(
                 vocab=vocab, 
                 network=network,
-                num_bins=NUM_BINS,
+                n_bins=NUM_BINS,
                 max_seq_length=None,
                 only_expressed_genes=True,
                 with_edge_weights=True
             )
 
             # get processed gene expression
-            expression = sc.read_h5ad(str(Path(aracne_out).parents[0]) + "/cells.h5ad").to_df()
-
+            cells_path = join(str(Path(aracne_out).parents[0]), "cells.h5ad")
+            expression = ad.read_h5ad(cells_path)
+            expression_df = expression.to_df()
+            
             skipped, ncells = run_cache(
-                expression=expression,
+                expression=expression_df,
                 tokenizer=tokenizer,
                 cache_dir=cache_dir, 
                 overwrite=overwrite, 
@@ -217,7 +220,6 @@ def cache_aracane_and_bins(
                 valsg_split_ratio=valsg_split_ratio, 
                 cell_type=cell_type, 
                 min_genes_per_graph=MIN_GENES_PER_GRAPH,
-                max_seq_length=None,
                 skipped=skipped, 
                 ncells=ncells
             )

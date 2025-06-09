@@ -1,5 +1,5 @@
-from vocab import GeneVocab
-from network import RegulatoryNetwork
-from models import GDTransformer
-from inference import InferenceDataset, VariableNetworksInferenceDataset
-from tokenizer import GraphTokenizer
+from scGraphLLM.vocab import GeneVocab
+from scGraphLLM.network import RegulatoryNetwork
+from scGraphLLM.models import GDTransformer
+from scGraphLLM.inference import InferenceDataset, VariableNetworksInferenceDataset
+from scGraphLLM.tokenizer import GraphTokenizer
