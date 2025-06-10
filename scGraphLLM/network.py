@@ -38,7 +38,7 @@ class RegulatoryNetwork(object):
             self.wt_name: float,
             self.lik_name: float
         })
-        self.genes = set(self.regulators) & set(self.targets)
+        self.genes = set(self.regulators) | set(self.targets)
 
     def __len__(self):
         return len(self.df)

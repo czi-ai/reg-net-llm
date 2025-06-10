@@ -14,7 +14,7 @@ class TestQuantization(unittest.TestCase):
              [0, 8, 4, 6, 2, 0, 3, 0],
              [3, 0, 1, 0, 4, 0, 0, 6]], 
             index=['Cell1', 'Cell2', 'Cell3'], 
-            columns=['GeneA', 'GeneB', 'GeneC', 'GeneD', 'GeneE', 'GeneF', 'GeneG', 'GeneH']
+            columns=['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
         )
         
     
