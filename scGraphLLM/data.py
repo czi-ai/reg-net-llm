@@ -139,8 +139,8 @@ def run_cache(
             continue
         
         cell: pd.Series = expression.iloc[i, :]
-
-        if cell[cell != ZERO_IDX].shape[0] < min_genes_per_graph: # require a minimum number of expressed genes per cell 
+        num_expressed_genes = cell[cell != ZERO_IDX].shape[0]
+        if num_expressed_genes < min_genes_per_graph: # require a minimum number of expressed genes per cell 
             skipped += 1
             ncells+=1
             continue
@@ -194,7 +194,7 @@ def cache_aracane_and_bins(
             aracne_out = outdir_info[0]
             
             # Get the ARACNe network for this cell-type
-            network = RegulatoryNetwork.from_csv(aracne_out +"/consolidated-net_defaultid.tsv", sep = "\t")
+            network = RegulatoryNetwork.from_csv(aracne_out + "/consolidated-net_defaultid.tsv", sep = "\t")
             
             # initialize graph tokenizer
             tokenizer = GraphTokenizer(

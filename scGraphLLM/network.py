@@ -34,9 +34,15 @@ class RegulatoryNetwork(object):
             self.tar_name: targets,
             self.wt_name: weights,
             self.lik_name: likelihoods
+        }).astype({
+            self.wt_name: float,
+            self.lik_name: float
         })
         self.genes = set(self.regulators) & set(self.targets)
-    
+
+    def __len__(self):
+        return len(self.df)
+
     @property
     def regulators(self):
         return self.df[self.reg_name]
@@ -56,6 +62,12 @@ class RegulatoryNetwork(object):
     @property
     def edges(self):
         return list(zip(self.regulators, self.targets))
+
+    @classmethod
+    def from_edge_ids(edge_ids, all_edges, weights, likelihoods):
+        edges = zip(*all_edges[edge_ids])
+        regulators, targets = edges if len(edges) > 0 else [],[]
+        return RegulatoryNetwork(regulators, targets, weights, likelihoods)
 
     @classmethod
     def from_csv(cls, path, reg_name="regulator.values", tar_name="target.values", wt_name="mi.values", lik_name="log.p.values", **kwargs):
@@ -162,3 +174,43 @@ class RegulatoryNetwork(object):
             weights=df[self.wt_name].tolist(),
             likelihoods=df[self.lik_name].tolist()
         )
+
+    def sort(self, by=None, ascending=True):
+        """
+        Sort the regulatory network edges by specified column(s).
+
+        If no columns are provided, the default is to sort first by regulator, then by target.
+
+        Args:
+            by (Union[str, List[str]], optional): Column name or list of column names to sort by.
+                If None, defaults to [self.reg_name, self.tar_name].
+            ascending (Union[bool, List[bool]], optional): Sort order.
+                True for ascending, False for descending.
+                Can also be a list of booleans corresponding to the `by` list.
+                Defaults to True.
+
+        Returns:
+            RegulatoryNetwork: The sorted network (self), allowing method chaining.
+        """
+        if by is None:
+            by = [self.reg_name, self.tar_name]
+        self.df = self.df.sort_values(by=by, ascending=ascending)
+        self.df = self.df.reset_index()
+        return self
+    
+    def __eq__(self, other):
+        if not isinstance(other, RegulatoryNetwork):
+            return NotImplemented
+    
+        # Sort edges by regulator and target in both networks
+        self_edges = self.df[[self.reg_name, self.tar_name]].sort_values(
+            by=[self.reg_name, self.tar_name]
+        ).reset_index(drop=True)
+        
+        other_edges = other.df[[other.reg_name, other.tar_name]].sort_values(
+            by=[other.reg_name, other.tar_name]
+        ).reset_index(drop=True)
+        
+        # Compare the edge DataFrames for equality
+        return self_edges.equals(other_edges)
+    

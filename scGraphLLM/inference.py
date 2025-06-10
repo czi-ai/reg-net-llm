@@ -116,7 +116,7 @@ class VariableNetworksInferenceDataset(InferenceDataset):
         return item
 
 
-def get_cell_embeddings(dataset, model):
+def get_cell_embeddings(dataset, model, batch_size=256):
     """
     Runs the model on the input dataset and computes pooled cell-level embeddings.
 
@@ -131,7 +131,7 @@ def get_cell_embeddings(dataset, model):
     """
     dataloader = DataLoader(
         dataset, 
-        batch_size=256, 
+        batch_size=batch_size, 
         shuffle=False, 
         collate_fn=partial(scglm_collate_fn, inference=True)
     )
@@ -143,6 +143,7 @@ def get_cell_embeddings(dataset, model):
             seq_lengths = torch.tensor(batch["num_nodes"]).to('cuda')
             obs_names = batch["obs_name"]
             x = model(send_to_gpu(batch))[0]
+
             # apply mean pooling along gene dimesion, respecting sequence length
             mask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
             mask = mask.unsqueeze(-1).float()
@@ -152,8 +153,4 @@ def get_cell_embeddings(dataset, model):
             x_list.append(x_pooled.cpu().numpy())
             obs_names_list.append(obs_names)
 
-    x = np.vstack(x_list)
-    obs_names = np.concatenate(obs_names_list)
-    embeddings = pd.DataFrame(x, index=obs_names)
-
-    return embeddings
+    return pd.DataFrame(np.vstack(x_list), index=np.concatenate(obs_names_list))

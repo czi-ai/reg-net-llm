@@ -32,10 +32,11 @@ def build_class_edge_matrix(
         network = class_networks[c]
         for i, e in enumerate(network.edges):
             idx = edge_to_idx[e]
-            E[idx, j] = np.exp(network.df.iloc[i][network.lik_name])
-            W[idx, j] = network.df.iloc[i][network.wt_name]
+            edge = network.df.iloc[i]
+            E[idx, j] = np.exp(edge[network.lik_name])
+            W[idx, j] = edge[network.wt_name]
 
-    return E, W, all_edges
+    return E, W, np.array(all_edges)
 
 
 def infer_cell_edges_(probs, E, W, alpha=None):
