@@ -10,21 +10,37 @@ from scGraphLLM._globals import *
 
 class GraphTokenizer:
     """
-    Converts a single-cell gene expression profile into a a representation suitable
-    for input to `GDTransformer`
+    Converts a single-cell gene expression profile into a representation suitable
+    for input to `GDTransformer`.
 
-    This tokenizer bins expression values, filters genes based on expression and 
-    presence in the regulatory network, and constructs a graph where nodes are genes 
-    and edges represent regulatory interactions.
+    This tokenizer discretizes gene expression values into bins, filters genes based
+    on expression and regulatory network membership, and constructs a graph where
+    nodes represent genes and edges represent regulatory interactions.
+
+    Filtering options allow excluding genes with zero expression, including expressed
+    genes plus their immediate network neighbors, or limiting to genes present in
+    the regulatory network.
 
     Args:
         vocab (GeneVocab): Maps between gene names and node indices.
         network (RegulatoryNetwork, optional): Default regulatory network used to construct edges.
-        max_seq_length (int): Maximum number of nodes (genes) to include in the graph.
+        max_seq_length (int): Maximum number of nodes (genes) to include in the graph. 
+            If the number of genes after filtering exceeds this, the top genes by expression
+            are selected.
         only_expressed_genes (bool): If True, exclude genes with zero expression.
-        with_edge_weights (bool): If True, include edge weights from the network.
-        n_bins (int): Number of bins to discretize gene expression.
-        method (str): Method for binning ('quantile' or 'uniform').
+        only_expressed_plus_neighbors (bool): If True, include genes that are expressed
+            plus their immediate neighbors in the regulatory network, regardless of
+            expression level. Overrides `only_expressed_genes` filtering.
+        only_network_genes (bool): If True, limit genes to those present in the regulatory network.
+        with_edge_weights (bool): If True, include edge weights from the network as edge attributes.
+        n_bins (int): Number of discrete bins to categorize gene expression values into.
+        method (str): Method for binning expression values; 'quantile' uses quantiles of
+            non-zero expression values, 'uniform' uses equal-width bins.
+
+    Notes:
+        - Filtering order is: expression filtering → neighbor inclusion (if enabled) → network membership filtering → max sequence length enforcement.
+        - If `only_expressed_plus_neighbors` is True, genes with zero expression that are neighbors
+          of expressed genes in the network are retained.
     """
     def __init__(
             self, 
@@ -32,7 +48,8 @@ class GraphTokenizer:
             network: RegulatoryNetwork=None, 
             max_seq_length=2048, 
             only_expressed_genes=True,
-            only_network_genes=True, 
+            only_expressed_plus_neighbors=False,
+            only_network_genes=True,
             with_edge_weights=False, 
             n_bins=NUM_BINS, 
             method="quantile"
@@ -41,6 +58,7 @@ class GraphTokenizer:
         self.network = network
         self.max_seq_length = max_seq_length
         self.only_expressed_genes = only_expressed_genes
+        self.only_expressed_plus_neighbors = only_expressed_plus_neighbors
         self.only_network_genes = only_network_genes
         self.with_edge_weights = with_edge_weights
         self.n_bins = n_bins
@@ -78,12 +96,9 @@ class GraphTokenizer:
 
         # tokenize cell by by binning expression values
         cell = tokenize_expr(cell_expr, n_bins=self.n_bins, method=self.method)
-        if self.only_expressed_genes:
-            cell = cell[cell != ZERO_IDX]
 
-        # limit cell to genes in the the network
-        if self.only_network_genes:
-            cell = cell[cell.index.isin(network.genes)]
+        # select genes to include in tokenization
+        cell = self.select_genes(cell, network)
         
         # enforce max sequence length
         if (self.max_seq_length is not None) and (cell.shape[0] > self.max_seq_length):
@@ -121,6 +136,33 @@ class GraphTokenizer:
             )
 
         return data
+
+    def select_genes(self, cell: pd.Series, network: RegulatoryNetwork):
+        # limit cell to expressed genes
+        if self.only_expressed_genes and not self.only_expressed_plus_neighbors:
+            cell = cell[cell != ZERO_IDX]
+        
+        # limit cell to expressed genes and their neighbors
+        if self.only_expressed_plus_neighbors:
+            expressed = set(cell[cell != ZERO_IDX].index) & network.genes
+            neighbors = set()
+
+            # collect all neighbors (regulators and targets) of expressed genes
+            network_df = network.df
+            mask = network_df[network.reg_name].isin(expressed) | network_df[network.tar_name].isin(expressed)
+            neighbors.update(network_df.loc[mask, network.reg_name])
+            neighbors.update(network_df.loc[mask, network.tar_name])
+
+            # union of expressed + neighbors, limited to available genes
+            selected_genes = expressed | neighbors
+            selected_genes = selected_genes & set(cell.index)
+            cell = cell[cell.index.isin(selected_genes)]
+
+        # limit cell to genes in the the network
+        if self.only_network_genes:
+            cell = cell[cell.index.isin(network.genes)]
+
+        return cell
 
 
 def tokenize_expr(expr: pd.Series, n_bins: int = 5, method: str = "quantile") -> pd.Series:

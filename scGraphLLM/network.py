@@ -65,7 +65,7 @@ class RegulatoryNetwork(object):
 
     @classmethod
     def from_edge_ids(edge_ids, all_edges, weights, likelihoods):
-        edges = zip(*all_edges[edge_ids])
+        edges = list(zip(*all_edges[edge_ids]))
         regulators, targets = edges if len(edges) > 0 else [],[]
         return RegulatoryNetwork(regulators, targets, weights, likelihoods)
 
