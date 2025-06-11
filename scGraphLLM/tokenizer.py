@@ -31,7 +31,8 @@ class GraphTokenizer:
             vocab: GeneVocab,
             network: RegulatoryNetwork=None, 
             max_seq_length=2048, 
-            only_expressed_genes=True, 
+            only_expressed_genes=True,
+            only_network_genes=True, 
             with_edge_weights=False, 
             n_bins=NUM_BINS, 
             method="quantile"
@@ -40,6 +41,7 @@ class GraphTokenizer:
         self.network = network
         self.max_seq_length = max_seq_length
         self.only_expressed_genes = only_expressed_genes
+        self.only_network_genes = only_network_genes
         self.with_edge_weights = with_edge_weights
         self.n_bins = n_bins
         self.method = method
@@ -71,7 +73,7 @@ class GraphTokenizer:
         # override original network if network is provided
         network = override_network if override_network is not None else self.network
         
-        # limit cell to known gene in vocabulary
+        # limit cell to known genes in vocabulary
         cell_expr = cell_expr[cell_expr.index.isin(self.gene_to_node)]
 
         # tokenize cell by by binning expression values
@@ -80,11 +82,12 @@ class GraphTokenizer:
             cell = cell[cell != ZERO_IDX]
 
         # limit cell to genes in the the network
-        cell = cell[cell.index.isin(network.genes)]
+        if self.only_network_genes:
+            cell = cell[cell.index.isin(network.genes)]
         
         # enforce max sequence length
         if (self.max_seq_length is not None) and (cell.shape[0] > self.max_seq_length):
-            cell = cell.nlargest(n=self.max_seq_length)
+            cell = cell.nlargest(n=self.max_seq_length, keep="first")
 
         # create local gene to node mapping
         local_gene_to_node = {gene:i for i, gene in enumerate(cell.index)}
@@ -96,10 +99,9 @@ class GraphTokenizer:
             network_cell[network.tar_name].isin(cell.index)
         ]
 
-        edge_index = torch.tensor(np.array([
-            network_cell[network.reg_name].map(local_gene_to_node).values, 
-            network_cell[network.tar_name].map(local_gene_to_node).values
-        ]))
+        reg_index = network_cell[network.reg_name].map(local_gene_to_node).values
+        tar_index = network_cell[network.tar_name].map(local_gene_to_node).values
+        edge_index = torch.tensor(np.array([reg_index, tar_index]))
 
         node_expression = torch.tensor(np.array([
             (self.gene_to_node[gene], cell[gene]) for gene in cell.index
