@@ -70,3 +70,24 @@ dataset = InferenceDataset(expression=data, tokenizer=tokenizer)
 
 # Run inference and get pooled cell embeddings
 embeddings_df = get_cell_embeddings(dataset, model)
+
+```
+
+Custom Tokenization Example
+
+```python
+# prune network
+network = RegulatoryNetwork.from_csv("your_network_file.tsv", sep="\t")\
+  .prune(limit_regulon=100)\
+  .make_undirected(drop_unpaired=False)
+
+tokenizer = GraphTokenizer(
+  vocab=vocab,
+  network=network,
+  only_expressed_genes=False, 
+  max_seq_length=4096,
+  with_edge_weights=True
+)
+
+```
+
