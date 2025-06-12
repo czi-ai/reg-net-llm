@@ -38,10 +38,18 @@ class RegulatoryNetwork(object):
             self.wt_name: float,
             self.lik_name: float
         })
-        self.genes = set(self.regulators) | set(self.targets)
 
     def __len__(self):
         return len(self.df)
+    
+    @property
+    def df(self) -> pd.DataFrame:
+        return self._df
+    
+    @df.setter
+    def df(self, df: pd.DataFrame):
+        self._df = df
+        self.genes = set(self.regulators) | set(self.targets)
 
     @property
     def regulators(self):
@@ -109,7 +117,7 @@ class RegulatoryNetwork(object):
 
         if limit_regulon is not None:
             df = df.groupby(self.reg_name, group_keys=False)\
-                .apply(lambda grp: grp.nlargest(limit_regulon, self.wt_name))\
+                .apply(lambda grp: grp.nlargest(limit_regulon, self.wt_name, keep="first"))\
                 .reset_index(drop=True)
 
         if limit_graph is not None:
@@ -174,29 +182,6 @@ class RegulatoryNetwork(object):
             weights=df[self.wt_name].tolist(),
             likelihoods=df[self.lik_name].tolist()
         )
-
-    def sort(self, by=None, ascending=True):
-        """
-        Sort the regulatory network edges by specified column(s).
-
-        If no columns are provided, the default is to sort first by regulator, then by target.
-
-        Args:
-            by (Union[str, List[str]], optional): Column name or list of column names to sort by.
-                If None, defaults to [self.reg_name, self.tar_name].
-            ascending (Union[bool, List[bool]], optional): Sort order.
-                True for ascending, False for descending.
-                Can also be a list of booleans corresponding to the `by` list.
-                Defaults to True.
-
-        Returns:
-            RegulatoryNetwork: The sorted network (self), allowing method chaining.
-        """
-        if by is None:
-            by = [self.reg_name, self.tar_name]
-        self.df = self.df.sort_values(by=by, ascending=ascending)
-        self.df = self.df.reset_index()
-        return self
     
     def __eq__(self, other):
         if not isinstance(other, RegulatoryNetwork):

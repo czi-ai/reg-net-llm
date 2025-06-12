@@ -253,7 +253,7 @@ def formulate_network(data):
         targets=data[:,1], 
         weights=data[:,2],
         likelihoods=data[:,3]
-    ).make_undirected(drop_unpaired=False).sort()
+    ).make_undirected(drop_unpaired=False)
         
 
 if __name__ == "__main__":

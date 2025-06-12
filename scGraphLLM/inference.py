@@ -27,8 +27,7 @@ class InferenceDataset(GraphTransformerDataset):
     def __init__(self, expression: pd.DataFrame, tokenizer: GraphTokenizer, cache_dir=None):
         self.tokenizer = tokenizer
         self.obs_names = expression.index
-        self.common_genes = sorted(list(set(self.gene_to_node.keys()) & set(expression.columns)))
-        self.expression = expression[self.common_genes]
+        self.expression = expression[expression.columns[expression.columns.isin(self.gene_to_node)]]
         super().__init__(cache_dir=cache_dir, mask_fraction=0.0)
     
     @property
