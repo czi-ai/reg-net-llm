@@ -24,13 +24,4 @@ jobs:
 
     - name: Run test
       run: |
-        coverage run -m unittest discover -s test
-        coverage report
-        coverage xml
-        coverage html
-
-    - name: Upload coverage HTML report
-      uses: actions/upload-artifact@v4
-      with:
-        name: html-report
-        path: htmlcov/
+        python -m unittest discover -s test
