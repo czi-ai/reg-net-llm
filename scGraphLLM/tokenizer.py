@@ -210,3 +210,11 @@ def tokenize_expr(expr: pd.Series, n_bins: int = 5, method: str = "quantile") ->
         binned[non_zero_idx] = round(n_bins / 2)
 
     return pd.Series(binned, index=expr.index)
+
+
+def quantize_cells(gex: pd.DataFrame, n_bins: int = 5, method: str = "quantile") -> pd.DataFrame:
+    tokenized_cells = [
+        tokenize_expr(gex.iloc[i], n_bins=n_bins, method=method)
+        for i in range(len(gex))
+    ]
+    return pd.DataFrame(tokenized_cells, index=gex.index, columns=gex.columns)

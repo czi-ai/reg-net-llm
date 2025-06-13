@@ -13,12 +13,12 @@ import time
 import pickle 
 import wandb
 import glob 
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader as torchDataLoader
 
 # import torchsummary
 
 from scGraphLLM.models import LitScGraphLLM
-from scGraphLLM.data import *
+from scGraphLLM.data import GraphTransformerDataset, scglm_collate_fn
 from scGraphLLM._globals import *
 from scGraphLLM.config import *
 
@@ -55,6 +55,28 @@ parser.add_argument('--override-config', type=str, help='wandb sweep style cl ar
 parser.add_argument("--output-dir", type=str, help="output directory for model checkpoints and logs", default=None)
 
 args = parser.parse_args()
+
+
+class GraphTransformerDataModule(pl.LightningDataModule):
+    def __init__(self, data_config, collate_fn=None):
+        super().__init__()
+        self.data_config = data_config
+        self.collate_fn = collate_fn
+        self.train_ds = GraphTransformerDataset(**data_config.train)
+        self.val_ds = [GraphTransformerDataset(**val) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [GraphTransformerDataset(**test) for test in data_config.test]
+    
+    def train_dataloader(self):
+        return torchDataLoader(self.train_ds, batch_size = self.data_config.batch_size, 
+                               num_workers = self.data_config.num_workers, collate_fn=self.collate_fn)
+    def val_dataloader(self):
+        return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, 
+                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
+    def test_dataloader(self):
+        return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
+                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
+
 
 def main(args):
     

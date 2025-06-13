@@ -1,10 +1,9 @@
 import torch
 from torch_geometric.data import Data as torchGeomData
 from torch.utils.data import Dataset as torchDataset
-from torch.utils.data import DataLoader as torchDataLoader
+
 import numpy as np
 import pandas as pd 
-import scanpy as sc
 import anndata as ad
 
 import os
@@ -14,7 +13,6 @@ import warnings
 from pathlib import Path
 from multiprocessing import Pool
 import argparse
-import lightning.pytorch as pl
 from torch.nn.utils.rnn import pad_sequence
 from numpy.random import default_rng
 import pickle
@@ -25,7 +23,7 @@ MI_VALS = "mi.values"
 SCC_VALS = "scc.values"
 
 # from scGraphLLM.graph_op import spectral_PE
-from scGraphLLM._globals import * ## imported global variables are all caps 
+from scGraphLLM._globals import *
 from scGraphLLM.network import RegulatoryNetwork
 from scGraphLLM.tokenizer import GraphTokenizer
 from scGraphLLM.vocab import GeneVocab
@@ -295,27 +293,6 @@ class GraphTransformerDataset(torchDataset):
             item["obs_name"] = getattr(data, "obs_name", None)
 
         return item
-
-
-class GraphTransformerDataModule(pl.LightningDataModule):
-    def __init__(self, data_config, collate_fn=None):
-        super().__init__()
-        self.data_config = data_config
-        self.collate_fn = collate_fn
-        self.train_ds = GraphTransformerDataset(**data_config.train)
-        self.val_ds = [GraphTransformerDataset(**val) for val in data_config.val]
-        if data_config.run_test:
-            self.test_ds = [GraphTransformerDataset(**test) for test in data_config.test]
-    
-    def train_dataloader(self):
-        return torchDataLoader(self.train_ds, batch_size = self.data_config.batch_size, 
-                               num_workers = self.data_config.num_workers, collate_fn=self.collate_fn)
-    def val_dataloader(self):
-        return [torchDataLoader(val_ds, batch_size = self.data_config.batch_size, 
-                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for val_ds in self.val_ds]
-    def test_dataloader(self):
-        return [torchDataLoader(test_ds, batch_size = self.data_config.batch_size, 
-                                num_workers = self.data_config.num_workers, collate_fn=self.collate_fn) for test_ds in self.test_ds]
 
 
 if __name__ == "__main__":

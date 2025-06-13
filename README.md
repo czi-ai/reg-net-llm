@@ -46,7 +46,8 @@ Below is a sample Python script using our inference API:
 
 ```python
 import pandas as pd
-from scGraphLLM import GDTransformer, RegulatoryNetwork, GeneVocab, GraphTokenizer, InferenceDataset
+from scGraphLLM import RegulatoryNetwork, GeneVocab, GraphTokenizer, InferenceDataset
+from scGraphLLM.models import GDTransformer
 from scGraphLLM.config import graph_kernel_attn_3L_4096
 from scGraphLLM.inference import get_cell_embeddings
 

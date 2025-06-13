@@ -35,7 +35,7 @@ from typing import List
 from os.path import join, abspath, dirname
 from functools import partial
 
-from scGraphLLM.tokenizer import tokenize_expr
+from scGraphLLM.tokenizer import tokenize_expr, quantize_cells
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
@@ -491,13 +491,6 @@ def make_metacells(
 
     return metacells_adata, qc_metrics_dict(metacells_adata)
 
-
-def quantize_cells(gex: pd.DataFrame, n_bins: int = 5, method: str = "quantile") -> pd.DataFrame:
-    tokenized_cells = [
-        tokenize_expr(gex.iloc[i], n_bins=n_bins, method=method)
-        for i in range(len(gex))
-    ]
-    return pd.DataFrame(tokenized_cells, index=gex.index, columns=gex.columns)
 
 
 def quantize(cells, n_bins, save_path=None):    

@@ -116,13 +116,13 @@ class RegulatoryNetwork(object):
         df = self.df if inplace else self.df.copy()
 
         if limit_regulon is not None:
-            df = df.groupby(self.reg_name, group_keys=False)\
-                .apply(lambda grp: grp.nlargest(limit_regulon, self.wt_name, keep="first"))\
-                .reset_index(drop=True)
+            df = df.sort_values(by=[self.reg_name, self.wt_name], ascending=[True, False])\
+                .groupby(self.reg_name, group_keys=False)\
+                .head(limit_regulon)
 
         if limit_graph is not None:
             df = df.nlargest(limit_graph, self.wt_name)
-        
+
         if inplace:
             self.df = df
             return self

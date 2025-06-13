@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import unittest
 
-from scGraphLLM.preprocess import quantize_cells
+from scGraphLLM.tokenizer import quantize_cells
 
 class TestQuantization(unittest.TestCase):
 

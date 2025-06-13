@@ -6,7 +6,6 @@ import torch
 from torch.utils.data import DataLoader
 
 from scGraphLLM.data import GraphTransformerDataset, scglm_collate_fn, send_to_gpu
-from scGraphLLM.benchmark import send_to_gpu
 from scGraphLLM._globals import *
 from scGraphLLM.network import RegulatoryNetwork
 from scGraphLLM.tokenizer import GraphTokenizer
@@ -75,6 +74,8 @@ class VariableNetworksInferenceDataset(InferenceDataset):
         weights_list (List[np.ndarray], optional): List of edge weights per cell.
         limit_regulon (int, optional): Limit number of regulators per target gene.
         limit_graph (int, optional): Limit the total number of edges in the graph.
+        drop_unpaired (bool, optional): Whether to drop directed (unpaired) edges when making
+            the graph directed.
         **kwargs: Additional arguments passed to `InferenceDataset`.
     """
     def __init__(
@@ -84,6 +85,7 @@ class VariableNetworksInferenceDataset(InferenceDataset):
             weights_list=None,
             limit_regulon=None,
             limit_graph=None,
+            drop_unpaired=None,
             **kwargs
         ):
         super().__init__(**kwargs)
@@ -92,10 +94,15 @@ class VariableNetworksInferenceDataset(InferenceDataset):
         self.weights_list = weights_list
         self.limit_regulon = limit_regulon
         self.limit_graph = limit_graph
+        self.drop_unpaired = drop_unpaired
     
     @property
     def prune_graph(self):
-        return not(self.limit_regulon is None and self.limit_graph is None)
+        return not (self.limit_regulon is None and self.limit_graph is None)
+
+    @property
+    def make_undirected(self):
+        return self.drop_unpaired is not None
 
     def __getitem__(self, idx):
         cell = self.expression.iloc[idx]
@@ -107,6 +114,9 @@ class VariableNetworksInferenceDataset(InferenceDataset):
 
         if self.prune_graph:
             cell_network.prune(limit_regulon=self.limit_regulon, limit_graph=self.limit_graph, inplace=True)
+        
+        if self.make_undirected:
+            cell_network.make_undirected(drop_unpaired=self.drop_unpaired)
         
         data = self.tokenizer(cell, cell_network)
         item = self._item_from_tokenized_data(data)
