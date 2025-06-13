@@ -36,7 +36,6 @@ from utils import (
     collect_metadata
 )
 
-
 def main(args):
     print("Loading Data...")
     adata = sc.read_h5ad(args.cells_path)
@@ -93,7 +92,6 @@ def main(args):
     )
     
     # Load model
-    # model: GDTransformer = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_4096_TEST)
     model = GDTransformer.load_from_checkpoint(args.model_path, config=graph_kernel_attn_3L_4096)
     
     # Get embeddings
@@ -361,4 +359,3 @@ if __name__ == "__main__":
         args.networks = NETWORK_SETS[args.networks]
 
     main(args)
-
