@@ -10,7 +10,7 @@ from scGraphLLM._globals import * ## these define the indices for the special to
 from scGraphLLM.transformer_modules import *
 
 class LitScGraphLLM(pl.LightningModule):
-    def __init__(self, config, pad_node):
+    def __init__(self, config, pad_node=PAD_GENE_IDX):
         super().__init__()
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 

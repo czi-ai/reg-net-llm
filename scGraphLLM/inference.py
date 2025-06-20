@@ -1,12 +1,14 @@
 from tqdm import tqdm
 from functools import partial
+from collections import defaultdict
+from typing import Literal
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
 from scGraphLLM.data import GraphTransformerDataset, send_to_gpu
-from scGraphLLM._globals import *
+from scGraphLLM.vocab import GeneVocab
 from scGraphLLM.network import RegulatoryNetwork
 from scGraphLLM.tokenizer import GraphTokenizer
 
@@ -123,25 +125,44 @@ class VariableNetworksInferenceDataset(InferenceDataset):
         item["obs_name"] = self.obs_names[idx]
 
         return item
+    
 
-
-def get_cell_embeddings(dataset: InferenceDataset, model, batch_size=256):
+def get_cell_embeddings(
+    dataset: InferenceDataset,
+    model: "GDTransformer",
+    vocab: GeneVocab = None,
+    batch_size=256,
+    cls_policy: Literal["include", "exclude", "only"] = "include"
+):
     """
-    Runs the model on the input dataset and computes pooled cell-level embeddings.
+    Computes embeddings for each cell in the dataset using a trained GDTransformer model.
 
-    The embeddings are obtained via mean-pooling across the node (gene) dimension.
+    Depending on `cls_policy`, embeddings are derived by:
+        - "include": Mean-pooling over all gene nodes, including the CLS token (default).
+        - "exclude": Mean-pooling over all gene nodes, excluding the CLS token.
+        - "only": Using only the CLS token embedding for each cell.
 
     Args:
-        dataset (Dataset): An instance of `InferenceDataset` or `VariableNetworksInferenceDataset`.
-        model (torch.nn.Module): A trained model that returns sequence embeddings.
+        dataset (InferenceDataset): Dataset containing graph-structured cell inputs.
+        model (GDTransformer): Trained transformer model for graph-based gene expression.
+        vocab (GeneVocab, optional): Required if `cls_policy` is "exclude" or "only",
+            used to identify the CLS token node ID.
+        batch_size (int): Number of cells to process per batch.
+        cls_policy (str): One of {"include", "exclude", "only"} determining how CLS tokens
+            are handled during embedding computation.
 
     Returns:
-        pd.DataFrame: DataFrame of pooled embeddings with cell names as index.
+        pd.DataFrame: DataFrame of cell-level embeddings with cell names as the index
+            and hidden dimensions as columns.
     """
+    assert cls_policy in {"include", "exclude", "only"}
+    if cls_policy != "include" and vocab is None:
+        raise ValueError("vocab must be provided if include_cls is not 'include'")
+
     dataloader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=False,
         collate_fn=dataset.collate_fn
     )
 
@@ -149,18 +170,94 @@ def get_cell_embeddings(dataset: InferenceDataset, model, batch_size=256):
     obs_names_list = []
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Forward Pass"):
-            seq_lengths = torch.tensor(batch["num_nodes"]).to('cuda')
+            seq_lengths = torch.tensor(batch["num_nodes"]).to("cuda")
             obs_names = batch["obs_name"]
-            x = model(send_to_gpu(batch))[0]
+            x = model(send_to_gpu(batch))[0]  # shape: [B, T, H]
+            gene_ids = batch["orig_gene_id"]  # shape: [B, T]
 
-            # apply mean pooling along gene dimesion, respecting sequence length
-            mask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
-            mask = mask.unsqueeze(-1).float()
-            x_masked = x * mask
-            x_pooled = x_masked.sum(dim=1) / mask.sum(dim=1)
+            if cls_policy == "only":
+                # extract CLS token (assumed to be at position where orig_gene_id == vocab.cls_node)
+                cls_mask = (gene_ids == vocab.cls_node).to(x.device)  # [B, T]
+                cls_indices = cls_mask.float().argmax(dim=1)  # assume one CLS per cell
+                x_cell = x[torch.arange(x.size(0)), cls_indices]  # [B, H]
+            else:
+                # create mask: optionally exclude CLS
+                mask = torch.arange(x.shape[1], device=x.device).unsqueeze(0) < seq_lengths.unsqueeze(1)
+                if cls_policy == "exclude":
+                    cls_mask = (gene_ids == vocab.cls_node).to(x.device)
+                    mask = mask & (~cls_mask)
+                mask = mask.unsqueeze(-1).float()
+                x_masked = x * mask
+                x_cell = x_masked.sum(dim=1) / mask.sum(dim=1)
 
-            x_list.append(x_pooled.detach().cpu().numpy())
+            x_list.append(x_cell.detach().cpu().numpy())
             obs_names_list.append(obs_names)
 
     return pd.DataFrame(np.vstack(x_list), index=np.concatenate(obs_names_list))
 
+
+def get_gene_embeddings(
+        dataset: InferenceDataset, 
+        model: "GDTransformer", 
+        vocab: GeneVocab,
+        batch_size=256,
+        include_cls=False,
+    ) -> pd.DataFrame:
+    """
+    Computes average embeddings for each gene across all cells in the dataset.
+
+    For each gene, this function collects its token embeddings from all cells where
+    it is expressed and computes the mean embedding vector.
+
+    Args:
+        dataset (InferenceDataset): Dataset containing graph-structured cell inputs.
+        model (GDTransformer): Trained model that outputs sequence (node-level) embeddings.
+        vocab (GeneVocab, optional): Required to identify and remove the CLS token from the 
+            result (if requested) and translate node ids back to gene names.
+        batch_size (int): Number of cells to process per batch.
+        include_cls (bool): Whether to include the CLS token in the final gene embeddings.
+            If False, the CLS embedding (identified via `vocab.cls_node`) is excluded.
+
+    Returns:
+        pd.DataFrame: DataFrame with one row per gene (indexed by gene name),
+            and one column per hidden dimension from the model.
+    """
+
+    dataloader = DataLoader(
+        dataset=dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        collate_fn=dataset.collate_fn
+    )
+
+    gene_embedding_sums = dict()
+    gene_counts = defaultdict(int)
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Forward Pass"):
+            seq_lengths = torch.tensor(batch["num_nodes"]).to("cuda")
+            gene_ids = batch["orig_gene_id"].detach().cpu().numpy()
+            x = model(send_to_gpu(batch))[0] # shape: [B, T, H]
+            
+            for x_cell, ids, seq_len in zip(x, gene_ids, seq_lengths):
+                for j in range(seq_len):
+                    gene_id = ids[j]
+                    x_gene = x_cell[j].detach().cpu().numpy()
+                    if gene_id not in gene_embedding_sums:
+                        gene_embedding_sums[gene_id] = x_gene.copy()
+                    else:
+                        gene_embedding_sums[gene_id] += x_gene
+                    gene_counts[gene_id] += 1
+
+    # compute average embedding per gene
+    gene_embeddings = {
+        gene: gene_embedding_sums[gene] / gene_counts[gene]
+        for gene in gene_embedding_sums
+    }
+    
+    if not include_cls:
+        gene_embeddings.pop(vocab.cls_node, None)
+
+    df = pd.DataFrame.from_dict(gene_embeddings, orient='index')
+    df.index = df.index.map(vocab.node_to_gene)
+
+    return df
