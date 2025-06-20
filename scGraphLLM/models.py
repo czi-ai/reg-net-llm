@@ -10,12 +10,12 @@ from scGraphLLM._globals import * ## these define the indices for the special to
 from scGraphLLM.transformer_modules import *
 
 class LitScGraphLLM(pl.LightningModule):
-    def __init__(self, config):
+    def __init__(self, config, pad_node):
         super().__init__()
         self.gene_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_genes, 
             embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_GENE_IDX
+            padding_idx=pad_node
         )
         
         self.rank_embedding = torch.nn.Embedding(
@@ -26,6 +26,7 @@ class LitScGraphLLM(pl.LightningModule):
         self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
         self.optim_config = config.optim_config
         self.loss_config = config.loss_config
+
         
     def forward(self, batch):
         pass
@@ -89,8 +90,8 @@ class LitScGraphLLM(pl.LightningModule):
 # -------------------------
 
 class GDTransformer(LitScGraphLLM):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, **kwargs):
+        super().__init__(config, **kwargs)
         self.tconfig = config.transformer_config
 
         self.transformer_encoder = nn.ModuleList()
@@ -119,21 +120,6 @@ class GDTransformer(LitScGraphLLM):
                 )   
             )
         
-        self.gene_embedding = torch.nn.Embedding(
-            num_embeddings=config.model_config.num_genes, 
-            embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_GENE_IDX
-        )
-        
-        self.rank_embedding = torch.nn.Embedding(
-            num_embeddings=config.model_config.num_ranks, 
-            embedding_dim=config.model_config.node_embedding_dim, 
-            padding_idx=PAD_RANK_IDX
-        )
-        
-        self.rank_prediction_head = RobertaLMHead(config.model_config.node_embedding_dim*2, config.model_config.num_ranks)
-        self.optim_config = config.optim_config
-        self.loss_config = config.loss_config
         self.use_attn_mask = self.tconfig.use_attn_mask
         self.use_PE = self.tconfig.use_pe
 
@@ -149,9 +135,9 @@ class GDTransformer(LitScGraphLLM):
         gene_ids = orig_gene_id.clone()
         expression = orig_rank_indices.clone()
         
-        # Mask specified gene IDs and expression values
-        gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
-        expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
+        # # Mask specified gene IDs and expression values
+        # gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
+        # expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
         
         # shape assertions for graph features
         if self.use_PE:
@@ -184,8 +170,8 @@ class GDTransformer(LitScGraphLLM):
 # Fine-Tuning Perturbation Model
 # ------------------------------
 class Perturb_GDTransformer(GDTransformer):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config, **kwargs):
+        super().__init__(config, **kwargs)
         self.expression_pred_head = RobertaLMHead(
             config.model_config.node_embedding_dim * 2, 1
         )

@@ -2,7 +2,7 @@ import unittest
 import pandas as pd
 import numpy as np
 
-from scGraphLLM._globals import CLS_GENE_IDX
+from scGraphLLM._globals import CLS_GENE, MASK_GENE
 from scGraphLLM.tokenizer import GraphTokenizer
 from scGraphLLM.vocab import GeneVocab
 from scGraphLLM.network import RegulatoryNetwork
@@ -18,8 +18,9 @@ class TestInferenceDatasets(unittest.TestCase):
         )
 
         self.vocab = GeneVocab(
-            genes=["A", "B", "C", "D", "E"],
-            nodes=[0, 1, 2, 3, 4]
+            genes=["A", "B", "C", "D", "E", CLS_GENE, MASK_GENE],
+            nodes=[0, 1, 2, 3, 4, 17936, 903],
+            require_special_tokens=False
         )
 
         self.network = RegulatoryNetwork(
@@ -40,14 +41,14 @@ class TestInferenceDatasets(unittest.TestCase):
         self.assertEqual(len(dataset), 2)
 
         item = dataset[0]
-        self.assertTrue(np.array_equal([CLS_GENE_IDX, 0, 2], item["orig_gene_id"].numpy()))
+        self.assertTrue(np.array_equal([17936, 0, 2], item["orig_gene_id"].numpy()))
         self.assertTrue(np.array_equal([[0],[1]], item["edge_index"].numpy()))
         self.assertTrue(np.array_equal([False, False, False], item["gene_mask"].numpy()))
         self.assertEqual(2, item["num_nodes"])
         self.assertEqual("Cell1", item["obs_name"])
 
         item = dataset[1]
-        self.assertTrue(np.array_equal([CLS_GENE_IDX, 1, 3, 4], item["orig_gene_id"].numpy()))
+        self.assertTrue(np.array_equal([17936, 1, 3, 4], item["orig_gene_id"].numpy()))
         self.assertTrue(np.array_equal([[0, 2],[1, 0]], item["edge_index"].numpy()))
         self.assertTrue(np.array_equal([False, False, False, False], item["gene_mask"].numpy()))
         self.assertEqual(3, item["num_nodes"])
@@ -68,14 +69,14 @@ class TestInferenceDatasets(unittest.TestCase):
         self.assertEqual(len(dataset), 2)
 
         item = dataset[0]
-        self.assertTrue(np.array_equal([CLS_GENE_IDX, 0, 2], item["orig_gene_id"].numpy()))
+        self.assertTrue(np.array_equal([17936, 0, 2], item["orig_gene_id"].numpy()))
         self.assertTrue(np.array_equal([[0], [1]], item["edge_index"].numpy()))  # A→C, B→D
         self.assertTrue(np.array_equal([False, False, False], item["gene_mask"].numpy()))
         self.assertEqual(2, item["num_nodes"])
         self.assertEqual("Cell1", item["obs_name"])
 
         item = dataset[1]
-        self.assertTrue(np.array_equal([CLS_GENE_IDX, 0, 1, 3, 4], item["orig_gene_id"].numpy()))
+        self.assertTrue(np.array_equal([17936, 0, 1, 3, 4], item["orig_gene_id"].numpy()))
         self.assertTrue(np.array_equal([[1, 3],[2, 0]], item["edge_index"].numpy()))  # E→B, E→D
         self.assertTrue(np.array_equal([False, False, False, False, False], item["gene_mask"].numpy()))
         self.assertEqual(4, item["num_nodes"])
@@ -97,7 +98,7 @@ class TestInferenceDatasets(unittest.TestCase):
         )
         
         item = dataset[1]
-        self.assertTrue(np.array_equal([CLS_GENE_IDX, 0, 1, 4], item["orig_gene_id"].numpy()))
+        self.assertTrue(np.array_equal([17936, 0, 1, 4], item["orig_gene_id"].numpy()))
         self.assertTrue(np.array_equal([[1, 1, 2], [2, 0, 1]], item["edge_index"].numpy()))
         self.assertTrue(np.array_equal([False, False, False, False], item["gene_mask"].numpy()))
         self.assertEqual(3, item["num_nodes"])

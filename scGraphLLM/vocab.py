@@ -1,5 +1,7 @@
 import pandas as pd
 
+from scGraphLLM._globals import CLS_GENE, PAD_GENE, MASK_GENE
+
 class GeneVocab(object):
     """
     A class that maps gene names to node indices and vice versa.
@@ -10,6 +12,8 @@ class GeneVocab(object):
     Args:
         genes (list): List of genes and tokens in vocabulary
         nodes (list): List of integer ids corresponding to gene tokens
+        require_special_tokens (bool): whether to require CLS, PAD and MASK tokens to 
+            be in the vocabulary.
 
     Attributes:
         genes (list): List of gene names.
@@ -17,16 +21,41 @@ class GeneVocab(object):
         gene_to_node (dict): Mapping from gene name to node index.
         node_to_gene (dict): Mapping from node index to gene name.
     """
-    def __init__(self, genes, nodes):
+    cls_gene = CLS_GENE
+    pad_gene = PAD_GENE
+    mask_gene = MASK_GENE
+    def __init__(self, genes, nodes, require_special_tokens=True):
         self.genes = genes
         self.nodes = nodes
         self.gene_to_node = dict(zip(genes, nodes))
         self.node_to_gene = dict(zip(nodes, genes))
+
+        if len(genes) != len(nodes):
+            raise ValueError("Genes and nodes must have the same length.")
+        
         if len(self.gene_to_node) != len(genes) or len(self.node_to_gene) != len(nodes):
             raise ValueError("Relationship between genes and nodes is not one-to-one.")
+        
+        if require_special_tokens:
+            special_tokens = [CLS_GENE, PAD_GENE, MASK_GENE]
+            missing = [t for t in special_tokens if t not in self.gene_to_node]
+            if missing:
+                raise ValueError(f"Missing required special tokens: {missing}")
     
+    @property
+    def cls_node(self):
+        return self.gene_to_node[self.cls_gene]
+    
+    @property
+    def pad_node(self):
+        return self.gene_to_node[self.pad_gene]
+    
+    @property
+    def mask_node(self):
+        return self.gene_to_node[self.mask_gene]
+
     @classmethod
-    def from_csv(cls, path, gene_col="gene_name", node_col="idx", **kwargs):
+    def from_csv(cls, path, gene_col="gene_name", node_col="idx", require_special_tokens=True, **kwargs):
         """
         Loads a GeneVocab from a CSV file.
 
@@ -49,4 +78,4 @@ class GeneVocab(object):
             raise ValueError(f"Expected columns '{gene_col}' and '{node_col}' not found in CSV.")
         genes = df[gene_col].tolist()
         nodes = df[node_col].tolist()
-        return cls(genes, nodes)
+        return cls(genes, nodes, require_special_tokens)

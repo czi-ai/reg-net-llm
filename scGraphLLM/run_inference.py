@@ -6,7 +6,8 @@ import anndata as ad
 
 from scGraphLLM.config import graph_kernel_attn_3L_4096
 from scGraphLLM.inference import get_cell_embeddings
-from scGraphLLM import GDTransformer, RegulatoryNetwork, GeneVocab, GraphTokenizer, InferenceDataset
+from scGraphLLM.models import GDTransformer
+from scGraphLLM import RegulatoryNetwork, GeneVocab, GraphTokenizer, InferenceDataset
 
 
 def main(args):

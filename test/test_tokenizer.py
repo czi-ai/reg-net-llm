@@ -24,7 +24,8 @@ class TestGraphTokenizer(unittest.TestCase):
         # Gene vocabulary
         self.vocab = GeneVocab(
             genes=['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'],
-            nodes=list(range(8))
+            nodes=list(range(8)),
+            require_special_tokens=False
         )
 
         # Regulatory network with edges (A,C), (B,D), (C,E), (G,H), (G,A), (H,E), (H,C)
@@ -122,7 +123,8 @@ class TestGraphTokenizer(unittest.TestCase):
         # Create vocabulary with genes E and F removes
         reduced_vocab = GeneVocab(
             genes=['A', 'B', 'C', 'D', 'G', 'H'],
-            nodes=list(range(6))
+            nodes=list(range(6)),
+            require_special_tokens=False
         )
         tokenizer = GraphTokenizer(
             vocab=reduced_vocab,

@@ -7,6 +7,7 @@ import pandas as pd
 import anndata as ad
 
 import os
+from functools import partial
 from os.path import join
 from typing import List
 import warnings
@@ -42,7 +43,7 @@ def send_to_gpu(data):
         return data  # If not a tensor or list/dict, leave unchanged
 
 
-def scglm_collate_fn(batch, inference=False):
+def scglm_collate_fn(batch, pad_node, inference=False):
     data = {
         "orig_gene_id": [], 
         "orig_rank_indices": [], 
@@ -66,7 +67,7 @@ def scglm_collate_fn(batch, inference=False):
         if key in {"dataset_name", "edge_index", "num_nodes", "obs_name"}:
             continue
         elif key == "orig_gene_id":
-            pad_value = PAD_GENE_IDX
+            pad_value = pad_node
         elif key == "orig_rank_indices":
             pad_value = PAD_RANK_IDX
         elif (key == "gene_mask") or (key == "rank_mask") or (key == "both_mask"):
@@ -227,12 +228,15 @@ def cache_aracane_and_bins(
 
 
 class GraphTransformerDataset(torchDataset):
-    def __init__(self, cache_dir:str, dataset_name:str=None, mask_fraction=0.15, debug:bool=False, inference=False):
+    def __init__(self, cache_dir:str, vocab: GeneVocab, dataset_name:str=None, mask_fraction=0.15, debug:bool=False, inference=False):
         self.debug = debug
         self.inference = inference
         self.cached_files = sorted([cache_dir+"/" + f for f in os.listdir(cache_dir) if f.endswith(".pt")])
         self.dataset_name = dataset_name
         self.mask_fraction = mask_fraction
+        self.vocab = vocab
+        self.mask_node = self.vocab.mask_node
+        self.cls_node = self.vocab.cls_node
         print(f"Cache Directory: {cache_dir}")
         print(f"Observation Count: {len(self):,}")
 
@@ -256,18 +260,19 @@ class GraphTransformerDataset(torchDataset):
             both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
         # mask the tensors
-        # node_indices[gene_mask, 0] = MASK_GENE_IDX
-        # node_indices[rank_mask, 1] = MASK_RANK_IDX
-        # node_indices[both_mask, :] = torch.tensor([MASK_GENE_IDX, MASK_RANK_IDX], dtype=node_indices.dtype)
         
         # add CLS
-        cls_token = torch.tensor([[CLS_GENE_IDX, CLS_TOKEN]], dtype=node_indices.dtype)
-        node_indices = torch.cat([cls_token, node_indices], dim=0) # CLS can never be masked
-
-        # add False to masks
+        cls_token = torch.tensor([[self.cls_node, CLS_RANK_IDX]], dtype=node_indices.dtype)
+        node_indices = torch.cat([cls_token, node_indices], dim=0)
+        # add False to mask for cls node
         gene_mask = torch.cat([torch.tensor([False]), gene_mask])
         rank_mask = torch.cat([torch.tensor([False]), rank_mask])
         both_mask = torch.cat([torch.tensor([False]), both_mask])
+
+        # # mask the tensors
+        # node_indices[gene_mask, 0] = self.mask_node
+        # node_indices[rank_mask, 1] = MASK_RANK_IDX
+        # node_indices[both_mask, :] = torch.tensor([self.mask_node, MASK_RANK_IDX], dtype=node_indices.dtype)
 
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()
@@ -293,6 +298,10 @@ class GraphTransformerDataset(torchDataset):
             item["obs_name"] = getattr(data, "obs_name", None)
 
         return item
+
+    @property
+    def collate_fn(self):
+        return partial(scglm_collate_fn, pad_node=self.vocab.pad_node, inference=self.inference)
 
 
 if __name__ == "__main__":

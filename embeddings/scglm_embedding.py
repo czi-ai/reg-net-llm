@@ -88,7 +88,7 @@ def main(args):
         dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        collate_fn=partial(scglm_collate_fn, inference=True)
+        collate_fn=dataset.collate_fn
     )
     
     # Load model

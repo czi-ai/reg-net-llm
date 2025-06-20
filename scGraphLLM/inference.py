@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from scGraphLLM.data import GraphTransformerDataset, scglm_collate_fn, send_to_gpu
+from scGraphLLM.data import GraphTransformerDataset, send_to_gpu
 from scGraphLLM._globals import *
 from scGraphLLM.network import RegulatoryNetwork
 from scGraphLLM.tokenizer import GraphTokenizer
@@ -27,7 +27,7 @@ class InferenceDataset(GraphTransformerDataset):
         self.tokenizer = tokenizer
         self.obs_names = expression.index
         self.expression = expression[expression.columns[expression.columns.isin(self.gene_to_node)]]
-        super().__init__(cache_dir=cache_dir, mask_fraction=0.0)
+        super().__init__(cache_dir=cache_dir, vocab=tokenizer.vocab, mask_fraction=0.0, inference=True)
     
     @property
     def gene_to_node(self):
@@ -125,7 +125,7 @@ class VariableNetworksInferenceDataset(InferenceDataset):
         return item
 
 
-def get_cell_embeddings(dataset, model, batch_size=256):
+def get_cell_embeddings(dataset: InferenceDataset, model, batch_size=256):
     """
     Runs the model on the input dataset and computes pooled cell-level embeddings.
 
@@ -142,7 +142,7 @@ def get_cell_embeddings(dataset, model, batch_size=256):
         dataset, 
         batch_size=batch_size, 
         shuffle=False, 
-        collate_fn=partial(scglm_collate_fn, inference=True)
+        collate_fn=dataset.collate_fn
     )
 
     x_list = []
@@ -159,7 +159,8 @@ def get_cell_embeddings(dataset, model, batch_size=256):
             x_masked = x * mask
             x_pooled = x_masked.sum(dim=1) / mask.sum(dim=1)
 
-            x_list.append(x_pooled.cpu().numpy())
+            x_list.append(x_pooled.detach().cpu().numpy())
             obs_names_list.append(obs_names)
 
     return pd.DataFrame(np.vstack(x_list), index=np.concatenate(obs_names_list))
+

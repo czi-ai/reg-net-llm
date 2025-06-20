@@ -50,7 +50,7 @@ class GraphTokenizer:
             only_expressed_genes=True,
             only_expressed_plus_neighbors=False,
             only_network_genes=True,
-            with_edge_weights=False, 
+            with_edge_weights=False,
             n_bins=NUM_BINS, 
             method="quantile"
         ):
@@ -114,6 +114,7 @@ class GraphTokenizer:
             network_cell[network.tar_name].isin(cell.index)
         ]
 
+        # create edge list
         reg_index = network_cell[network.reg_name].map(local_gene_to_node).values
         tar_index = network_cell[network.tar_name].map(local_gene_to_node).values
         edge_index = torch.tensor(np.array([reg_index, tar_index]))
@@ -121,7 +122,7 @@ class GraphTokenizer:
         node_expression = torch.tensor(np.array([
             (self.gene_to_node[gene], cell[gene]) for gene in cell.index
         ]), dtype=torch.long)
-            
+   
         if self.with_edge_weights:
             edge_weights = torch.tensor(np.array(network_cell[network.wt_name]))
             data = torchGeomData(

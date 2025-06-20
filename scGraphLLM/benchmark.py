@@ -658,19 +658,14 @@ def predict(model: FineTuneModule, dataloader, task, max_num_batches=None):
             break
 
     if task in {"link", "mgm"}:
-        # AUROC
         fpr, tpr, _ = roc_curve(y, yhat)
         auc_score = auc(fpr, tpr)
-        
-        # PR
-        p, r, _ = precision_recall_curve(y, yhat)
+        pre, rec, _ = precision_recall_curve(y, yhat)
         apr = average_precision_score(y, yhat)
-
-        # Sample sizes
         n_pos = np.sum(np.array(y) == 1)
         n_neg = np.sum(np.array(y) == 0)
         
-        return fpr, tpr, auc_score, p, r, apr, n_pos, n_neg
+        return fpr, tpr, auc_score, pre, rec, apr, n_pos, n_neg
     
     elif task in {"expr", "mlm"}: 
         mae = mean_absolute_error(y, yhat)
