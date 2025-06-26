@@ -63,11 +63,11 @@ network = RegulatoryNetwork.from_csv("your_network_file.tsv", sep="\t")
 # Load trained model checkpoint
 model = GDTransformer.load_from_checkpoint("path_to_model.ckpt", config=graph_kernel_attn_3L_4096)
 
-# Create tokenizer from vocab and regulatory network
-tokenizer = GraphTokenizer(vocab=vocab, network=network)
-
-# Create dataset for inference
-dataset = InferenceDataset(expression=data, tokenizer=tokenizer)
+# Create tokenizer and dataset for inference
+dataset = InferenceDataset(
+  expression=data,
+  tokenizer=GraphTokenizer(vocab=vocab, network=network) 
+)
 
 # Run inference and get pooled cell embeddings
 embeddings_df = get_cell_embeddings(dataset, model)
