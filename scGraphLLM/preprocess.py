@@ -28,6 +28,7 @@ import logging
 import sys
 import warnings
 import json
+import importlib.resources as pkg_resources
 import importlib.util
 from datetime import date, datetime
 import multiprocessing as mp
@@ -54,7 +55,7 @@ N_MEASURED_OBS = "n_measured_obs"
 CELL_TYPE = "cell_type"
 TISSUE = "tissue"
 
-genes_names = pd.read_csv("/hpc/projects/group.califano/GLM/data/gene-name-map.csv", index_col=0)
+genes_names = pd.read_csv(pkg_resources.files("scGraphLLM.resources").joinpath("gene_name_map.csv"), index_col=0)
 ENSG_PROTEIN_CODING = set(genes_names["ensg.values"])
 
 
