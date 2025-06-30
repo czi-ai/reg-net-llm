@@ -1,4 +1,6 @@
 import pandas as pd
+import numpy as np
+from typing import Union
 from scGraphLLM._globals import *
 
 
@@ -9,7 +11,8 @@ class RegulatoryNetwork(object):
 
     Attributes:
         df (pd.DataFrame): Internal representation of the network.
-        genes (set): Genes that appear both as regulators and targets.
+        genes (set): Genes that appe
+        ar both as regulators and targets.
 
     Column naming follows constants from `_globals.py`:
         REG_VALS, TAR_VALS, WT_VALS, LOGP_VALS
@@ -70,6 +73,29 @@ class RegulatoryNetwork(object):
     @property
     def edges(self):
         return list(zip(self.regulators, self.targets))
+
+    def __str__(self):
+        num_edges = len(self.df)
+        num_genes = len(self.genes)
+        targets_per_regulon = self.regulators.value_counts()
+        num_regulons = len(targets_per_regulon)
+        median_targets_per_regulon = int(targets_per_regulon.median()) if num_regulons > 0 else 0
+
+        top_regulators = targets_per_regulon.head(3)
+        top_reg_str = ', '.join(f"{reg} ({count})" for reg, count in top_regulators.items())
+
+        return (
+            f"RegulatoryNetwork with {num_edges:,} edges between {num_genes:,} genes.\n"
+            f"Number of regulons: {num_regulons:,}\n"
+            f"Median targets per regulon: {median_targets_per_regulon}\n"
+            f"Top regulators (by out-degree): {top_reg_str if top_reg_str else 'N/A'}"
+        )
+    
+    def __repr__(self):
+        return self.__str__()
+
+    def targets_of(self, regulator):
+        return self.targets[self.regulators == regulator].tolist()
 
     @classmethod
     def from_edge_ids(edge_ids, all_edges, weights, likelihoods):
@@ -182,6 +208,49 @@ class RegulatoryNetwork(object):
             weights=df[self.wt_name].tolist(),
             likelihoods=df[self.lik_name].tolist()
         )
+
+    def retain(self, which: Union[pd.Series, np.ndarray], inplace=True) -> "RegulatoryNetwork":
+        """
+        Retains only edges where the corresponding entry in `which` is True.
+
+        Args:
+            which (pd.Series or np.ndarray): Boolean mask indicating which edges to retain.
+                                             Must be same length as self.df.
+            inplace (bool): If True, modifies this object. Otherwise returns a new instance.
+
+        Returns:
+            RegulatoryNetwork: The retained network (self or new).
+        """
+        if len(which) != len(self.df):
+            raise ValueError("Length of mask does not match number of edges in network.")
+        
+        new_df = self.df[which].reset_index(drop=True)
+
+        if inplace:
+            self.df = new_df
+            return self
+
+        return RegulatoryNetwork(
+            regulators=new_df[self.reg_name].tolist(),
+            targets=new_df[self.tar_name].tolist(),
+            weights=new_df[self.wt_name].tolist(),
+            likelihoods=new_df[self.lik_name].tolist()
+        )
+    
+    def filter(self, which: Union[pd.Series, np.ndarray], inplace=True) -> "RegulatoryNetwork":
+        """
+        Filters out edges where the corresponding entry in `which` is True.
+
+        Args:
+            which (pd.Series or np.ndarray): Boolean mask indicating which edges to filter out.
+                                             Must be same length as self.df.
+            inplace (bool): If True, modifies this object. Otherwise returns a new instance.
+
+        Returns:
+            RegulatoryNetwork: The filtered network (self or new).
+        """
+        return self.retain(~which, inplace=inplace)
+
     
     def __eq__(self, other):
         if not isinstance(other, RegulatoryNetwork):
@@ -198,4 +267,3 @@ class RegulatoryNetwork(object):
         
         # Compare the edge DataFrames for equality
         return self_edges.equals(other_edges)
-    

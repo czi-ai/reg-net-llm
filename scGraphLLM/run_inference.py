@@ -30,24 +30,22 @@ def main(args):
         tokenizer=GraphTokenizer(vocab=vocab, network=network)
     )
 
-    # get cell embeddings 
-    x_cell = get_cell_embeddings(dataset, model, vocab, cls_policy="exclude")
+    # # get cell embeddings 
+    # x_cell = get_cell_embeddings(dataset, model, vocab, cls_policy="exclude")
+    # save_with_metadata(x_cell, metadata=adata.obs, path=join(args.out_dir, "emb_cell.h5ad"))
 
     # get cell embeddings including cls token embedding
     x_cell_with_cls = get_cell_embeddings(dataset, model, vocab, cls_policy="include")
+    save_with_metadata(x_cell_with_cls, metadata=adata.obs, path=join(args.out_dir, "emb_cell_with_cls.h5ad"))
 
-    # get cls token embedding as cell embedding
-    x_cell_only_cls = get_cell_embeddings(dataset, model, vocab, cls_policy="only")
+    # # get cls token embedding as cell embedding
+    # x_cell_only_cls = get_cell_embeddings(dataset, model, vocab, cls_policy="only")
+    # save_with_metadata(x_cell_only_cls, metadata=adata.obs, path=join(args.out_dir, "emb_cell_only_cls.h5ad"))
 
     # get gene embeddings
     x_gene = get_gene_embeddings(dataset, model, vocab)
-
-    # save with original metadata
     save_with_metadata(x_gene, metadata=adata.var, path=join(args.out_dir, "emb_gene.h5ad"))
-    save_with_metadata(x_cell, metadata=adata.obs, path=join(args.out_dir, "emb_cell.h5ad"))
-    save_with_metadata(x_cell_with_cls, metadata=adata.obs, path=join(args.out_dir, "emb_cell_with_cls.h5ad"))
-    save_with_metadata(x_cell_only_cls, metadata=adata.obs, path=join(args.out_dir, "emb_cell_only_cls.h5ad"))
-    
+     
 
 def save_with_metadata(x: pd.DataFrame, metadata: pd.DataFrame, path):
     adata = ad.AnnData(x.values, obs=metadata.loc[x.index])

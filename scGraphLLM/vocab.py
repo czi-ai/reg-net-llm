@@ -1,4 +1,5 @@
 import pandas as pd
+import importlib.resources as pkg_resources
 
 from scGraphLLM._globals import CLS_GENE, PAD_GENE, MASK_GENE
 
@@ -53,6 +54,23 @@ class GeneVocab(object):
     @property
     def mask_node(self):
         return self.gene_to_node[self.mask_gene]
+    
+    def __str__(self):
+        special_tokens = [self.cls_gene, self.pad_gene, self.mask_gene]
+        present_tokens = [t for t in special_tokens if t in self.gene_to_node]
+        missing_tokens = [t for t in special_tokens if t not in self.gene_to_node]
+        
+        lines = [
+            f"GeneVocab with {len(self.genes):,} genes",
+            f"Special tokens present: {present_tokens}",
+        ]
+        if missing_tokens:
+            lines.append(f"WARNING: Missing special tokens: {missing_tokens}")
+        
+        return "\n".join(lines)
+
+    def __repr__(self):
+        return self.__str__()
 
     @classmethod
     def from_csv(cls, path, gene_col="gene_name", node_col="idx", require_special_tokens=True, **kwargs):
@@ -79,3 +97,8 @@ class GeneVocab(object):
         genes = df[gene_col].tolist()
         nodes = df[node_col].tolist()
         return cls(genes, nodes, require_special_tokens)
+    
+    @classmethod
+    def load_default(cls, filename="gene_vocab.csv", gene_col="gene_name", node_col="idx", require_special_tokens=True, **kwargs):
+        path = pkg_resources.files("scGraphLLM.resources").joinpath(filename)
+        return cls.from_csv(path, gene_col=gene_col, node_col=node_col, require_special_tokens=require_special_tokens, **kwargs)
