@@ -200,8 +200,8 @@ def cache_aracane_and_bins(
                 vocab=vocab, 
                 network=network,
                 n_bins=NUM_BINS,
-                max_seq_length=None,
-                only_expressed_genes=True,
+                max_seq_length=MAX_SEQ_LENGTH,
+                only_expressed_plus_neighbors=True,
                 with_edge_weights=True
             )
 
@@ -259,20 +259,14 @@ class GraphTransformerDataset(torchDataset):
             rank_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
             both_mask = torch.rand(node_indices.shape[0]) < self.mask_fraction
         
-        # mask the tensors
-        
         # add CLS
         cls_token = torch.tensor([[self.cls_node, CLS_RANK_IDX]], dtype=node_indices.dtype)
         node_indices = torch.cat([cls_token, node_indices], dim=0)
+
         # add False to mask for cls node
         gene_mask = torch.cat([torch.tensor([False]), gene_mask])
         rank_mask = torch.cat([torch.tensor([False]), rank_mask])
         both_mask = torch.cat([torch.tensor([False]), both_mask])
-
-        # # mask the tensors
-        # node_indices[gene_mask, 0] = self.mask_node
-        # node_indices[rank_mask, 1] = MASK_RANK_IDX
-        # node_indices[both_mask, :] = torch.tensor([self.mask_node, MASK_RANK_IDX], dtype=node_indices.dtype)
 
         orig_gene_indices = node_indices[:, 0].clone()
         orig_rank_indices = node_indices[:, 1].clone()

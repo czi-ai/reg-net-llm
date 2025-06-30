@@ -8,8 +8,7 @@ MASK_GENE="<MASK>"
 PAD_GENE="<PAD>"
 
 ZERO_IDX=0 ## ONLY APPLIES TO EXPRESSION TOKENS: the lowest expression, aka gene with expression 0
-MIN_GENES_PER_GRAPH=500 
-#NUM_GENES=19246 # This is the nubmer of genes + special tokens
+MIN_GENES_PER_GRAPH=500
 NUM_GENES=19247 # This is the nubmer of genes + special tokens
 NUM_BINS=100 # Number of bins that the raw expression is quantized into
 NUM_RANKS=NUM_BINS + 3 # This is the number of ranks + special tokens
@@ -25,3 +24,6 @@ MI_VALS = "mi.values"
 LOGP_VALS = "log.p.values"
 SCC_VALS = "scc.values"
 WT_VALS = "weight.values"
+
+# Tokenization Parameters
+MAX_SEQ_LENGTH=4096

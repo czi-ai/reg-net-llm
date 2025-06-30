@@ -17,7 +17,6 @@ class LitScGraphLLM(pl.LightningModule):
             embedding_dim=config.model_config.node_embedding_dim, 
             padding_idx=pad_node
         )
-        
         self.rank_embedding = torch.nn.Embedding(
             num_embeddings=config.model_config.num_ranks, 
             embedding_dim=config.model_config.node_embedding_dim, 
@@ -135,9 +134,9 @@ class GDTransformer(LitScGraphLLM):
         gene_ids = orig_gene_id.clone()
         expression = orig_rank_indices.clone()
         
-        # # Mask specified gene IDs and expression values
+        # Mask specified gene IDs and expression values
         # gene_ids[mask] = torch.tensor(MASK_GENE_IDX, dtype=gene_ids.dtype)
-        # expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
+        expression[mask] = torch.tensor(MASK_RANK_IDX, dtype=gene_ids.dtype)
         
         # shape assertions for graph features
         if self.use_PE:
