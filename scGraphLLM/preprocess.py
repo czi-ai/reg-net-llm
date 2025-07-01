@@ -28,12 +28,15 @@ import logging
 import sys
 import warnings
 import json
+import importlib.resources as pkg_resources
 import importlib.util
 from datetime import date, datetime
 import multiprocessing as mp
 from typing import List
 from os.path import join, abspath, dirname
 from functools import partial
+
+from scGraphLLM.tokenizer import tokenize_expr, quantize_cells
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
@@ -52,7 +55,7 @@ N_MEASURED_OBS = "n_measured_obs"
 CELL_TYPE = "cell_type"
 TISSUE = "tissue"
 
-genes_names = pd.read_csv("/hpc/projects/group.califano/GLM/data/gene-name-map.csv", index_col=0)
+genes_names = pd.read_csv(pkg_resources.files("scGraphLLM.resources").joinpath("gene_name_map.csv"), index_col=0)
 ENSG_PROTEIN_CODING = set(genes_names["ensg.values"])
 
 
@@ -488,32 +491,7 @@ def make_metacells(
         metacells_adata.write_h5ad(save_path)
 
     return metacells_adata, qc_metrics_dict(metacells_adata)
-    
 
-def quantize_cells(gex, n_bins, method="quantile"):
-    # Create a dataframe of the same size as df with all zeros
-    expression_bins = np.zeros(gex.shape, dtype=np.int16)
-    
-    for i in range(gex.shape[0]): # Iterate through rows (single cells)
-        cell = gex.iloc[i].to_numpy(dtype=float) # Get single cell expression
-        non_zero = cell.nonzero()[0] # Get indices where expression is non-zero
-        
-        # "Binnify" the rankings
-        if np.unique(cell[non_zero]).shape[0] > 1: # More than one expression value - should be in all cases
-            if method == "quantile":
-                bins = np.quantile(cell[non_zero], np.linspace(0, 1, n_bins))[1:-1] # Get the bin edges, this gets n_bins-2 bin edges - [1:-1] so anything under/over the bottom/top edge gets added to the same bin
-            else: 
-                bins = np.linspace(min(cell[non_zero]), max(cell[non_zero]), n_bins)
-            expression_bins[i, non_zero] = np.digitize(cell[non_zero], bins, right=True) + 1 # Assign bins, add 1 as the bins are numbered from 0 up and we have already reserved 0 for zero-expression. right=True to differentiate high expression over low expression
-        
-        elif np.unique(cell[non_zero]).shape[0] == 1: # Edge case: If the cell has two expression levels (zero and x) - this shouldn't really happen
-            expression_bins[i, non_zero] = np.zeros(cell[non_zero].shape[0]) + round(n_bins/2) # Set to expressed genes to median bin value
-        else: # No update needed if cell is all zeros
-            pass
-    
-    # Convert the binned expressions to a pandas dataframe
-    expression_bins = pd.DataFrame(expression_bins, columns=gex.columns, index=gex.index)
-    return expression_bins
 
 
 def quantize(cells, n_bins, save_path=None):    

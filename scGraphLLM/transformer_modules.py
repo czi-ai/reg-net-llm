@@ -36,6 +36,7 @@ from scGraphLLM.graph_op import _chebyshev_diffusion
 from scGraphLLM.MLP_modules import PerturbEmbedding
 from scGraphLLM._globals import *
 
+
 ## Keeping these just in case
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -44,7 +45,6 @@ def gelu(x):
     0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
     """
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))    
-
 
 
 class SwiGLU(nn.Module):
@@ -406,7 +406,7 @@ class FlashTransformerEncoderLayer(nn.Module):
             else:
                 q, k, v = self.wqkv(x)
             
-            if self.use_attn_mask:
+            if self.diffusion_kernel_attn:
                 x = x + self.self_attention(q, k, v, 
                                             edge_index_list=edge_index_list, 
                                             num_nodes_list=num_nodes_list,

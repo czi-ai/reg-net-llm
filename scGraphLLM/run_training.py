@@ -13,14 +13,15 @@ import time
 import pickle 
 import wandb
 import glob 
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader as torchDataLoader
 
 # import torchsummary
 
 from scGraphLLM.models import LitScGraphLLM
-from scGraphLLM.data import *
+from scGraphLLM.data import GraphTransformerDataset
 from scGraphLLM._globals import *
 from scGraphLLM.config import *
+from scGraphLLM.vocab import GeneVocab
 
 def generate_random_string(length):
     alphanumeric = string.ascii_letters + string.digits
@@ -47,6 +48,7 @@ parser = argparse.ArgumentParser(
                     description='This script is used to train model via pytorch lightning',
                     )
 parser.add_argument('--config', type=str, help='path to model config file',required=True)
+parser.add_argument("--gene-to-node-file", type=str, help="File containing gene to node index mapping")
 parser.add_argument('--version', type=str, help='run version', default=None)
 parser.add_argument('--name', type=str, help='run name', default=None)
 parser.add_argument('--mode', type=str, help=' valid modes: [train, resume, predict, validate]', default=None, required=True)
@@ -56,7 +58,47 @@ parser.add_argument("--output-dir", type=str, help="output directory for model c
 
 args = parser.parse_args()
 
+
+class GraphTransformerDataModule(pl.LightningDataModule):
+    def __init__(self, data_config, vocab: GeneVocab):
+        super().__init__()
+        self.data_config = data_config
+        self.train_ds = GraphTransformerDataset(vocab=vocab, **data_config.train)
+        self.val_ds = [GraphTransformerDataset(vocab=vocab, **val) for val in data_config.val]
+        if data_config.run_test:
+            self.test_ds = [GraphTransformerDataset(vocab=vocab, **test) for test in data_config.test]
+    
+    def train_dataloader(self):
+        return torchDataLoader(
+            dataset=self.train_ds, 
+            batch_size=self.data_config.batch_size, 
+            num_workers=self.data_config.num_workers, 
+            collate_fn=self.train_ds.collate_fn
+        )
+    
+    def val_dataloader(self):
+        return [
+            torchDataLoader(
+                dataset=val_ds, 
+                batch_size=self.data_config.batch_size, 
+                num_workers=self.data_config.num_workers, 
+                collate_fn=val_ds.collate_fn) 
+            for val_ds in self.val_ds
+        ]
+    
+    def test_dataloader(self):
+        return [
+            torchDataLoader(
+                dataset=test_ds, 
+                batch_size=self.data_config.batch_size, 
+                num_workers=self.data_config.num_workers, 
+                collate_fn=test_ds.collate_fn) 
+            for test_ds in self.test_ds
+        ]
+
+
 def main(args):
+
     
     mconfig = args.config
     mode = args.mode
@@ -94,11 +136,14 @@ def main(args):
     with open(f"{str(run_dir)}/mconfig_used.json", 'wb+') as m_stream:
         pickle.dump(mconfig, m_stream)
 
+    # load gene vocabulary
+    vocab = GeneVocab.from_csv(args.gene_to_node_file, gene_col="gene_name", node_col="idx")
+    
     ### load data
     # this should be a LightingDataModule, but because we only have 1 train loader for now, keep it a regular dataloader
     print("loading data...")
 
-    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, collate_fn=scglm_collate_fn)
+    transformer_data_module = GraphTransformerDataModule(mconfig.data_config, vocab=vocab)
     train_transformer_dl = transformer_data_module.train_dataloader()
     val_transformer_dl = transformer_data_module.val_dataloader()
     
