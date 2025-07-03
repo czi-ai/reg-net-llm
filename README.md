@@ -1,4 +1,4 @@
-# Graph structure aware foundation model for scRNA data
+# GREmLN: Graph structure aware foundation model for scRNA data
 The code base for the graph-based single cell foundation model developed at CZB NY. The goal is to learn meaningful foundational gene embeddings to faciliate downstream tasks such as perturbation prediction through incoperating gene regulatory network topology into the transformer attention mechnism. 
 
 Ownership: Califano Lab \
