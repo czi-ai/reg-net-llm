@@ -2,7 +2,7 @@
 The code base for the graph-based single cell foundation model developed at CZB NY. The goal is to learn meaningful foundational gene embeddings to faciliate downstream tasks such as perturbation prediction through incoperating gene regulatory network topology into the transformer attention mechnism. 
 
 Ownership: Califano Lab \
-Main developers: Mingxuan Zhang, Vinay Swarmy, Léo Dupire, Rowan Cassius
+Main developers: Mingxuan Zhang, Vinay Swarmy, Rowan Cassius, Léo Dupire
 
 ## Code of Conduct
 
@@ -13,8 +13,6 @@ This project adheres to the Contributor Covenant [code of conduct](https://githu
 If you believe you have found a security issue, please responsibly disclose by contacting us at [security@chanzuckerberg.com](mailto:security@chanzuckerberg.com).
 
 ## Install deps
-
-probably a good idea to use a common conda env for all the packages
 ```
 module load cuda12.1
 mamba create -y --prefix /pmglocal/$USER/mambaforge/envs/scllm pytorch torchvision torchaudio pytorch-cuda=12.1 pyg lightning pyarrow numpy==1.26.0 -c pyg -c pytorch -c nvidia -c conda-forge
