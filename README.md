@@ -1,25 +1,16 @@
-# scGraphLLM
-Graph-based single cell LLM for cell state prediction under perturbations
+# Graph structure aware foundation model for scRNA data
+The code base for the graph-based single cell foundation model developed at CZB NY. The goal is to learn meaningful foundational gene embeddings to faciliate downstream tasks such as perturbation prediction through incoperating gene regulatory network topology into the transformer attention mechnism. 
 
-# TODO
+Ownership: Califano Lab \
+Main developers: Mingxuan Zhang, Vinay Swarmy, Léo Dupire, Rowan Cassius
 
-These are some of the tasks/decisions we'll need to make
+## Code of Conduct
 
-## Data
+This project adheres to the Contributor Covenant [code of conduct](https://github.com/chanzuckerberg/.github/blob/master/CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [opensource@chanzuckerberg.com](mailto:opensource@chanzuckerberg.com).
 
-We'll need write a data-processing pipeline that will convert the raw scRNA-seq data into generate a list of expressed genes in each cell, with the expression converted into ranks, or bins. In addition to this we'll need to generate the gene-gene graph using Aracne. We'll need to do this for both the internal data from the califano lab, and external data from published papers. For the external data, the Geneformer paper provides [links](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-023-06139-9/MediaObjects/41586_2023_6139_MOESM4_ESM.xlsx) to the papers it gets data from. We can grab some of the data that seems relevant from there on GEO. 
+## Reporting Security Issues
 
-Once we get data preprocessed, we'll need to get the dataloading code written. 
-
-example code to generate cache for modeldata 
-
-```
-python scGraphLLM/data.py --aracane-outdir-file pilot_data_dirs.txt --gene-to-node-file /burg/pmg/collab/scGraphLLM/data/cellxgene_gene2index.csv --cache-dir /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/ --num-proc 5
-mkdir -p /burg/pmg/collab/scGraphLLM/data/pilotdata_valHOG_cache/ 
-mkdir -p /burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/ 
-mv /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/mast_cell* /burg/pmg/collab/scGraphLLM/data/pilotdata_valHOG_cache/
-find /burg/pmg/collab/scGraphLLM/data/pilotdata_train_cache/ -type f | shuf -n 12800 | xargs -I {} mv {} /burg/pmg/collab/scGraphLLM/data/pilotdata_valSG_cache/
-```
+If you believe you have found a security issue, please responsibly disclose by contacting us at [security@chanzuckerberg.com](mailto:security@chanzuckerberg.com).
 
 ## Install deps
 
