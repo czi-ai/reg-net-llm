@@ -6,7 +6,7 @@ bash Miniforge3.sh -b -p /work/miniforge3
 miniforge3/bin/conda init bash
 source ~/.bashrc
 
-# Delete instaltter
+# Delete installer
 rm Miniforge3.sh
 
 # Create Conda env
