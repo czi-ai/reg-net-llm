@@ -10,7 +10,7 @@ source ~/.bashrc
 rm Miniforge3.sh
 
 # Create Conda env
-mamba create -n gremln pytorch torchvision torchaudio pyg lightning pyarrow numpy==1.26.0 ninja scanpy plotnine pandas scikit-learn ipykernel wandb polars fast_matrix_market jupyter loralib pyg-lib flash-attn -c conda-forge -c pytorch -c nvidia -c pyg
+#mamba create -n gremln pytorch torchvision torchaudio pyg lightning pyarrow numpy==1.26.0 ninja scanpy plotnine pandas scikit-learn ipykernel wandb polars fast_matrix_market jupyter loralib pyg-lib flash-attn -c conda-forge -c pytorch -c nvidia -c pyg
 
 # Activate gremln
-conda activate gremln
+#conda activate gremln
