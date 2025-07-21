@@ -29,3 +29,4 @@ slurm_train_out/
 slurm_train_out/*
 *slurm*
 */lightning_logs/*
+miniforge3/
