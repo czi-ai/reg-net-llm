@@ -30,3 +30,4 @@ slurm_train_out/*
 *slurm*
 */lightning_logs/*
 miniforge3/
+gcflow_interactive.sh
