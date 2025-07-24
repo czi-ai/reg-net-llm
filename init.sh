@@ -3,7 +3,7 @@
 
 # Install miniforge3 and initiate it
 #bash Miniforge3.sh -b -p /work/miniforge3
-/mnt/pvc/miniforge3/bin/conda init bash
+/mnt/pvc/miniforge3/bin/python /mnt/pvc/miniforge3/bin/conda init bash
 source ~/.bashrc
 
 # Delete installer
